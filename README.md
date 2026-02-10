@@ -53,7 +53,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | 指令 | 说明 |
 |------|------|
 | `/hapi list` | 列出所有会话（按工作目录分组） |
-| `/hapi sw <序号>` | 切换当前会话 |
+| `/hapi sw <序号或ID前缀>` | 切换当前会话 |
 | `/hapi s` | 查看当前会话状态 |
 | `/hapi msg [数量]` | 查看最近消息（默认 10 条） |
 
@@ -91,6 +91,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 |------|------|
 | `/hapi perm [模式]` | 查看/切换权限模式 |
 | `/hapi model [模式]` | 查看/切换模型 |
+| `/hapi output [级别]` | 查看/切换 SSE 推送级别 |
 
 ### 其他
 
@@ -132,6 +133,17 @@ astrbot_plugin_hapi_connector/
 ├── requirements.txt     # Python 依赖
 └── metadata.yaml        # 插件元信息
 ```
+
+## TODO
+
+- [ ] Summary 模式下，AI 对交互过程的信息压缩（用 LLM 摘要替代原始消息拼接）
+- [ ] 通过 AstrBot 的自然语言触发相关指令调用，让用于聊天的 LLM 感知当前正在进行的编码任务
+- [ ] 支持多用户独立会话状态
+
+## 致谢
+
+- [HAPI](https://github.com/tiann/hapi) — 本插件所连接的后端服务，由 [@tiann](https://github.com/tiann) 开发，当前参考的接口基于 v0.15.1
+- [AstrBot](https://github.com/Soulter/AstrBot) — 跨平台聊天机器人框架
 
 ## 许可
 
