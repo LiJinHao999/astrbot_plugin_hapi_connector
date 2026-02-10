@@ -24,9 +24,9 @@ def extract_text_preview(content: dict, max_len: int = 80) -> str | None:
                 actual_tool = inp.get("tool", tool)
                 cmd = inp.get("command", "")
                 if cmd:
-                    return f"[调用 {actual_tool}] {cmd[:150]}"
+                    return f"[调用 {actual_tool}] {cmd[:max_len]}"
                 else:
-                    args_str = json.dumps(inp, ensure_ascii=False)[:150]
+                    args_str = json.dumps(inp, ensure_ascii=False)[:max_len]
                     return f"[调用 {actual_tool}] {args_str}"
             elif dtype == "tool-call-result":
                 output = data.get("output", {})

@@ -659,6 +659,10 @@ class HapiConnectorPlugin(Star):
                 ]
                 if wizard["worktree_name"]:
                     lines.append(f"  工作树名: {wizard['worktree_name']}")
+                if wizard["agent"] == "codex" and wizard["yolo"]:
+                    lines.append(f"\n⚠ 提醒: Codex YOLO 模式需要在配置中设置信任等级，否则无法使用 tools:")
+                    lines.append(f'  [projects."{wizard["directory"]}"]')
+                    lines.append(f'  trust_level = "trusted"')
                 lines.append("\n回复 y 确认创建，其他取消")
                 await ev.send(ev.plain_result("\n".join(lines)))
                 controller.keep(timeout=60, reset_timeout=True)
