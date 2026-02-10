@@ -6,6 +6,7 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
+from astrbot.api.message_components import Poke
 
 from astrbot.core.utils.session_waiter import session_waiter, SessionController
 
@@ -742,22 +743,13 @@ class HapiConnectorPlugin(Star):
         event.stop_event()
 
     def _is_poke_event(self, event: AstrMessageEvent) -> bool:
-        """检测是否为 NapCat 戳一戳事件"""
+        """检测是否为戳一戳机器人事件"""
         try:
-            raw = getattr(event, 'message_obj', None)
-            if raw is None:
-                return False
-
-            # OneBotv11 notice 事件: {"post_type": "notice", "sub_type": "poke", ...}
-            if isinstance(raw, dict):
-                return (raw.get('post_type') == 'notice'
-                        and raw.get('sub_type') == 'poke')
-
-            # 对象形式访问
-            if (getattr(raw, 'post_type', None) == 'notice'
-                    and getattr(raw, 'sub_type', None) == 'poke'):
-                return True
-
+            for comp in event.message_obj.message:
+                if isinstance(comp, Poke):
+                    bot_id = event.message_obj.raw_message.get('self_id')
+                    if comp.qq == bot_id:
+                        return True
             return False
         except Exception:
             return False
