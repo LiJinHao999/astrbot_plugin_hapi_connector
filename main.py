@@ -172,6 +172,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("help")
     async def cmd_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
+        await self._set_user_state(event)
         yield event.plain_result(formatters.get_help_text())
 
     # ── list ──
@@ -180,6 +181,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("list", alias={"ls"})
     async def cmd_list(self, event: AstrMessageEvent):
         """列出所有 session"""
+        await self._set_user_state(event)
         await self._refresh_sessions()
         current_sid = self._current_sid(event)
         text = formatters.format_session_list(self.sessions_cache, current_sid)
@@ -236,6 +238,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("s", alias={"status"})
     async def cmd_status(self, event: AstrMessageEvent):
         """查看当前 session 状态"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -253,6 +256,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("msg", alias={"messages"})
     async def cmd_msg(self, event: AstrMessageEvent, limit: int = 10):
         """查看最近消息: /hapi msg [数量]"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -295,6 +299,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("perm")
     async def cmd_perm(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换权限模式: /hapi perm [模式名]"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -324,6 +329,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("model")
     async def cmd_model(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换模型: /hapi model [模式名]"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -361,6 +367,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("output", alias={"out"})
     async def cmd_output(self, event: AstrMessageEvent, level: str = ""):
         """查看/切换 SSE 推送级别: /hapi output [级别]"""
+        await self._set_user_state(event)
         current = self.sse_listener.output_level
         levels = list(self._OUTPUT_LEVELS.keys())
 
@@ -393,6 +400,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("pending")
     async def cmd_pending(self, event: AstrMessageEvent):
         """查看待审批请求列表: /hapi pending"""
+        await self._set_user_state(event)
         all_pending = self.sse_listener.get_all_pending()
         text = formatters.format_pending_requests(all_pending, self.sessions_cache)
         yield event.plain_result(text)
@@ -403,6 +411,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("approve", alias={"a"})
     async def cmd_approve(self, event: AstrMessageEvent):
         """批准审批请求: /hapi a 全部批准, /hapi a <序号> 批准单个"""
+        await self._set_user_state(event)
         items = self._flatten_pending()
         if not items:
             yield event.plain_result("没有待审批的请求")
@@ -435,6 +444,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("deny")
     async def cmd_deny(self, event: AstrMessageEvent):
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
+        await self._set_user_state(event)
         items = self._flatten_pending()
         if not items:
             yield event.plain_result("没有待审批的请求")
@@ -467,6 +477,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("create")
     async def cmd_create(self, event: AstrMessageEvent):
         """创建新 session (5 步向导)"""
+        await self._set_user_state(event)
         try:
             machines = await session_ops.fetch_machines(self.client)
         except Exception as e:
@@ -704,6 +715,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("archive")
     async def cmd_archive(self, event: AstrMessageEvent):
         """归档当前 session"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -735,6 +747,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("rename")
     async def cmd_rename(self, event: AstrMessageEvent):
         """重命名当前 session"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -807,6 +820,7 @@ class HapiConnectorPlugin(Star):
         if not self._is_admin(event):
             return
 
+        await self._set_user_state(event)
         result = await self._approve_all_pending()
         if result is None:
             return  # 无待审批，静默

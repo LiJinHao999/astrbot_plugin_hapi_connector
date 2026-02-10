@@ -293,16 +293,15 @@ class SSEListener:
             logger.warning("simple 模式获取消息异常: %s", e)
 
     async def _push_notification(self, text: str, session_id: str):
-        """向关注了该 session 的用户推送消息"""
+        """向所有已注册的管理员推送消息"""
         for sender_id, state in self.plugin._user_states_cache.items():
-            if state.get("current_session") == session_id:
-                umo = state.get("notify_umo")
-                if umo:
-                    try:
-                        chain = MessageChain().message(text)
-                        await self.plugin.context.send_message(umo, chain)
-                    except Exception as e:
-                        logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
+            umo = state.get("notify_umo")
+            if umo:
+                try:
+                    chain = MessageChain().message(text)
+                    await self.plugin.context.send_message(umo, chain)
+                except Exception as e:
+                    logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
 
     async def load_existing_pending(self):
         """启动时从已有 session 加载待审批请求"""
