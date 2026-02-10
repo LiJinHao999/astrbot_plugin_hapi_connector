@@ -87,7 +87,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | 指令 | 说明 |
 |------|------|
 | `/hapi perm [模式]` | 查看/切换权限模式 |
-| `/hapi model [模式]` | 查看/切换模型（仅 Claude） |
+| `/hapi model [模式]` | 查看/切换模型 |
 
 ### 其他
 
