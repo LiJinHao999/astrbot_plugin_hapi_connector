@@ -75,6 +75,9 @@ class HapiConnectorPlugin(Star):
         except Exception as e:
             logger.warning("初始化加载 session 列表失败: %s", e)
 
+        # 加载已有的待审批请求（重启/断联后恢复）
+        await self.sse_listener.load_existing_pending()
+
         # 启动 SSE
         output_level = self.config.get("output_level", "silence")
         self.sse_listener.start(output_level)

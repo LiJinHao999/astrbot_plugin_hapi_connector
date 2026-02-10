@@ -199,6 +199,21 @@ def format_messages(messages: list[dict], max_preview: int = 120) -> str:
     return "\n".join(lines) if lines else "(暂无可显示的消息)"
 
 
+def format_request_detail(req: dict) -> str:
+    """格式化权限请求详情（工具 + 关键参数）"""
+    tool = req.get("tool", "?")
+    args = req.get("arguments", {})
+    if not isinstance(args, dict) or not args:
+        return tool
+    cmd = args.get("command", "")
+    if cmd:
+        return f"{tool}: {cmd[:150]}"
+    args_str = json.dumps(args, ensure_ascii=False)
+    if len(args_str) > 120:
+        args_str = args_str[:120] + "..."
+    return f"{tool}: {args_str}"
+
+
 def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]) -> str:
     """格式化所有待审批请求"""
     items = []

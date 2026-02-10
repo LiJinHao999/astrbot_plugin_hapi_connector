@@ -7,7 +7,7 @@ import logging
 from astrbot.api.event import MessageChain
 
 from .hapi_client import AsyncHapiClient
-from .formatters import extract_text_preview, session_label_short
+from .formatters import extract_text_preview, session_label_short, format_request_detail
 from . import session_ops
 
 logger = logging.getLogger(__name__)
@@ -120,10 +120,21 @@ class SSEListener:
             # 有新的权限请求 -> 推送提醒
             for rid in new_ids:
                 req = requests_data[rid]
-                tool = req.get("tool", "?")
+                detail = format_request_detail(req)
                 label = session_label_short(sid, self.plugin.sessions_cache)
-                text = f"*** 权限请求 {label} ***\n工具: {tool}\n使用 /hapi approve 审批"
-                await self._push_notification(text, sid)
+                total = sum(len(r) for r in self.pending.values())
+                lines = [
+                    f"⚠ 权限请求 {label}",
+                    f"  {detail}",
+                    "",
+                    f"当前共 {total} 个待审批，审批指令:",
+                    "  /hapi a        全部批准",
+                    "  /hapi a <序号>  批准单个",
+                    "  /hapi deny     全部拒绝",
+                    "  /hapi deny <序号> 拒绝单个",
+                    "  /hapi pending   查看完整列表",
+                ]
+                await self._push_notification("\n".join(lines), sid)
 
         # === 输出级别处理 ===
 
@@ -258,3 +269,21 @@ class SSEListener:
                         await self.plugin.context.send_message(umo, chain)
                     except Exception as e:
                         logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
+
+    async def load_existing_pending(self):
+        """启动时从已有 session 加载待审批请求"""
+        for s in self.plugin.sessions_cache:
+            sid = s.get("id", "")
+            pending_count = s.get("pendingRequestsCount", 0)
+            if not sid or not pending_count:
+                continue
+            try:
+                detail = await session_ops.fetch_session_detail(self.client, sid)
+                agent_state = detail.get("agentState") or {}
+                requests_data = agent_state.get("requests") or {}
+                if requests_data:
+                    self.pending[sid] = requests_data
+                    logger.info("加载 session %s 的 %d 个待审批请求",
+                                sid[:8], len(requests_data))
+            except Exception as e:
+                logger.warning("加载 session %s 待审批失败: %s", sid[:8], e)
