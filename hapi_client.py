@@ -7,11 +7,9 @@ HAPI 异步 HTTP 客户端
 
 import time
 import asyncio
-import logging
 
 import aiohttp
-
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 def _build_connector(proxy_url: str | None):

@@ -2,15 +2,13 @@
 
 import json
 import asyncio
-import logging
 
+from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
 from .hapi_client import AsyncHapiClient
 from .formatters import extract_text_preview, session_label_short, format_request_detail
 from . import session_ops
-
-logger = logging.getLogger(__name__)
 
 
 class SSEListener:

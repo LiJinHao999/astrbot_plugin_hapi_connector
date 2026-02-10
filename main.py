@@ -56,6 +56,14 @@ class HapiConnectorPlugin(Star):
         # 戳一戳审批开关
         self._poke_approve = self.config.get("poke_approve", False)
 
+        # 管理员列表（用于 catch-all 处理器手动鉴权）
+        astrbot_config = self.context.get_config()
+        self._admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
+
+    def _is_admin(self, event: AstrMessageEvent) -> bool:
+        """检查发送者是否为管理员"""
+        return str(event.get_sender_id()) in self._admin_ids
+
     # ──── 生命周期 ────
 
     async def initialize(self):
@@ -780,19 +788,16 @@ class HapiConnectorPlugin(Star):
 
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
     async def poke_approve_handler(self, event: AstrMessageEvent):
-        """戳一戳机器人 → 自动批准所有待审批请求 (仅 QQ NapCat)
-
-        NapCat 通过 OneBotv11 协议发送戳一戳 notice 事件。
-        需要 AstrBot 的 aiocqhttp 适配器将 notice 事件转发为 AstrMessageEvent。
-        若未生效，请确认适配器版本支持 notice 事件。
-        """
+        """戳一戳机器人 → 自动批准所有待审批请求 (仅 QQ NapCat)"""
         if not self._poke_approve:
             return
 
         if not self._is_poke_event(event):
+            return
+
+        if not self._is_admin(event):
             return
 
         result = await self._approve_all_pending()
@@ -815,7 +820,6 @@ class HapiConnectorPlugin(Star):
 
     # ──── 快捷前缀处理器 ────
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def quick_prefix_handler(self, event: AstrMessageEvent):
         """快捷前缀: > 消息 或 >N 消息 (仅管理员)"""
@@ -824,6 +828,9 @@ class HapiConnectorPlugin(Star):
 
         if not raw or not raw.startswith(prefix):
             return  # 不匹配，不拦截
+
+        if not self._is_admin(event):
+            return  # 非管理员，静默忽略
 
         rest = raw[len(prefix):]
 
