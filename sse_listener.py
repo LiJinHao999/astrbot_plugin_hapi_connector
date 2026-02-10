@@ -153,7 +153,7 @@ class SSEListener:
             pending_count = len(self.pending.get(sid, {}))
             if pending_count == 0:
                 label = session_label_short(sid, self.plugin.sessions_cache)
-                await self._push_notification(f"⏸ 等待输入 {label}", sid)
+                await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
 
     async def _get_latest_seq(self, sid: str) -> int:
         """获取 session 当前的最新消息序号"""

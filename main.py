@@ -178,21 +178,41 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("sw")
-    async def cmd_sw(self, event: AstrMessageEvent, index: int = 0):
-        """切换当前 session: /hapi sw <序号>"""
-        if index <= 0:
+    async def cmd_sw(self, event: AstrMessageEvent, target: str = ""):
+        """切换当前 session: /hapi sw <序号或ID前缀>"""
+        if not target:
             await self._refresh_sessions()
             current_sid = self._current_sid(event)
             text = formatters.format_session_list(self.sessions_cache, current_sid)
-            yield event.plain_result(text + "\n\n请使用 /hapi sw <序号> 切换")
+            yield event.plain_result(text + "\n\n请使用 /hapi sw <序号或ID前缀> 切换")
             return
 
         await self._refresh_sessions()
-        if index > len(self.sessions_cache):
-            yield event.plain_result(f"无效序号，共 {len(self.sessions_cache)} 个 session")
+
+        chosen = None
+        if target.isdigit():
+            index = int(target)
+            if 1 <= index <= len(self.sessions_cache):
+                chosen = self.sessions_cache[index - 1]
+
+        if chosen is None:
+            # 按 session ID 前缀匹配
+            matches = [s for s in self.sessions_cache
+                       if s.get("id", "").startswith(target)]
+            if len(matches) == 1:
+                chosen = matches[0]
+            elif len(matches) > 1:
+                labels = [f"  {s['id'][:8]}..." for s in matches]
+                yield event.plain_result(
+                    f"匹配到 {len(matches)} 个 session，请更精确:\n"
+                    + "\n".join(labels))
+                return
+
+        if chosen is None:
+            yield event.plain_result(
+                f"未找到匹配的 session，共 {len(self.sessions_cache)} 个")
             return
 
-        chosen = self.sessions_cache[index - 1]
         sid = chosen["id"]
         flavor = chosen.get("metadata", {}).get("flavor", "claude")
         await self._set_user_state(event, current_session=sid, current_flavor=flavor)
