@@ -3,7 +3,7 @@
 所有指令仅管理员可用
 """
 
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.message_components import Poke
@@ -41,11 +41,11 @@ class HapiConnectorPlugin(Star):
             refresh_before=refresh_before,
         )
 
-        # SSE 监听器
-        self.sse_listener = SSEListener(self.client, self)
-
         # session 缓存
         self.sessions_cache: list[dict] = []
+
+        # SSE 监听器
+        self.sse_listener = SSEListener(self.client, self.sessions_cache, self._push_notification)
 
         # 用户状态缓存: {sender_id: {"current_session": ..., "current_flavor": ..., "notify_umo": ...}}
         self._user_states_cache: dict[str, dict] = {}
@@ -82,7 +82,7 @@ class HapiConnectorPlugin(Star):
 
         # 加载 session 缓存
         try:
-            self.sessions_cache = await session_ops.fetch_sessions(self.client)
+            self.sessions_cache[:] = await session_ops.fetch_sessions(self.client)
         except Exception as e:
             logger.warning("初始化加载 session 列表失败: %s", e)
 
@@ -109,9 +109,13 @@ class HapiConnectorPlugin(Star):
     async def _set_user_state(self, event: AstrMessageEvent, **kwargs):
         sender_id = event.get_sender_id()
         state = self._user_states_cache.get(sender_id, {})
+        # 脏检查：无 kwargs 且 notify_umo 未变时跳过写入
+        new_umo = event.unified_msg_origin
+        if not kwargs and state.get("notify_umo") == new_umo:
+            return
         state.update(kwargs)
         # 始终更新 notify_umo
-        state["notify_umo"] = event.unified_msg_origin
+        state["notify_umo"] = new_umo
         self._user_states_cache[sender_id] = state
 
         # 持久化
@@ -131,9 +135,20 @@ class HapiConnectorPlugin(Star):
     async def _refresh_sessions(self):
         """刷新 session 缓存"""
         try:
-            self.sessions_cache = await session_ops.fetch_sessions(self.client)
+            self.sessions_cache[:] = await session_ops.fetch_sessions(self.client)
         except Exception as e:
             logger.warning("刷新 session 列表失败: %s", e)
+
+    async def _push_notification(self, text: str, session_id: str):
+        """向所有已注册的管理员推送消息（供 SSEListener 回调）"""
+        for sender_id, state in self._user_states_cache.items():
+            umo = state.get("notify_umo")
+            if umo:
+                try:
+                    chain = MessageChain().message(text)
+                    await self.context.send_message(umo, chain)
+                except Exception as e:
+                    logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
 
     # ──── 审批快捷操作（内部复用） ────
 
@@ -318,10 +333,13 @@ class HapiConnectorPlugin(Star):
             ok, msg = await session_ops.set_permission_mode(self.client, sid, target)
             yield event.plain_result(msg)
         else:
-            detail = await session_ops.fetch_session_detail(self.client, sid)
-            current = detail.get("permissionMode", "default")
-            text = formatters.format_permission_modes(modes, current)
-            yield event.plain_result(f"({flavor} 模式)\n{text}")
+            try:
+                detail = await session_ops.fetch_session_detail(self.client, sid)
+                current = detail.get("permissionMode", "default")
+                text = formatters.format_permission_modes(modes, current)
+                yield event.plain_result(f"({flavor} 模式)\n{text}")
+            except Exception:
+                yield event.plain_result("获取权限模式失败")
 
     # ── model ──
 
@@ -350,10 +368,13 @@ class HapiConnectorPlugin(Star):
             ok, msg = await session_ops.set_model_mode(self.client, sid, target)
             yield event.plain_result(msg)
         else:
-            detail = await session_ops.fetch_session_detail(self.client, sid)
-            current = detail.get("modelMode", "default")
-            text = formatters.format_model_modes(MODEL_MODES, current)
-            yield event.plain_result(text)
+            try:
+                detail = await session_ops.fetch_session_detail(self.client, sid)
+                current = detail.get("modelMode", "default")
+                text = formatters.format_model_modes(MODEL_MODES, current)
+                yield event.plain_result(text)
+            except Exception:
+                yield event.plain_result("获取模型信息失败")
 
     # ── output ──
 

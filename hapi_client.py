@@ -48,7 +48,6 @@ class AsyncTokenManager:
     async def force_refresh(self) -> str:
         """强制重新获取 JWT（用于 401 兜底）"""
         async with self._lock:
-            self._do_auth_needed = True
             await self._do_auth()
             return self._jwt
 

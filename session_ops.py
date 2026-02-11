@@ -6,6 +6,7 @@ from .hapi_client import AsyncHapiClient
 async def fetch_sessions(client: AsyncHapiClient) -> list[dict]:
     """获取所有 session 列表"""
     resp = await client.get("/api/sessions")
+    resp.raise_for_status()
     data = await resp.json()
     return data.get("sessions", [])
 
@@ -13,6 +14,7 @@ async def fetch_sessions(client: AsyncHapiClient) -> list[dict]:
 async def fetch_session_detail(client: AsyncHapiClient, sid: str) -> dict:
     """获取单个 session 详情"""
     resp = await client.get(f"/api/sessions/{sid}")
+    resp.raise_for_status()
     data = await resp.json()
     return data.get("session", data)
 
@@ -20,6 +22,7 @@ async def fetch_session_detail(client: AsyncHapiClient, sid: str) -> dict:
 async def fetch_messages(client: AsyncHapiClient, sid: str, limit: int = 10) -> list[dict]:
     """获取 session 的最近消息"""
     resp = await client.get(f"/api/sessions/{sid}/messages", params={"limit": limit})
+    resp.raise_for_status()
     data = await resp.json()
     return data.get("messages", [])
 
@@ -107,6 +110,7 @@ async def delete_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
 async def fetch_machines(client: AsyncHapiClient) -> list[dict]:
     """获取在线机器列表"""
     resp = await client.get("/api/machines")
+    resp.raise_for_status()
     data = await resp.json()
     machines = data.get("machines", [])
     return [m for m in machines if m.get("active")]

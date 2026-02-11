@@ -1,10 +1,11 @@
 """后台 SSE 事件监听 + 推送通知"""
 
+import copy
 import json
 import asyncio
+from collections.abc import Callable, Awaitable
 
 from astrbot.api import logger
-from astrbot.api.event import MessageChain
 
 from .hapi_client import AsyncHapiClient
 from .formatters import extract_text_preview, session_label_short, format_request_detail
@@ -14,9 +15,11 @@ from . import session_ops
 class SSEListener:
     """后台 SSE 监听，实时捕获权限请求、等待输入、任务完成等事件"""
 
-    def __init__(self, client: AsyncHapiClient, plugin):
+    def __init__(self, client: AsyncHapiClient, sessions_cache: list[dict],
+                 notify_callback: Callable[[str, str], Awaitable[None]]):
         self.client = client
-        self.plugin = plugin  # 反向引用插件实例
+        self.sessions_cache = sessions_cache
+        self.notify_callback = notify_callback
         self.output_level: str = "summary"
         # {session_id: {request_id: {tool, arguments, ...}}}
         self.pending: dict[str, dict] = {}
@@ -44,7 +47,7 @@ class SSEListener:
 
     def get_all_pending(self) -> dict[str, dict]:
         """返回所有 session 的待审批请求（同步读取快照）"""
-        return dict(self.pending)
+        return copy.deepcopy(self.pending)
 
     async def _listen_loop(self):
         """主循环：SSE 监听 + 指数退避重连"""
@@ -128,7 +131,7 @@ class SSEListener:
             for rid in new_ids:
                 req = requests_data[rid]
                 detail = format_request_detail(req)
-                label = session_label_short(sid, self.plugin.sessions_cache)
+                label = session_label_short(sid, self.sessions_cache)
                 total = sum(len(r) for r in self.pending.values())
                 lines = [
                     f"⚠ 权限请求 {label}",
@@ -156,7 +159,7 @@ class SSEListener:
         if is_active and old_thinking and not is_thinking:
             pending_count = len(self.pending.get(sid, {}))
             if pending_count == 0:
-                label = session_label_short(sid, self.plugin.sessions_cache)
+                label = session_label_short(sid, self.sessions_cache)
                 await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
 
     async def _get_latest_seq(self, sid: str) -> int:
@@ -171,7 +174,7 @@ class SSEListener:
 
     def _update_session_cache(self, sid: str, updated_data: dict):
         """实时更新缓存中的 session 数据"""
-        cache = self.plugin.sessions_cache
+        cache = self.sessions_cache
         if not cache:
             return
 
@@ -231,7 +234,7 @@ class SSEListener:
             if not visible_msgs:
                 return
 
-            label = session_label_short(sid, self.plugin.sessions_cache)
+            label = session_label_short(sid, self.sessions_cache)
 
             if len(visible_msgs) == 1:
                 msg, text = visible_msgs[0]
@@ -281,7 +284,7 @@ class SSEListener:
             if not agent_texts:
                 return
 
-            label = session_label_short(sid, self.plugin.sessions_cache)
+            label = session_label_short(sid, self.sessions_cache)
             lines = [f"━━━ {label} ━━━"]
             for msg, text in agent_texts:
                 seq = msg.get("seq", "?")
@@ -294,19 +297,12 @@ class SSEListener:
             logger.warning("simple 模式获取消息异常: %s", e)
 
     async def _push_notification(self, text: str, session_id: str):
-        """向所有已注册的管理员推送消息"""
-        for sender_id, state in self.plugin._user_states_cache.items():
-            umo = state.get("notify_umo")
-            if umo:
-                try:
-                    chain = MessageChain().message(text)
-                    await self.plugin.context.send_message(umo, chain)
-                except Exception as e:
-                    logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
+        """通过回调向所有已注册的管理员推送消息"""
+        await self.notify_callback(text, session_id)
 
     async def load_existing_pending(self):
         """启动时从已有 session 加载待审批请求"""
-        for s in self.plugin.sessions_cache:
+        for s in self.sessions_cache:
             sid = s.get("id", "")
             pending_count = s.get("pendingRequestsCount", 0)
             if not sid or not pending_count:
