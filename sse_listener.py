@@ -100,6 +100,7 @@ class SSEListener:
 
             is_active = data.get("active") if "active" in data else old_state.get("active", False)
             is_thinking = data.get("thinking") if "thinking" in data else old_state.get("thinking", False)
+            old_active = old_state.get("active", False)
             old_thinking = old_state.get("thinking", False)
             old_seq = old_state.get("lastSeq", -1)
 
@@ -145,6 +146,10 @@ class SSEListener:
 
         # === 输出级别处理 ===
 
+        # 检测完成信号：thinking 结束（Claude）或 active 结束（Codex 等不触发 thinking 的 agent）
+        thinking_ended = old_thinking and not is_thinking
+        active_ended = old_active and not is_active
+
         # debug 模式：防抖，合并短时间内的事件一次性拉取
         if self.output_level == "debug" and old_seq >= 0:
             if is_active or is_thinking:
@@ -152,13 +157,13 @@ class SSEListener:
                 if self._debounce_task is None or self._debounce_task.done():
                     self._debounce_task = asyncio.create_task(self._debounced_fetch())
 
-        # simple 模式：在 thinking 结束时显示最近 agent 文本消息
+        # simple 模式：在 agent 完成时显示最近 agent 文本消息
         elif self.output_level == "simple":
-            if old_thinking and not is_thinking:
+            if thinking_ended or active_ended:
                 await self._show_simple(sid)
 
-        # 所有模式都提醒：等待输入（在内容输出之后）
-        if is_active and old_thinking and not is_thinking:
+        # 所有模式都提醒：任务完成（在内容输出之后）
+        if (is_active and thinking_ended) or active_ended:
             pending_count = len(self.pending.get(sid, {}))
             if pending_count == 0:
                 label = session_label_short(sid, self.plugin.sessions_cache)
