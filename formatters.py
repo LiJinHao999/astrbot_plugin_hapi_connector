@@ -389,6 +389,21 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
+def _format_agent_line(text: str) -> str:
+    """格式化 agent 消息：工具调用 → [Function Calling - ...]，普通文本 → [Message]"""
+    if text.startswith("[调用 "):
+        try:
+            bracket_end = text.index("]")
+            tool_part = text[1:bracket_end]          # "调用 Bash"
+            rest = text[bracket_end + 1:].strip()
+            if rest:
+                return f"[Function Calling - {tool_part}]: {rest}"
+            return f"[Function Calling - {tool_part}]"
+        except ValueError:
+            pass
+    return f"[Message]: {text}"
+
+
 def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
                  max_preview: int = 0) -> str:
     """格式化单轮消息，带轮次标题"""
@@ -399,11 +414,14 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
         text = extract_text_preview(content, max_len=max_preview)
         if text is None:
             continue
-        lines.append(f"{role}: {text}")
+        if role in ("agent", "assistant"):
+            lines.append(_format_agent_line(text))
+        else:
+            lines.append(f"{role}: {text}")
     # 如果过滤后只剩标题行，说明该轮无可显示内容
     if len(lines) == 1:
         lines.append("(无可显示的消息)")
-    return "\n".join(lines)
+    return "\n\n".join(lines)
 
 
 def format_request_detail(req: dict) -> str:
