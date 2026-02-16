@@ -71,6 +71,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | 指令 | 说明 |
 |------|------|
 | `/hapi create` | 创建新会话（交互向导） |
+| `/hapi abort [序号\|ID前缀]` | 中断会话（默认当前，别名 `stop`） |
 | `/hapi archive` | 归档当前会话 |
 | `/hapi rename` | 重命名当前会话 |
 | `/hapi delete` | 删除当前会话 |
