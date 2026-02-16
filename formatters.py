@@ -330,9 +330,10 @@ def _get_message_role(msg: dict) -> str:
     content = msg.get("content", {})
     if not isinstance(content, dict):
         return "?"
-    # 检查 HAPI 包装层
-    if "message" in content and isinstance(content["message"], dict):
-        return content["message"].get("role", "?")
+    # 检查 HAPI 包装层（严格匹配：message 内必须同时有 role 和 content）
+    wrapper = content.get("message")
+    if isinstance(wrapper, dict) and "role" in wrapper and "content" in wrapper:
+        return wrapper.get("role", "?")
     return content.get("role", "?")
 
 
@@ -341,9 +342,16 @@ def _is_human_input(msg: dict) -> bool:
     content = msg.get("content", {})
     if not isinstance(content, dict):
         return False
-    if content.get("role", "") != "user":
+    role = content.get("role", "")
+    inner = content
+    # 检查 HAPI 包装层（严格匹配：message 内必须同时有 role 和 content）
+    wrapper = content.get("message")
+    if isinstance(wrapper, dict) and "role" in wrapper and "content" in wrapper:
+        role = wrapper.get("role", "")
+        inner = wrapper
+    if role != "user":
         return False
-    return _inner_has_text(content.get("content", ""))
+    return _inner_has_text(inner.get("content", ""))
 
 
 def _inner_has_text(inner) -> bool:
