@@ -78,11 +78,18 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype == "codex":
         return _extract_codex_block(block.get("data", {}), max_len)
 
-    # ── 事件 ──
+    # ── 事件 → [System] ──
     if btype == "event":
         event_data = block.get("data", {})
         event_type = event_data.get("type", "?") if isinstance(event_data, dict) else "?"
-        return None if event_type == "ready" else f"[事件: {event_type}]"
+        if event_type == "ready":
+            return None
+        # message 类型事件：提取实际消息内容（如 "Context was reset"）
+        if event_type == "message" and isinstance(event_data, dict):
+            msg = event_data.get("message", "")
+            if msg:
+                return f"[System]: {msg}"
+        return f"[System]: {event_type}"
 
     # ── 跳过噪音 ──
     if btype in ("token_count", "thinking"):
@@ -390,7 +397,9 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
 
 
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → [Function Calling - ...]，普通文本 → [Message]"""
+    """格式化 agent 消息：工具调用 → [Function Calling - ...]，系统事件 → 透传，普通文本 → [Message]"""
+    if text.startswith("[System]:"):
+        return text
     if text.startswith("[调用 "):
         try:
             bracket_end = text.index("]")
