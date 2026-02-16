@@ -404,6 +404,13 @@ def format_agent_line(text: str) -> str:
     return f"[Message]: {text}"
 
 
+def format_sse_line(role: str, text: str) -> str:
+    """根据 role 格式化 SSE 推送的单条消息"""
+    if role in ("agent", "assistant"):
+        return format_agent_line(text)
+    return f"[System]: {text}"
+
+
 def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
                  max_preview: int = 0) -> str:
     """格式化单轮消息，带轮次标题"""
@@ -419,7 +426,7 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
         elif role == "user":
             lines.append(f"[User Input]: {text}")
         else:
-            lines.append(f"{role}: {text}")
+            lines.append(f"[System]: {text}")
     # 如果过滤后只剩标题行，说明该轮无可显示内容
     if len(lines) == 1:
         lines.append("(无可显示的消息)")
