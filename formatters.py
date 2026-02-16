@@ -77,16 +77,26 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype in ("token_count", "thinking"):
         return None
 
-    # ── 有 type 但未识别 ──
-    if btype:
-        return f"[{btype}]"
+    # ── 未识别或无 type：尝试从常见字段提取文本 ──
+    for key in ("text", "data", "content", "message", "output"):
+        val = block.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str) and val.strip():
+            prefix = f"[{btype}] " if btype else ""
+            return f"{prefix}{val[:max_len]}"
+        if isinstance(val, list):
+            result = _extract_from_blocks(val, max_len)
+            if result:
+                return result
+        if isinstance(val, dict):
+            result = _extract_from_block(val, max_len)
+            if result:
+                return result
 
-    # ── 无 type，兼容旧格式（如 Claude 的 {"text": "..."} ）──
-    if "text" in block:
-        text = block["text"]
-        return text[:max_len] if text.strip() else None
-
-    return json.dumps(block, ensure_ascii=False)[:max_len]
+    # 兜底
+    raw = json.dumps(block, ensure_ascii=False)
+    return raw[:max_len] if raw != "{}" else None
 
 
 def _fmt_tool_call(block: dict, max_len: int) -> str:
