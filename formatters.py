@@ -309,21 +309,87 @@ def format_session_status(s: dict) -> str:
 
 
 def format_messages(messages: list[dict], max_preview: int = 0) -> str:
-    """格式化消息列表"""
+    """格式化消息列表（无 seq 编号，仅 role: text 格式）"""
     if not messages:
         return "(暂无消息)"
 
     lines = []
     for m in messages:
-        seq = m.get("seq", "?")
         content = m.get("content", {})
         role = content.get("role", "?")
         text = extract_text_preview(content, max_len=max_preview)
         if text is None:
             continue
-        lines.append(f"[{seq:>4}] {role}: {text}")
+        lines.append(f"{role}: {text}")
 
     return "\n".join(lines) if lines else "(暂无可显示的消息)"
+
+
+def _get_message_role(msg: dict) -> str:
+    """从 HAPI 消息中提取 role（处理包装层）"""
+    content = msg.get("content", {})
+    if not isinstance(content, dict):
+        return "?"
+    # 检查 HAPI 包装层
+    if "message" in content and isinstance(content["message"], dict):
+        return content["message"].get("role", "?")
+    return content.get("role", "?")
+
+
+def _is_human_input(msg: dict) -> bool:
+    """判断消息是否为真实用户文本输入（非 tool_result 等协议消息）"""
+    content = msg.get("content", {})
+    if not isinstance(content, dict):
+        return False
+    role = content.get("role", "")
+    # 检查 HAPI 包装层
+    if "message" in content and isinstance(content["message"], dict):
+        role = content["message"].get("role", "")
+        content = content["message"]
+    if role != "user":
+        return False
+    inner = content.get("content", "")
+    if isinstance(inner, str):
+        return bool(inner.strip())
+    if isinstance(inner, list):
+        return any(
+            isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()
+            for b in inner
+        )
+    return False
+
+
+def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
+    """按用户输入将消息切分为轮次列表。
+    一轮 = 一条用户文本输入 + 后续所有 agent 响应（直到下一条用户输入之前）。
+    """
+    rounds = []
+    current = []
+    for msg in messages:
+        if _is_human_input(msg) and current:
+            rounds.append(current)
+            current = []
+        current.append(msg)
+    if current:
+        rounds.append(current)
+    return rounds
+
+
+def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
+                 max_preview: int = 0) -> str:
+    """格式化单轮消息，带轮次标题"""
+    lines = [f"── 第 {round_idx}/{total_rounds} 轮 ──"]
+    for m in round_msgs:
+        content = m.get("content", {})
+        role = _get_message_role(m)
+        text = extract_text_preview(content, max_len=max_preview)
+        if text is None:
+            continue
+        lines.append(f"{role}: {text}")
+    # 如果过滤后只剩标题行，说明该轮无可显示内容
+    if len(lines) == 1:
+        lines.append("(无可显示的消息)")
+    return "\n".join(lines)
 
 
 def format_request_detail(req: dict) -> str:
@@ -390,7 +456,7 @@ def get_help_text() -> str:
 
 ── 当前 Session 操作 ──
   /hapi s          查看当前 session 状态
-  /hapi msg [数量] 查看最近消息 (默认 10)
+  /hapi msg [轮数] 查看最近消息 (默认 1 轮)
   /hapi perm [模式] 查看/切换权限模式
   /hapi model [模式] 查看/切换模型 (仅 Claude)
   /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/debug)

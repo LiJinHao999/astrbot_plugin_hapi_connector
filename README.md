@@ -56,7 +56,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | `/hapi list` | 列出所有会话（按工作目录分组） |
 | `/hapi sw <序号或ID前缀>` | 切换当前会话 |
 | `/hapi s` | 查看当前会话状态 |
-| `/hapi msg [数量]` | 查看最近消息（默认 10 条） |
+| `/hapi msg [轮数]` | 查看最近消息（默认 1 轮） |
 
 ### 消息发送
 
