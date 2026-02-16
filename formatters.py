@@ -416,6 +416,8 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
             continue
         if role in ("agent", "assistant"):
             lines.append(_format_agent_line(text))
+        elif role == "user":
+            lines.append(f"[User Input]: {text}")
         else:
             lines.append(f"{role}: {text}")
     # 如果过滤后只剩标题行，说明该轮无可显示内容
