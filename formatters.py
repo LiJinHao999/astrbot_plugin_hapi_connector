@@ -77,6 +77,17 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype in ("token_count", "thinking"):
         return None
 
+    # ── 嵌套消息结构（如 {"role": "user", "content": [...]} ）──
+    if "role" in block and "content" in block:
+        nested = block["content"]
+        if isinstance(nested, list):
+            return _extract_from_blocks(nested, max_len)
+        if isinstance(nested, dict):
+            return _extract_from_block(nested, max_len)
+        if isinstance(nested, str) and nested.strip():
+            return nested[:max_len]
+        return None
+
     # ── 未识别或无 type：尝试从常见字段提取文本 ──
     for key in ("text", "data", "content", "message", "output"):
         val = block.get(key)
@@ -274,7 +285,7 @@ def format_session_status(s: dict) -> str:
     return "\n".join(lines)
 
 
-def format_messages(messages: list[dict], max_preview: int = 120) -> str:
+def format_messages(messages: list[dict], max_preview: int = 0) -> str:
     """格式化消息列表"""
     if not messages:
         return "(暂无消息)"
