@@ -8,7 +8,7 @@ from collections.abc import Callable, Awaitable
 from astrbot.api import logger
 
 from .hapi_client import AsyncHapiClient
-from .formatters import extract_text_preview, session_label_short, format_request_detail, format_agent_line, format_sse_line
+from .formatters import extract_text_preview, session_label_short, format_request_detail, format_agent_line
 from . import session_ops
 
 
@@ -150,14 +150,7 @@ class SSEListener:
 
         # detail/simple 模式：防抖，合并短时间内的事件一次性拉取
         if self.output_level in ("detail", "simple") and old_seq >= 0:
-            old_active = old_state.get("active", False)
             if is_active or is_thinking:
-                # 活跃中，持续拉取
-                self._debounce_sids.add(sid)
-                if self._debounce_task is None or self._debounce_task.done():
-                    self._debounce_task = asyncio.create_task(self._debounced_fetch())
-            elif old_active or old_thinking:
-                # 刚从活跃变为不活跃（abort / 完成），最后拉取一次
                 self._debounce_sids.add(sid)
                 if self._debounce_task is None or self._debounce_task.done():
                     self._debounce_task = asyncio.create_task(self._debounced_fetch())
@@ -245,13 +238,11 @@ class SSEListener:
 
             if len(visible_msgs) == 1:
                 msg, text = visible_msgs[0]
-                role = msg.get("content", {}).get("role", "?")
-                output = f"{label}\n{format_sse_line(role, text)}"
+                output = f"{label}\n{format_agent_line(text)}"
             else:
                 lines = [f"━━━ {label} — {len(visible_msgs)} 条新消息 ━━━"]
                 for msg, text in sorted(visible_msgs, key=lambda x: x[0].get("seq", 0)):
-                    role = msg.get("content", {}).get("role", "?")
-                    lines.append(format_sse_line(role, text))
+                    lines.append(format_agent_line(text))
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
