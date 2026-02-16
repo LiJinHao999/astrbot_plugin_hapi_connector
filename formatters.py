@@ -4,76 +4,156 @@ import json
 
 
 def extract_text_preview(content: dict, max_len: int = 80) -> str | None:
-    """从消息 content 中提取文本预览。
-    返回 None 表示该消息不应显示（如 token_count、ready 事件）。
+    """从消息 content 中提取文本预览（通用，适配所有 agent）。
+    返回 None 表示该消息不应显示（如 token_count、ready 事件等噪音）。
     max_len <= 0 表示不截断。
     """
     if max_len <= 0:
         max_len = 999999
     inner = content.get("content", {})
 
+    # 纯文本（部分 agent 直接返回字符串）
     if isinstance(inner, str):
-        return inner[:max_len]
-    elif isinstance(inner, dict):
-        # Codex 类型消息
-        if inner.get("type") == "codex":
-            data = inner.get("data", {})
-            dtype = data.get("type", "")
-            if dtype == "text":
-                return data.get("text", "")[:max_len]
-            elif dtype == "tool-call":
-                tool = data.get("name", "?")
-                inp = data.get("input", {})
-                actual_tool = inp.get("tool", tool)
-                cmd = inp.get("command", "")
-                if cmd:
-                    return f"[调用 {actual_tool}] {cmd[:max_len]}"
-                else:
-                    args_str = json.dumps(inp, ensure_ascii=False)[:max_len]
-                    return f"[调用 {actual_tool}] {args_str}"
-            elif dtype == "tool-call-result":
-                output = data.get("output", {})
-                if isinstance(output, dict):
-                    cmd = output.get("command", "")
-                    exit_code = output.get("exit_code", "")
-                    status = output.get("status", "")
-                    stdout = output.get("stdout", "")
-                    if stdout:
-                        lines = stdout.split('\n')[:3]
-                        preview = '\n'.join(lines)
-                        return f"[返回 exit={exit_code}] {preview[:max_len]}"
-                    elif cmd:
-                        return f"[返回 exit={exit_code}] {status}"
-                    else:
-                        return f"[返回] {json.dumps(output, ensure_ascii=False)[:max_len]}"
-                else:
-                    return f"[返回] {str(output)[:max_len]}"
-            elif dtype == "token_count":
-                return None
-            elif dtype == "message":
-                msg_text = data.get("message", "")
-                if msg_text:
-                    return msg_text[:max_len]
-                return "[消息]"
-            else:
-                return f"[{dtype}]"
-        # 事件类型消息
-        elif inner.get("type") == "event":
-            event_data = inner.get("data", {})
-            event_type = event_data.get("type", "?")
-            if event_type == "ready":
-                return None
-            else:
-                return f"[事件: {event_type}]"
-        # Claude 类型消息
-        elif "text" in inner:
-            return inner["text"][:max_len]
-        else:
-            if "id" in inner and "type" in inner:
-                return f"[{inner.get('type')}]"
-            return json.dumps(inner, ensure_ascii=False)[:max_len]
-    else:
-        return str(inner)[:max_len]
+        return inner[:max_len] if inner.strip() else None
+
+    # content blocks 列表（标准格式）
+    if isinstance(inner, list):
+        return _extract_from_blocks(inner, max_len)
+
+    # 单个 block（dict）
+    if isinstance(inner, dict):
+        return _extract_from_block(inner, max_len)
+
+    return str(inner)[:max_len]
+
+
+def _extract_from_blocks(blocks: list, max_len: int) -> str | None:
+    """从 content blocks 列表中提取文本预览，只保留有意义的内容"""
+    parts = []
+    for block in blocks:
+        if isinstance(block, str):
+            if block.strip():
+                parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+        text = _extract_from_block(block, max_len)
+        if text is not None:
+            parts.append(text)
+
+    if not parts:
+        return None
+    return "\n".join(parts)[:max_len]
+
+
+def _extract_from_block(block: dict, max_len: int) -> str | None:
+    """从单个 content block 中提取文本，返回 None 表示跳过"""
+    btype = block.get("type", "")
+
+    # ── 文本内容（模型回复）──
+    if btype == "text":
+        text = block.get("text", "")
+        return text[:max_len] if text.strip() else None
+
+    # ── 工具调用（Claude: tool_use / Codex: tool-call 等）──
+    if btype in ("tool_use", "tool-call"):
+        return _fmt_tool_call(block, max_len)
+
+    # ── 工具返回 ──
+    if btype in ("tool_result", "tool-call-result"):
+        return _fmt_tool_result(block, max_len)
+
+    # ── Codex 包装格式 {"type": "codex", "data": {...}} ──
+    if btype == "codex":
+        return _extract_codex_block(block.get("data", {}), max_len)
+
+    # ── 事件 ──
+    if btype == "event":
+        event_data = block.get("data", {})
+        event_type = event_data.get("type", "?") if isinstance(event_data, dict) else "?"
+        return None if event_type == "ready" else f"[事件: {event_type}]"
+
+    # ── 跳过噪音 ──
+    if btype in ("token_count", "thinking"):
+        return None
+
+    # ── 有 type 但未识别 ──
+    if btype:
+        return f"[{btype}]"
+
+    # ── 无 type，兼容旧格式（如 Claude 的 {"text": "..."} ）──
+    if "text" in block:
+        text = block["text"]
+        return text[:max_len] if text.strip() else None
+
+    return json.dumps(block, ensure_ascii=False)[:max_len]
+
+
+def _fmt_tool_call(block: dict, max_len: int) -> str:
+    """格式化工具调用 block"""
+    name = block.get("name", "?")
+    inp = block.get("input", {})
+    if isinstance(inp, dict):
+        # 优先显示 command（bash 类工具最常见）
+        cmd = inp.get("command", "")
+        if cmd:
+            return f"[调用 {name}] {cmd[:max_len]}"
+        args_str = json.dumps(inp, ensure_ascii=False)[:max_len]
+        return f"[调用 {name}] {args_str}"
+    return f"[调用 {name}]"
+
+
+def _fmt_tool_result(block: dict, max_len: int) -> str:
+    """格式化工具返回 block"""
+    output = block.get("content", block.get("output", ""))
+    if isinstance(output, str):
+        if not output.strip():
+            return "[返回] (空)"
+        lines = output.split('\n')[:3]
+        return f"[返回] {chr(10).join(lines)[:max_len]}"
+    if isinstance(output, list):
+        # 嵌套 content blocks
+        texts = []
+        for sub in output:
+            if isinstance(sub, dict) and sub.get("type") == "text":
+                texts.append(sub.get("text", ""))
+            elif isinstance(sub, str):
+                texts.append(sub)
+        if texts:
+            return f"[返回] {' '.join(texts)[:max_len]}"
+        return "[返回]"
+    if isinstance(output, dict):
+        # Codex 风格结构化输出
+        exit_code = output.get("exit_code", "")
+        stdout = output.get("stdout", "")
+        if stdout:
+            lines = stdout.split('\n')[:3]
+            return f"[返回 exit={exit_code}] {chr(10).join(lines)[:max_len]}"
+        cmd = output.get("command", "")
+        if cmd:
+            return f"[返回 exit={exit_code}] {output.get('status', '')}"
+        return f"[返回] {json.dumps(output, ensure_ascii=False)[:max_len]}"
+    return "[返回]"
+
+
+def _extract_codex_block(data: dict, max_len: int) -> str | None:
+    """处理 Codex 专有的包装格式"""
+    if not isinstance(data, dict):
+        return str(data)[:max_len]
+    dtype = data.get("type", "")
+    if dtype == "text":
+        text = data.get("text", "")
+        return text[:max_len] if text.strip() else None
+    if dtype == "tool-call":
+        return _fmt_tool_call(data, max_len)
+    if dtype == "tool-call-result":
+        return _fmt_tool_result({"output": data.get("output", {})}, max_len)
+    if dtype == "token_count":
+        return None
+    if dtype == "message":
+        msg_text = data.get("message", "")
+        return msg_text[:max_len] if msg_text else "[消息]"
+    return f"[{dtype}]" if dtype else None
 
 
 def session_label(s: dict, current_sid: str | None = None, show_path: bool = False) -> str:
