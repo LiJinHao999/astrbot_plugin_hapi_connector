@@ -88,6 +88,18 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
             return nested[:max_len]
         return None
 
+    # ── HAPI 消息包装（含 message 字段的元数据结构）──
+    msg = block.get("message")
+    if isinstance(msg, dict) and "role" in msg and "content" in msg:
+        nested = msg["content"]
+        if isinstance(nested, list):
+            return _extract_from_blocks(nested, max_len)
+        if isinstance(nested, dict):
+            return _extract_from_block(nested, max_len)
+        if isinstance(nested, str) and nested.strip():
+            return nested[:max_len]
+        return None
+
     # ── 未识别或无 type：尝试从常见字段提取文本 ──
     for key in ("text", "data", "content", "message", "output"):
         val = block.get(key)
