@@ -341,14 +341,13 @@ def _is_human_input(msg: dict) -> bool:
     content = msg.get("content", {})
     if not isinstance(content, dict):
         return False
-    role = content.get("role", "")
-    # 检查 HAPI 包装层
-    if "message" in content and isinstance(content["message"], dict):
-        role = content["message"].get("role", "")
-        content = content["message"]
-    if role != "user":
+    if content.get("role", "") != "user":
         return False
-    inner = content.get("content", "")
+    return _inner_has_text(content.get("content", ""))
+
+
+def _inner_has_text(inner) -> bool:
+    """递归检查 content 内部是否包含真实文本"""
     if isinstance(inner, str):
         return bool(inner.strip())
     if isinstance(inner, list):
@@ -356,6 +355,13 @@ def _is_human_input(msg: dict) -> bool:
             isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()
             for b in inner
         )
+    if isinstance(inner, dict):
+        # 单个 text block
+        if inner.get("type") == "text":
+            return bool(inner.get("text", "").strip())
+        # 嵌套消息结构 {"role": "user", "content": [...]}
+        if "content" in inner:
+            return _inner_has_text(inner["content"])
     return False
 
 
