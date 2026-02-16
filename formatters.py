@@ -63,6 +63,17 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype in ("tool_result", "tool-call-result"):
         return None
 
+    # ── 包装类型（output/input）：内容在 data 字段里，递归处理 ──
+    if btype in ("output", "input"):
+        data = block.get("data")
+        if isinstance(data, dict):
+            return _extract_from_block(data, max_len)
+        if isinstance(data, list):
+            return _extract_from_blocks(data, max_len)
+        if isinstance(data, str) and data.strip():
+            return data[:max_len]
+        return None
+
     # ── Codex 包装格式 {"type": "codex", "data": {...}} ──
     if btype == "codex":
         return _extract_codex_block(block.get("data", {}), max_len)
