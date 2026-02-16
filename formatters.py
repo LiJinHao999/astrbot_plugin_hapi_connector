@@ -43,7 +43,7 @@ def _extract_from_blocks(blocks: list, max_len: int) -> str | None:
 
     if not parts:
         return None
-    return "\n".join(parts)[:max_len]
+    return "\n".join(parts)
 
 
 def _extract_from_block(block: dict, max_len: int) -> str | None:
@@ -59,9 +59,9 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype in ("tool_use", "tool-call"):
         return _fmt_tool_call(block, max_len)
 
-    # ── 工具返回 ──
+    # ── 工具返回：跳过，只关注模型文本和工具调用 ──
     if btype in ("tool_result", "tool-call-result"):
-        return _fmt_tool_result(block, max_len)
+        return None
 
     # ── Codex 包装格式 {"type": "codex", "data": {...}} ──
     if btype == "codex":
