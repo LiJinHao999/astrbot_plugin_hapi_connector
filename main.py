@@ -90,7 +90,7 @@ class HapiConnectorPlugin(Star):
         await self.sse_listener.load_existing_pending()
 
         # 启动 SSE
-        output_level = self.config.get("output_level", "silence")
+        output_level = self.config.get("output_level", "detail")
         self.sse_listener.start(output_level)
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
@@ -393,7 +393,7 @@ class HapiConnectorPlugin(Star):
     _OUTPUT_LEVELS = {
         "silence": "仅推送权限请求和任务完成提醒",
         "simple": "AI 思考完成后推送最近 agent 文本消息",
-        "debug": "实时推送所有新消息（信息量较大）",
+        "detail": "实时推送所有新消息（信息量较大）",
     }
 
     @filter.permission_type(filter.PermissionType.ADMIN)

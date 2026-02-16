@@ -29,8 +29,8 @@
   "output_level": {
     "description": "SSE 推送级别",
     "type": "string",
-    "default": "silence",
-    "options": ["silence", "simple", "debug"]
+    "default": "detail",
+    "options": ["silence", "simple", "detail"]
   },
   "simple_msg_count": {
     "description": "simple 推送级别显示的 agent 消息条数",

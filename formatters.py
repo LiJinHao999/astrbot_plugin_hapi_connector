@@ -389,7 +389,7 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
-def _format_agent_line(text: str) -> str:
+def format_agent_line(text: str) -> str:
     """格式化 agent 消息：工具调用 → [Function Calling - ...]，普通文本 → [Message]"""
     if text.startswith("[调用 "):
         try:
@@ -415,7 +415,7 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
         if text is None:
             continue
         if role in ("agent", "assistant"):
-            lines.append(_format_agent_line(text))
+            lines.append(format_agent_line(text))
         elif role == "user":
             lines.append(f"[User Input]: {text}")
         else:
@@ -493,7 +493,7 @@ def get_help_text() -> str:
   /hapi msg [轮数] 查看最近消息 (默认 1 轮)
   /hapi perm [模式] 查看/切换权限模式
   /hapi model [模式] 查看/切换模型 (仅 Claude)
-  /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/debug)
+  /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/detail)
 
 ── Session 管理 ──
   /hapi list       列出所有 session

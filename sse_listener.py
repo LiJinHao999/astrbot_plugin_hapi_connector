@@ -8,7 +8,7 @@ from collections.abc import Callable, Awaitable
 from astrbot.api import logger
 
 from .hapi_client import AsyncHapiClient
-from .formatters import extract_text_preview, session_label_short, format_request_detail
+from .formatters import extract_text_preview, session_label_short, format_request_detail, format_agent_line
 from . import session_ops
 
 
@@ -148,8 +148,8 @@ class SSEListener:
 
         # === 输出级别处理 ===
 
-        # debug/simple 模式：防抖，合并短时间内的事件一次性拉取
-        if self.output_level in ("debug", "simple") and old_seq >= 0:
+        # detail/simple 模式：防抖，合并短时间内的事件一次性拉取
+        if self.output_level in ("detail", "simple") and old_seq >= 0:
             if is_active or is_thinking:
                 self._debounce_sids.add(sid)
                 if self._debounce_task is None or self._debounce_task.done():
@@ -199,13 +199,13 @@ class SSEListener:
             async with self._lock:
                 old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
             if old_seq >= 0:
-                if self.output_level == "debug":
-                    await self._show_new_messages(sid, old_seq)
+                if self.output_level == "detail":
+                    await self._show_detail(sid, old_seq)
                 elif self.output_level == "simple":
                     await self._show_simple(sid, old_seq)
 
-    async def _show_new_messages(self, sid: str, old_seq: int):
-        """debug 模式：获取并显示所有新消息"""
+    async def _show_detail(self, sid: str, old_seq: int):
+        """detail 模式：获取并显示所有新消息（使用统一格式）"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=20)
             if not messages:
@@ -238,22 +238,18 @@ class SSEListener:
 
             if len(visible_msgs) == 1:
                 msg, text = visible_msgs[0]
-                seq = msg.get("seq", "?")
-                role = msg.get("content", {}).get("role", "?")
-                output = f"[DEBUG] {label}\n[{seq}] {role}: {text}"
+                output = f"{label}\n{format_agent_line(text)}"
             else:
                 lines = [f"━━━ {label} — {len(visible_msgs)} 条新消息 ━━━"]
                 for msg, text in sorted(visible_msgs, key=lambda x: x[0].get("seq", 0)):
-                    seq = msg.get("seq", "?")
-                    role = msg.get("content", {}).get("role", "?")
-                    lines.append(f"[{seq}] {role}: {text}")
+                    lines.append(format_agent_line(text))
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                output = "\n".join(lines)
+                output = "\n\n".join(lines)
 
             await self._push_notification(output, sid)
 
         except Exception as e:
-            logger.warning("debug 模式获取消息异常: %s", e)
+            logger.warning("detail 模式获取消息异常: %s", e)
 
     async def _show_simple(self, sid: str, old_seq: int):
         """simple 模式：获取并显示新的 agent 纯文本消息"""
@@ -285,13 +281,18 @@ class SSEListener:
                 return
 
             label = session_label_short(sid, self.sessions_cache)
-            lines = [f"━━━ {label} ━━━"]
-            for msg, text in agent_texts:
-                seq = msg.get("seq", "?")
-                lines.append(f"[{seq}] {text}")
-            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-            await self._push_notification("\n".join(lines), sid)
+            if len(agent_texts) == 1:
+                _, text = agent_texts[0]
+                output = f"{label}\n[Message]: {text}"
+            else:
+                lines = [f"━━━ {label} ━━━"]
+                for _, text in agent_texts:
+                    lines.append(f"[Message]: {text}")
+                lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                output = "\n\n".join(lines)
+
+            await self._push_notification(output, sid)
 
         except Exception as e:
             logger.warning("simple 模式获取消息异常: %s", e)
