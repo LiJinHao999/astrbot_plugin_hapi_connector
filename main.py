@@ -730,6 +730,46 @@ class HapiConnectorPlugin(Star):
         finally:
             event.stop_event()
 
+    # ── abort ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("abort", alias={"stop"})
+    async def cmd_abort(self, event: AstrMessageEvent, target: str = ""):
+        """中断 session: /hapi abort [序号|ID前缀]"""
+        await self._set_user_state(event)
+        await self._refresh_sessions()
+
+        if not target:
+            sid = self._current_sid(event)
+            if not sid:
+                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+                return
+        else:
+            sid = None
+            if target.isdigit():
+                idx = int(target)
+                if 1 <= idx <= len(self.sessions_cache):
+                    sid = self.sessions_cache[idx - 1]["id"]
+            if sid is None:
+                matches = [s for s in self.sessions_cache
+                           if s.get("id", "").startswith(target)]
+                if len(matches) == 1:
+                    sid = matches[0]["id"]
+                elif len(matches) > 1:
+                    labels = [f"  {s['id'][:8]}..." for s in matches]
+                    yield event.plain_result(
+                        f"匹配到 {len(matches)} 个 session，请更精确:\n"
+                        + "\n".join(labels))
+                    return
+            if sid is None:
+                yield event.plain_result(f"未找到匹配的 session")
+                return
+
+        ok, msg = await session_ops.abort_session(self.client, sid)
+        if ok:
+            await self._refresh_sessions()
+        yield event.plain_result(msg)
+
     # ── archive ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)

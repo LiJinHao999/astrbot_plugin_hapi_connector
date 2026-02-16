@@ -388,6 +388,7 @@ def get_help_text() -> str:
   /hapi list       列出所有 session
   /hapi sw <序号|ID前缀>  切换当前 session
   /hapi create     创建新 session (向导)
+  /hapi abort [序号|ID前缀] 中断 session (默认当前)
   /hapi archive    归档当前 session
   /hapi rename     重命名当前 session
   /hapi delete     删除当前 session

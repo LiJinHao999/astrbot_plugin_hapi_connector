@@ -77,6 +77,16 @@ async def deny_permission(client: AsyncHapiClient, sid: str, rid: str) -> tuple[
         return False, f"拒绝失败: {resp.status} {body[:200]}"
 
 
+async def abort_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
+    """中断活跃的 session"""
+    resp = await client.post(f"/api/sessions/{sid}/abort", json={})
+    if resp.ok:
+        return True, f"已中断 [{sid[:8]}]"
+    else:
+        body = await resp.text()
+        return False, f"中断失败: {resp.status} {body[:200]}"
+
+
 async def archive_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
     """归档 session"""
     resp = await client.patch(f"/api/sessions/{sid}", json={"active": False})
