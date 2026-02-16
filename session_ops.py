@@ -88,8 +88,10 @@ async def abort_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
 
 
 async def archive_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
-    """归档 session"""
-    resp = await client.patch(f"/api/sessions/{sid}", json={"active": False})
+    """归档 session（PATCH 要求 name 必填，先取当前名称）"""
+    detail = await fetch_session_detail(client, sid)
+    name = detail.get("metadata", {}).get("summary", {}).get("text", "") or sid[:8]
+    resp = await client.patch(f"/api/sessions/{sid}", json={"name": name, "active": False})
     if resp.ok:
         return True, f"归档成功 [{sid[:8]}]"
     else:
