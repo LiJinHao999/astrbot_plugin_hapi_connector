@@ -91,6 +91,11 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
                 return f"[System]: {msg}"
         return f"[System]: {event_type}"
 
+    # ── Summary（Codex 等 agent 的会话摘要）──
+    if btype == "summary":
+        text = block.get("summary", "")
+        return f"[Summary]: {text[:max_len]}" if text else None
+
     # ── 跳过噪音 ──
     if btype in ("token_count", "thinking"):
         return None
@@ -198,7 +203,7 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
     if dtype == "tool-call":
         return _fmt_tool_call(data, max_len)
     if dtype == "tool-call-result":
-        return _fmt_tool_result({"output": data.get("output", {})}, max_len)
+        return None
     if dtype == "token_count":
         return None
     if dtype == "message":
