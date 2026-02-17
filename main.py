@@ -140,43 +140,15 @@ class HapiConnectorPlugin(Star):
             logger.warning("刷新 session 列表失败: %s", e)
 
     async def _push_notification(self, text: str, session_id: str):
-        """向所有已注册的管理员推送消息（供 SSEListener 回调），超长自动分片"""
-        chunks = self._split_message(text)
+        """向所有已注册的管理员推送消息（供 SSEListener 回调）"""
         for sender_id, state in self._user_states_cache.items():
             umo = state.get("notify_umo")
             if umo:
-                for chunk in chunks:
-                    try:
-                        chain = MessageChain().message(chunk)
-                        await self.context.send_message(umo, chain)
-                    except Exception as e:
-                        logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
-                        break
-
-    @staticmethod
-    def _split_message(text: str, max_len: int = 2000) -> list[str]:
-        """按行边界将长消息分片，每片不超过 max_len 字符"""
-        if len(text) <= max_len:
-            return [text]
-        chunks = []
-        current = ""
-        for line in text.split("\n"):
-            # 单行超长则强制截断
-            if len(line) > max_len:
-                if current:
-                    chunks.append(current)
-                    current = ""
-                for i in range(0, len(line), max_len):
-                    chunks.append(line[i:i + max_len])
-                continue
-            if current and len(current) + 1 + len(line) > max_len:
-                chunks.append(current)
-                current = line
-            else:
-                current = current + "\n" + line if current else line
-        if current:
-            chunks.append(current)
-        return chunks
+                try:
+                    chain = MessageChain().message(text)
+                    await self.context.send_message(umo, chain)
+                except Exception as e:
+                    logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
 
     # ──── 审批快捷操作（内部复用） ────
 

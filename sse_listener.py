@@ -221,7 +221,7 @@ class SSEListener:
             visible_msgs = []
             for msg in new_msgs:
                 content = msg.get("content", {})
-                text = extract_text_preview(content, max_len=500)
+                text = extract_text_preview(content, max_len=0)
                 if text is not None:
                     visible_msgs.append((msg, text))
 
