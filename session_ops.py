@@ -139,8 +139,8 @@ async def fetch_recent_paths(client: AsyncHapiClient) -> list[str]:
 
 async def spawn_session(client: AsyncHapiClient, machine_id: str,
                         directory: str, agent: str, session_type: str = "simple",
-                        yolo: bool = False, worktree_name: str = "") -> tuple[bool, str]:
-    """创建新 session"""
+                        yolo: bool = False, worktree_name: str = "") -> tuple[bool, str, str | None]:
+    """创建新 session，返回 (成功, 消息, session_id 或 None)"""
     body = {
         "directory": directory,
         "agent": agent,
@@ -153,11 +153,11 @@ async def spawn_session(client: AsyncHapiClient, machine_id: str,
     resp = await client.post(f"/api/machines/{machine_id}/spawn", json=body)
     if resp.status != 200:
         body_text = await resp.text()
-        return False, f"创建失败: {resp.status} {body_text[:300]}"
+        return False, f"创建失败: {resp.status} {body_text[:300]}", None
 
     result = await resp.json()
     if result.get("type") == "success":
         sid = result["sessionId"]
-        return True, f"创建成功! Session ID: {sid}"
+        return True, f"创建成功! Session ID: {sid}", sid
     else:
-        return False, f"创建失败: {result.get('message', '未知错误')}"
+        return False, f"创建失败: {result.get('message', '未知错误')}", None

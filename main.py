@@ -722,7 +722,7 @@ class HapiConnectorPlugin(Star):
 
                 await ev.send(ev.plain_result("正在创建 ..."))
 
-                ok, msg = await session_ops.spawn_session(
+                ok, msg, new_sid = await session_ops.spawn_session(
                     self.client,
                     machine_id=wizard["machine_id"],
                     directory=wizard["directory"],
@@ -731,8 +731,12 @@ class HapiConnectorPlugin(Star):
                     yolo=wizard["yolo"],
                     worktree_name=wizard["worktree_name"],
                 )
-                await ev.send(ev.plain_result(msg))
                 await self._refresh_sessions()
+                if ok and new_sid:
+                    flavor = wizard["agent"]
+                    await self._set_user_state(ev, current_session=new_sid, current_flavor=flavor)
+                    msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
+                await ev.send(ev.plain_result(msg))
                 controller.stop()
 
         try:
