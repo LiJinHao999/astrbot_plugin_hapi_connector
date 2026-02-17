@@ -862,11 +862,28 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
 
-        yield event.plain_result(f"即将删除 session [{sid[:8]}]\n输入 delete 确认删除:")
+        # 检查是否处于 active 状态
+        is_active = False
+        cached = [s for s in self.sessions_cache if s.get("id") == sid]
+        if cached:
+            is_active = cached[0].get("active", False)
+
+        if is_active:
+            yield event.plain_result(
+                f"⚠ session [{sid[:8]}] 当前处于 ACTIVE 状态，将先归档再删除\n"
+                "输入 delete 确认:")
+        else:
+            yield event.plain_result(f"即将删除 session [{sid[:8]}]\n输入 delete 确认删除:")
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def delete_waiter(controller: SessionController, ev: AstrMessageEvent):
             if ev.message_str.strip() == "delete":
+                if is_active:
+                    ok_arc, msg_arc = await session_ops.archive_session(self.client, sid)
+                    if not ok_arc:
+                        await ev.send(ev.plain_result(f"归档失败，删除中止: {msg_arc}"))
+                        controller.stop()
+                        return
                 ok, msg = await session_ops.delete_session(self.client, sid)
                 await ev.send(ev.plain_result(msg))
                 if ok:
