@@ -370,6 +370,27 @@ class HapiConnectorPlugin(Star):
                 yield event.plain_result(f"({flavor} 模式)\n{text}")
             except Exception:
                 yield event.plain_result("获取权限模式失败")
+                return
+
+            @session_waiter(timeout=30, record_history_chains=False)
+            async def perm_waiter(controller: SessionController, ev: AstrMessageEvent):
+                reply = ev.message_str.strip()
+                target = reply
+                if reply.isdigit() and 1 <= int(reply) <= len(modes):
+                    target = modes[int(reply) - 1]
+                if target not in modes:
+                    await ev.send(ev.plain_result(f"无效模式，可用: {', '.join(modes)}"))
+                else:
+                    ok, msg = await session_ops.set_permission_mode(self.client, sid, target)
+                    await ev.send(ev.plain_result(msg))
+                controller.stop()
+
+            try:
+                await perm_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("操作超时，已取消")
+            finally:
+                event.stop_event()
 
     # ── model ──
 
@@ -405,6 +426,27 @@ class HapiConnectorPlugin(Star):
                 yield event.plain_result(text)
             except Exception:
                 yield event.plain_result("获取模型信息失败")
+                return
+
+            @session_waiter(timeout=30, record_history_chains=False)
+            async def model_waiter(controller: SessionController, ev: AstrMessageEvent):
+                reply = ev.message_str.strip()
+                target = reply
+                if reply.isdigit() and 1 <= int(reply) <= len(MODEL_MODES):
+                    target = MODEL_MODES[int(reply) - 1]
+                if target not in MODEL_MODES:
+                    await ev.send(ev.plain_result(f"无效模式，可用: {', '.join(MODEL_MODES)}"))
+                else:
+                    ok, msg = await session_ops.set_model_mode(self.client, sid, target)
+                    await ev.send(ev.plain_result(msg))
+                controller.stop()
+
+            try:
+                await model_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("操作超时，已取消")
+            finally:
+                event.stop_event()
 
     # ── output ──
 
@@ -429,6 +471,27 @@ class HapiConnectorPlugin(Star):
                 lines.append(f"  [{i}] {lvl}{tag} — {desc}")
             lines.append("\n回复序号或级别名切换")
             yield event.plain_result("\n".join(lines))
+
+            @session_waiter(timeout=30, record_history_chains=False)
+            async def output_waiter(controller: SessionController, ev: AstrMessageEvent):
+                reply = ev.message_str.strip()
+                t = reply
+                if reply.isdigit() and 1 <= int(reply) <= len(levels):
+                    t = levels[int(reply) - 1]
+                if t not in self._OUTPUT_LEVELS:
+                    await ev.send(ev.plain_result(f"无效级别，可用: {', '.join(levels)}"))
+                else:
+                    self.sse_listener.output_level = t
+                    await ev.send(ev.plain_result(
+                        f"SSE 推送级别已切换为: {t}\n{self._OUTPUT_LEVELS[t]}"))
+                controller.stop()
+
+            try:
+                await output_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("操作超时，已取消")
+            finally:
+                event.stop_event()
             return
 
         target = level
@@ -728,6 +791,15 @@ class HapiConnectorPlugin(Star):
                     lines.append(f"\n⚠ 提醒: Codex YOLO 模式需要在配置中设置信任等级，否则无法使用 tools:")
                     lines.append(f'  [projects."{wizard["directory"]}"]')
                     lines.append(f'  trust_level = "trusted"')
+                if wizard["agent"] == "codex":
+                    lines.append(
+                        "\n⚠ 已知问题: 远程创建的 Codex 可能因缺少 TTY 而无法调用工具。"
+                        "\n如遇此问题，建议手动操作:"
+                        "\n  1. SSH 到目标机器，启动 screen: screen -S codex"
+                        "\n  2. cd 到工作目录，运行 codex"
+                        "\n  3. Ctrl+A Ctrl+D 挂到后台"
+                        "\n效果与此处创建相同，且拥有完整 TTY 环境。"
+                    )
                 lines.append("\n回复 y 确认创建，其他取消")
                 await ev.send(ev.plain_result("\n".join(lines)))
                 controller.keep(timeout=60, reset_timeout=True)
