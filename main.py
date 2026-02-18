@@ -482,6 +482,7 @@ class HapiConnectorPlugin(Star):
                     await ev.send(ev.plain_result(f"无效级别，可用: {', '.join(levels)}"))
                 else:
                     self.sse_listener.output_level = t
+                    self.config["output_level"] = t
                     await ev.send(ev.plain_result(
                         f"SSE 推送级别已切换为: {t}\n{self._OUTPUT_LEVELS[t]}"))
                 controller.stop()
@@ -505,6 +506,7 @@ class HapiConnectorPlugin(Star):
             return
 
         self.sse_listener.output_level = target
+        self.config["output_level"] = target
         yield event.plain_result(
             f"SSE 推送级别已切换为: {target}\n{self._OUTPUT_LEVELS[target]}")
 
