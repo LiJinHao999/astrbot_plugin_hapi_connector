@@ -251,6 +251,8 @@ class HapiConnectorPlugin(Star):
         return True
 
     # ──── 指令组 ────
+
+    @filter.command_group("hapi")
     def hapi(self):
         """HAPI 远程 AI 编码会话管理 (仅管理员)"""
         pass
