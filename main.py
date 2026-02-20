@@ -224,12 +224,16 @@ class HapiConnectorPlugin(Star):
 
                 @session_waiter(timeout=60, record_history_chains=False)
                 async def q_waiter(controller: SessionController, ev: AstrMessageEvent,
-                                   _opts=opts, _collected=collected):
+                                   _opts=opts, _collected=collected, _state={'other': False}):
                     reply = ev.message_str.strip()
-                    if reply.isdigit() and 1 <= int(reply) <= len(_opts):
+                    if _state['other']:
+                        _collected.append(reply)
+                        controller.stop()
+                    elif reply.isdigit() and 1 <= int(reply) <= len(_opts):
                         _collected.append(_opts[int(reply) - 1]["label"])
                         controller.stop()
                     elif reply.isdigit() and int(reply) == len(_opts) + 1:
+                        _state['other'] = True
                         await ev.send(ev.plain_result("请输入自定义回答:"))
                         controller.keep(timeout=60, reset_timeout=True)
                     else:
