@@ -33,9 +33,9 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 你在外面摸鱼，电脑在家跑代码——通过这个插件，你可以在 QQ、微信、Telegram 等任意聊天平台上，直接操控跑在远端机器上的 Claude Code / Codex / Gemini / OpenCode，发消息、审批权限、切换模型，一条指令搞定。
 
-**它连接的后端是 [HAPI](https://github.com/tiann/hapi)**，一个统一用于方便管理多个 AI 编码代理会话后台运行和管理的服务，是 happy 的开源实现版本
+**它连接的后端是 [HAPI](https://github.com/tiann/hapi)**，一个统一用于方便管理多个 AI 编码代理会话后台运行和管理的服务，是 [happy coder](https://github.com/slopus/happy?tab=readme-ov-file) 的开源本地实现版本
 
-> **一句话总结**：让你的聊天软件变成 AI 编码会话的远程控制台。
+> **一句话总结**： AI 编码会话的远程控制台。
 
 ---
 
@@ -43,6 +43,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 - **离开电脑时继续推进任务**：手机上发一条消息，让 Claude Code 继续干活
 - **快速审批权限请求**：AI 要执行危险操作时，戳一戳机器人或发 `/hapi a` 一键放行
+- **将vibe coding窗口切到后台时接收原生聊天软件的通知**：方便vibe时摸鱼、做其他事，提升效率
 - **多会话并行管理**：同时跑多个项目，随时切换、查看进度
 - **实时接收 AI 输出**：后台 SSE 推送，AI 说了什么、做了什么，第一时间推到聊天窗口
 
@@ -53,7 +54,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 1. 插件启动后连接 HAPI 服务，建立 SSE 长连接监听所有事件
 2. AI 有新消息、权限请求、任务完成时，自动推送到你的聊天窗口
 3. 你发指令 → 插件调用 HAPI REST API → 操作对应的 AI 会话
-4. 快捷前缀（默认 `>`）让你不用打 `/hapi to` 也能快速发消息
+4. 快捷前缀（默认 `>`）让你不用打 `/hapi to` 长串也能快速发消息
 
 ---
 
