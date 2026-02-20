@@ -1120,10 +1120,23 @@ class HapiConnectorPlugin(Star):
             return
 
         await self._set_user_state(event)
-        result = await self._approve_all_pending()
-        if result is None:
+        items = self._flatten_pending()
+        if not items:
             return  # 无待审批，静默
-        yield event.plain_result(f"[戳一戳审批] {result}")
+
+        regular = [(sid, rid, req) for sid, rid, req in items
+                   if not formatters.is_question_request(req)]
+        questions = [(sid, rid, req) for sid, rid, req in items
+                     if formatters.is_question_request(req)]
+
+        if regular:
+            result = await self._approve_all_pending()
+            yield event.plain_result(f"[戳一戳审批] {result}")
+
+        if questions:
+            yield event.plain_result(f"[戳一戳审批] 还有 {len(questions)} 个问题需要回答:")
+            await self._answer_questions_interactive(event, questions)
+
         event.stop_event()
 
     def _is_poke_event(self, event: AstrMessageEvent) -> bool:
