@@ -19,7 +19,7 @@ from . import formatters
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.2.1")
+          "1.2.3")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -91,7 +91,9 @@ class HapiConnectorPlugin(Star):
 
         # 启动 SSE
         output_level = self.config.get("output_level", "detail")
-        self.sse_listener.start(output_level)
+        remind = self.config.get("remind_pending", False)
+        remind_interval = self.config.get("remind_interval", 180)
+        self.sse_listener.start(output_level, remind_pending=remind, remind_interval=remind_interval)
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
     async def terminate(self):

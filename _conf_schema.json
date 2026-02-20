@@ -46,6 +46,16 @@
   "poke_approve": {
     "description": "戳一戳自动全部审批 (仅 QQ NapCat 可用)",
     "type": "bool",
+    "default": true
+  },
+  "remind_pending": {
+    "description": "待审批请求超时重复提醒（防止 AI 会话缓存失效）",
+    "type": "bool",
     "default": false
+  },
+  "remind_interval": {
+    "description": "待审批重复提醒间隔（秒）",
+    "type": "int",
+    "default": 180
   }
 }

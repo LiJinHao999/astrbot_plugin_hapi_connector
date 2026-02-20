@@ -28,23 +28,30 @@ class SSEListener:
         self.session_states: dict[str, dict] = {}
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
+        self._remind_task: asyncio.Task | None = None
+        self._remind_enabled: bool = False
+        self._remind_interval: int = 180
 
-    def start(self, output_level: str = "summary"):
+    def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180):
         """启动 SSE 监听任务"""
         self.output_level = output_level
+        self._remind_enabled = remind_pending
+        self._remind_interval = remind_interval
         self._debounce_sids: set[str] = set()
         self._debounce_task: asyncio.Task | None = None
         self._task = asyncio.create_task(self._listen_loop())
 
     async def stop(self):
         """停止 SSE 监听"""
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        for task in (self._task, self._remind_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._task = None
+        self._remind_task = None
 
     def get_all_pending(self) -> dict[str, dict]:
         """返回所有 session 的待审批请求（同步读取快照）"""
@@ -150,6 +157,15 @@ class SSEListener:
                     ]
                     msg = "\n".join(lines)
                 await self._push_notification(msg, sid)
+
+        # 有新请求 → 启动一次性提醒倒计时（如未启动）
+        if new_ids and self._remind_enabled:
+            if self._remind_task is None or self._remind_task.done():
+                self._remind_task = asyncio.create_task(self._remind_once())
+
+        # pending 已全部清空 → 取消提醒倒计时
+        if not self.pending and self._remind_task and not self._remind_task.done():
+            self._remind_task.cancel()
 
         # === 输出级别处理 ===
 
@@ -301,6 +317,22 @@ class SSEListener:
 
         except Exception as e:
             logger.warning("simple 模式获取消息异常: %s", e)
+
+    async def _remind_once(self):
+        """倒计时结束后，若仍有待审批请求则发一次提醒"""
+        try:
+            await asyncio.sleep(self._remind_interval)
+        except asyncio.CancelledError:
+            return
+        if not self.pending:
+            return
+        total = sum(len(r) for r in self.pending.values())
+        lines = [
+            f"⏰ 提醒：仍有 {total} 个待审批请求，请及时处理以避免会话缓存失效",
+            "  /hapi a        全部批准",
+            "  /hapi pending  查看列表",
+        ]
+        await self._push_notification("\n".join(lines), "")
 
     async def _push_notification(self, text: str, session_id: str):
         """通过回调向所有已注册的管理员推送消息"""

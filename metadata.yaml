@@ -1,7 +1,7 @@
 name: astrbot_plugin_hapi_connector
 display_name: hapi vibe coding遥控器
 desc: "连接 HAPI 服务，借助Astrbot在任意聊天平台（QQ、微信、Telegram 等）上操控 Claude Code / Codex / Gemini / OpenCode 会话，随时随地 vibe coding，支持实时消息推送、快捷审批。"
-version: v1.2.0
+version: v1.2.3
 author: LiJinHao999
 repo: https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 keywords:
