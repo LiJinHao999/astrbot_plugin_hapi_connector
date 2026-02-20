@@ -440,6 +440,31 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
     return "\n\n".join(lines)
 
 
+_QUESTION_TOOLS = {"AskUserQuestion", "ask_user_question"}
+
+
+def is_question_request(req: dict) -> bool:
+    """判断是否为 AskUserQuestion 类型的请求"""
+    return req.get("tool", "") in _QUESTION_TOOLS
+
+
+def format_question_notification(req: dict, label: str, total: int) -> str:
+    """格式化 AskUserQuestion SSE 通知"""
+    args = req.get("arguments") or {}
+    questions = args.get("questions", []) if isinstance(args, dict) else []
+    lines = [f"❓ 问题请求 {label}"]
+    for q in questions:
+        if q.get("header"):
+            lines.append(f"  [{q['header']}]")
+        if q.get("question"):
+            lines.append(f"  {q['question']}")
+        for i, opt in enumerate(q.get("options", []), 1):
+            desc = f" — {opt['description']}" if opt.get("description") else ""
+            lines.append(f"    [{i}] {opt['label']}{desc}")
+    lines += ["", f"当前共 {total} 个待审批", "  /hapi answer        交互式回答"]
+    return "\n".join(lines)
+
+
 def format_request_detail(req: dict) -> str:
     """格式化权限请求详情（工具 + 关键参数）"""
     tool = req.get("tool", "?")
@@ -525,11 +550,14 @@ def get_help_text() -> str:
 
 ── 审批 ──
   /hapi pending    查看待审批列表
-  /hapi a          全部批准
-  /hapi a <序号>   批准单个
+  /hapi a          全部批准（权限请求）+ 交互式回答所有问题
+  /hapi allow      批准所有权限请求（跳过 question）
+  /hapi allow <序号> 批准单个权限请求
+  /hapi answer     交互式回答所有 question 请求
+  /hapi answer <序号> 回答指定 question 请求
   /hapi deny       全部拒绝
   /hapi deny <序号> 拒绝单个
-  戳一戳机器人      全部批准 (仅 QQ NapCat)
+  戳一戳机器人      批准所有权限请求 (仅 QQ NapCat)
 
 ── 其他 ──
   /hapi help       显示此帮助"""

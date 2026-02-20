@@ -81,11 +81,12 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | 指令 | 说明 |
 |------|------|
 | `/hapi pending` | 查看待审批请求列表 |
-| `/hapi a` | 全部批准 |
-| `/hapi a <序号>` | 批准单个请求 |
+| `/hapi a` | 批准所有权限请求 + 交互式回答所有 question |
+| `/hapi allow [序号]` | 仅批准普通权限请求（跳过 question） |
+| `/hapi answer [序号]` | 交互式回答 question 请求 |
 | `/hapi deny` | 全部拒绝 |
 | `/hapi deny <序号>` | 拒绝单个请求 |
-| 戳一戳机器人 | 全部批准（仅 QQ NapCat，需开启 `poke_approve`） |
+| 戳一戳机器人 | 批准所有普通权限请求（仅 QQ NapCat，需开启 `poke_approve`） |
 
 ### 权限与模型
 

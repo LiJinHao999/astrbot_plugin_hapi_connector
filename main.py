@@ -19,7 +19,7 @@ from . import formatters
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.2.0")
+          "1.2.1")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -179,22 +179,78 @@ class HapiConnectorPlugin(Star):
         return items
 
     async def _approve_all_pending(self) -> str | None:
-        """批准所有待审批请求，返回结果文本。无待审批时返回 None。"""
+        """批准所有非 question 待审批请求，返回结果文本。无待审批时返回 None。"""
         items = self._flatten_pending()
-        if not items:
+        regular = [(sid, rid, req) for sid, rid, req in items
+                   if not formatters.is_question_request(req)]
+        if not regular:
             return None
 
         results = []
-        for sid, rid, req in items:
+        for sid, rid, req in regular:
             ok, msg = await session_ops.approve_permission(self.client, sid, rid)
             tool = req.get("tool", "?")
             results.append(f"{'✓' if ok else '✗'} {tool}")
 
-        return f"已全部批准 ({len(items)} 个):\n" + "\n".join(results)
+        return f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
+
+    async def _answer_questions_interactive(self, event: AstrMessageEvent,
+                                             q_items: list) -> bool:
+        """交互式逐个回答 question 请求，返回是否全部完成"""
+        for qi_idx, (sid, rid, req) in enumerate(q_items):
+            args = req.get("arguments") or {}
+            questions = args.get("questions", []) if isinstance(args, dict) else []
+            label = formatters.session_label_short(sid, self.sessions_cache)
+            answers = {}
+
+            for qi, q in enumerate(questions):
+                opts = q.get("options", [])
+                lines = []
+                if len(q_items) > 1:
+                    lines.append(f"问题请求 [{qi_idx + 1}/{len(q_items)}] {label}")
+                if len(questions) > 1:
+                    lines.append(f"[{qi + 1}/{len(questions)}]")
+                if q.get("header"):
+                    lines.append(f"[{q['header']}]")
+                if q.get("question"):
+                    lines.append(q["question"])
+                for i, opt in enumerate(opts, 1):
+                    desc = f" — {opt['description']}" if opt.get("description") else ""
+                    lines.append(f"  [{i}] {opt['label']}{desc}")
+                lines.append(f"  [{len(opts) + 1}] 其他（自定义输入）")
+                await event.send(event.plain_result("\n".join(lines)))
+
+                collected = []
+
+                @session_waiter(timeout=60, record_history_chains=False)
+                async def q_waiter(controller: SessionController, ev: AstrMessageEvent,
+                                   _opts=opts, _collected=collected):
+                    reply = ev.message_str.strip()
+                    if reply.isdigit() and 1 <= int(reply) <= len(_opts):
+                        _collected.append(_opts[int(reply) - 1]["label"])
+                        controller.stop()
+                    elif reply.isdigit() and int(reply) == len(_opts) + 1:
+                        await ev.send(ev.plain_result("请输入自定义回答:"))
+                        controller.keep(timeout=60, reset_timeout=True)
+                    else:
+                        _collected.append(reply)
+                        controller.stop()
+
+                try:
+                    await q_waiter(event)
+                except TimeoutError:
+                    await event.send(event.plain_result("操作超时，已取消"))
+                    return False
+
+                answers[str(qi)] = collected
+
+            ok, msg = await session_ops.approve_permission(
+                self.client, sid, rid, answers=answers)
+            await event.send(event.plain_result(msg))
+
+        return True
 
     # ──── 指令组 ────
-
-    @filter.command_group("hapi")
     def hapi(self):
         """HAPI 远程 AI 编码会话管理 (仅管理员)"""
         pass
@@ -526,33 +582,90 @@ class HapiConnectorPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("approve", alias={"a"})
     async def cmd_approve(self, event: AstrMessageEvent):
-        """批准审批请求: /hapi a 全部批准, /hapi a <序号> 批准单个"""
+        """批准所有权限请求，再交互式回答 question: /hapi a"""
         await self._set_user_state(event)
         items = self._flatten_pending()
         if not items:
             yield event.plain_result("没有待审批的请求")
             return
 
-        raw = event.message_str.strip()
+        regular = [(sid, rid, req) for sid, rid, req in items
+                   if not formatters.is_question_request(req)]
+        questions = [(sid, rid, req) for sid, rid, req in items
+                     if formatters.is_question_request(req)]
 
+        if regular:
+            results = []
+            for sid, rid, req in regular:
+                ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                tool = req.get("tool", "?")
+                results.append(f"{'✓' if ok else '✗'} {tool}")
+            yield event.plain_result(f"已批准 {len(regular)} 个权限请求:\n" + "\n".join(results))
+
+        if questions:
+            yield event.plain_result(f"还有 {len(questions)} 个问题需要回答:")
+            await self._answer_questions_interactive(event, questions)
+
+        event.stop_event()
+
+    # ── allow ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("allow")
+    async def cmd_allow(self, event: AstrMessageEvent):
+        """批准权限请求（跳过 question）: /hapi allow [序号]"""
+        await self._set_user_state(event)
+        items = self._flatten_pending()
+        regular = [(sid, rid, req) for sid, rid, req in items
+                   if not formatters.is_question_request(req)]
+
+        if not regular:
+            yield event.plain_result("没有待批准的权限请求")
+            return
+
+        raw = event.message_str.strip()
         if raw and raw.isdigit():
-            # 批准单个
             n = int(raw)
-            if n < 1 or n > len(items):
-                yield event.plain_result(f"无效序号，当前共 {len(items)} 个待审批")
+            if n < 1 or n > len(regular):
+                yield event.plain_result(f"无效序号，当前共 {len(regular)} 个待批准权限请求")
                 return
-            sid, rid, req = items[n - 1]
-            ok, msg = await session_ops.approve_permission(self.client, sid, rid)
+            sid, rid, req = regular[n - 1]
+            ok, _ = await session_ops.approve_permission(self.client, sid, rid)
             tool = req.get("tool", "?")
             yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: {tool}")
         else:
-            # 全部批准
             results = []
-            for sid, rid, req in items:
-                ok, msg = await session_ops.approve_permission(self.client, sid, rid)
+            for sid, rid, req in regular:
+                ok, _ = await session_ops.approve_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
                 results.append(f"{'✓' if ok else '✗'} {tool}")
-            yield event.plain_result(f"已全部批准 ({len(items)} 个):\n" + "\n".join(results))
+            yield event.plain_result(f"已批准 {len(regular)} 个权限请求:\n" + "\n".join(results))
+
+    # ── answer ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("answer")
+    async def cmd_answer(self, event: AstrMessageEvent):
+        """交互式回答 question 请求: /hapi answer [序号]"""
+        await self._set_user_state(event)
+        items = self._flatten_pending()
+        q_items = [(sid, rid, req) for sid, rid, req in items
+                   if formatters.is_question_request(req)]
+
+        if not q_items:
+            yield event.plain_result("没有待回答的问题")
+            return
+
+        raw = event.message_str.strip()
+        if raw and raw.isdigit():
+            n = int(raw)
+            if n < 1 or n > len(q_items):
+                yield event.plain_result(f"无效序号，当前共 {len(q_items)} 个待回答问题")
+                return
+            q_items = [q_items[n - 1]]
+
+        await self._answer_questions_interactive(event, q_items)
+        event.stop_event()
 
     # ── deny ──
 

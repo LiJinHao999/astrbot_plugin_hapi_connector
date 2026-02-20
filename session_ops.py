@@ -57,14 +57,16 @@ async def set_model_mode(client: AsyncHapiClient, sid: str, model: str) -> tuple
         return False, f"切换失败: {resp.status} {body[:200]}"
 
 
-async def approve_permission(client: AsyncHapiClient, sid: str, rid: str) -> tuple[bool, str]:
-    """批准权限请求"""
-    resp = await client.post(f"/api/sessions/{sid}/permissions/{rid}/approve", json={})
+async def approve_permission(client: AsyncHapiClient, sid: str, rid: str,
+                             answers: dict | None = None) -> tuple[bool, str]:
+    """批准权限请求；AskUserQuestion 需传 answers={"0": ["选项label"]}"""
+    body = {"answers": answers} if answers else {}
+    resp = await client.post(f"/api/sessions/{sid}/permissions/{rid}/approve", json=body)
     if resp.ok:
         return True, "已批准"
     else:
-        body = await resp.text()
-        return False, f"批准失败: {resp.status} {body[:200]}"
+        body_text = await resp.text()
+        return False, f"批准失败: {resp.status} {body_text[:200]}"
 
 
 async def deny_permission(client: AsyncHapiClient, sid: str, rid: str) -> tuple[bool, str]:
