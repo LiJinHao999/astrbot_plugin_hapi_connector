@@ -39,6 +39,8 @@ class SSEListener:
         self._remind_interval = remind_interval
         self._debounce_sids: set[str] = set()
         self._debounce_task: asyncio.Task | None = None
+        self._completion_sids: set[str] = set()
+        self._completion_task: asyncio.Task | None = None
         self._task = asyncio.create_task(self._listen_loop())
 
     async def stop(self):
@@ -176,12 +178,13 @@ class SSEListener:
                 if self._debounce_task is None or self._debounce_task.done():
                     self._debounce_task = asyncio.create_task(self._debounced_fetch())
 
-        # 所有模式都提醒：等待输入（在内容输出之后）
+        # 所有模式都提醒：等待输入（防抖，避免 Codex 频繁切换 thinking 状态导致重复推送）
         if is_active and old_thinking and not is_thinking:
             pending_count = len(self.pending.get(sid, {}))
             if pending_count == 0:
-                label = session_label_short(sid, self.sessions_cache)
-                await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
+                self._completion_sids.add(sid)
+                if self._completion_task is None or self._completion_task.done():
+                    self._completion_task = asyncio.create_task(self._debounced_completion())
 
     async def _get_latest_seq(self, sid: str) -> int:
         """获取 session 当前的最新消息序号"""
@@ -210,6 +213,18 @@ class SSEListener:
                 if "pendingRequestsCount" in updated_data:
                     s["pendingRequestsCount"] = updated_data["pendingRequestsCount"]
                 break
+
+    async def _debounced_completion(self):
+        """防抖：等待状态稳定后再推送任务完成通知（避免 Codex 频繁切换 thinking 导致重复推送）"""
+        await asyncio.sleep(1.5)
+        sids = list(self._completion_sids)
+        self._completion_sids.clear()
+        for sid in sids:
+            async with self._lock:
+                state = self.session_states.get(sid, {})
+            if not state.get("thinking", False) and len(self.pending.get(sid, {})) == 0:
+                label = session_label_short(sid, self.sessions_cache)
+                await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
 
     async def _debounced_fetch(self):
         """等一小段时间再拉取，合并密集的 SSE 事件"""
@@ -267,7 +282,8 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
-            await self._push_notification(output, sid)
+            if self.output_level != "silence":
+                await self._push_notification(output, sid)
 
         except Exception as e:
             logger.warning("detail 模式获取消息异常: %s", e)
@@ -285,7 +301,7 @@ class SSEListener:
                 if msg.get("seq", 0) <= old_seq:
                     continue
                 content = msg.get("content", {})
-                if content.get("role") != "agent":
+                if content.get("role") not in ("agent", "assistant"):
                     continue
                 text = extract_text_preview(content, max_len=0)
                 if text is None or text.startswith("["):
@@ -313,7 +329,8 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
-            await self._push_notification(output, sid)
+            if self.output_level != "silence":
+                await self._push_notification(output, sid)
 
         except Exception as e:
             logger.warning("simple 模式获取消息异常: %s", e)

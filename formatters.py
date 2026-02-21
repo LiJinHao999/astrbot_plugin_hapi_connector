@@ -206,6 +206,11 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
         return None
     if dtype == "token_count":
         return None
+    if dtype in ("reasoning", "agent_reasoning"):
+        text = data.get("text", data.get("content", data.get("reasoning", "")))
+        if isinstance(text, str) and text.strip():
+            return f"[Reasoning]: {text[:max_len]}"
+        return None
     if dtype == "message":
         msg_text = data.get("message", "")
         return msg_text[:max_len] if msg_text else "[消息]"
