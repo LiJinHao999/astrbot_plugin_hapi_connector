@@ -127,6 +127,7 @@ class SSEListener:
             }
 
         # 处理权限请求
+        new_ids: set = set()
         if agent_state:
             requests_data = agent_state.get("requests") or {}
             async with self._lock:
