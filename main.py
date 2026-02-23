@@ -351,22 +351,21 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("msg", alias={"messages"})
-    async def cmd_msg(self, event: AstrMessageEvent, rounds: int = 1):
+    async def cmd_msg(self, event: AstrMessageEvent, rounds: str = ""):
         """查看最近消息（按轮次）: /hapi msg [轮数]"""
         await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
-        if rounds < 1:
-            rounds = 1
+        rounds_int = int(rounds) if rounds.isdigit() and int(rounds) >= 1 else 1
         try:
             # 多取消息以保证覆盖 N 轮（每轮约含多条原始消息）
-            fetch_limit = min(rounds * 80, 500)
-            messages = await session_ops.fetch_messages(self.client, sid, limit=fetch_limit)
-            all_rounds = formatters.split_into_rounds(messages)
+            fetch_limit = min(rounds_int * 80, 500)
+            msgs = await session_ops.fetch_messages(self.client, sid, limit=fetch_limit)
+            all_rounds = formatters.split_into_rounds(msgs)
             # 取最后 N 轮
-            selected = all_rounds[-rounds:]
+            selected = all_rounds[-rounds_int:]
             if not selected:
                 yield event.plain_result("(暂无消息)")
                 return
