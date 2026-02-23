@@ -537,6 +537,7 @@ def get_help_text() -> str:
   /hapi msg [轮数] 查看最近消息 (默认 1 轮)
   /hapi perm [模式] 查看/切换权限模式
   /hapi model [模式] 查看/切换模型 (仅 Claude)
+  /hapi remote     切换到 remote 远程托管模式
   /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/detail)
 
 ── Session 管理 ──

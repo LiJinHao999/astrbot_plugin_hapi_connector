@@ -511,6 +511,20 @@ class HapiConnectorPlugin(Star):
             finally:
                 event.stop_event()
 
+    # ── remote ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("remote")
+    async def cmd_remote(self, event: AstrMessageEvent):
+        """切换当前 session 到 remote 远程托管模式"""
+        await self._set_user_state(event)
+        sid = self._current_sid(event)
+        if not sid:
+            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+            return
+        ok, msg = await session_ops.switch_to_remote(self.client, sid)
+        yield event.plain_result(msg)
+
     # ── output ──
 
     _OUTPUT_LEVELS = {

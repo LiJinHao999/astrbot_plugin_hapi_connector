@@ -79,6 +79,16 @@ async def deny_permission(client: AsyncHapiClient, sid: str, rid: str) -> tuple[
         return False, f"拒绝失败: {resp.status} {body[:200]}"
 
 
+async def switch_to_remote(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
+    """切换 session 到 remote 远程托管模式"""
+    resp = await client.post(f"/api/sessions/{sid}/switch", json={})
+    if resp.ok:
+        return True, "已切换到 remote 远程托管模式"
+    else:
+        body = await resp.text()
+        return False, f"切换失败: {resp.status} {body[:200]}"
+
+
 async def abort_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
     """中断活跃的 session"""
     resp = await client.post(f"/api/sessions/{sid}/abort", json={})
