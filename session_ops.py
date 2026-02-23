@@ -8,6 +8,7 @@ async def fetch_sessions(client: AsyncHapiClient) -> list[dict]:
     resp = await client.get("/api/sessions")
     resp.raise_for_status()
     data = await resp.json()
+    await resp.release()
     return data.get("sessions", [])
 
 
@@ -16,6 +17,7 @@ async def fetch_session_detail(client: AsyncHapiClient, sid: str) -> dict:
     resp = await client.get(f"/api/sessions/{sid}")
     resp.raise_for_status()
     data = await resp.json()
+    await resp.release()
     return data.get("session", data)
 
 
@@ -24,6 +26,7 @@ async def fetch_messages(client: AsyncHapiClient, sid: str, limit: int = 10) -> 
     resp = await client.get(f"/api/sessions/{sid}/messages", params={"limit": limit})
     resp.raise_for_status()
     data = await resp.json()
+    await resp.release()
     return data.get("messages", [])
 
 
@@ -31,9 +34,11 @@ async def send_message(client: AsyncHapiClient, sid: str, text: str) -> tuple[bo
     """发送消息到 session，返回 (成功, 描述)"""
     resp = await client.post(f"/api/sessions/{sid}/messages", json={"text": text})
     if resp.ok:
+        await resp.release()
         return True, f"已发送 -> [{sid[:8]}]"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"发送失败: {resp.status} {body[:200]}"
 
 
@@ -41,9 +46,11 @@ async def set_permission_mode(client: AsyncHapiClient, sid: str, mode: str) -> t
     """设置权限模式"""
     resp = await client.post(f"/api/sessions/{sid}/permission-mode", json={"mode": mode})
     if resp.ok:
+        await resp.release()
         return True, f"权限模式已切换为: {mode}"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"切换失败: {resp.status} {body[:200]}"
 
 
@@ -51,9 +58,11 @@ async def set_model_mode(client: AsyncHapiClient, sid: str, model: str) -> tuple
     """设置模型模式（仅 Claude）"""
     resp = await client.post(f"/api/sessions/{sid}/model", json={"model": model})
     if resp.ok:
+        await resp.release()
         return True, f"模型已切换为: {model}"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"切换失败: {resp.status} {body[:200]}"
 
 
@@ -63,9 +72,11 @@ async def approve_permission(client: AsyncHapiClient, sid: str, rid: str,
     body = {"answers": answers} if answers else {}
     resp = await client.post(f"/api/sessions/{sid}/permissions/{rid}/approve", json=body)
     if resp.ok:
+        await resp.release()
         return True, "已批准"
     else:
         body_text = await resp.text()
+        await resp.release()
         return False, f"批准失败: {resp.status} {body_text[:200]}"
 
 
@@ -73,9 +84,11 @@ async def deny_permission(client: AsyncHapiClient, sid: str, rid: str) -> tuple[
     """拒绝权限请求"""
     resp = await client.post(f"/api/sessions/{sid}/permissions/{rid}/deny", json={})
     if resp.ok:
+        await resp.release()
         return True, "已拒绝"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"拒绝失败: {resp.status} {body[:200]}"
 
 
@@ -83,9 +96,11 @@ async def switch_to_remote(client: AsyncHapiClient, sid: str) -> tuple[bool, str
     """切换 session 到 remote 远程托管模式"""
     resp = await client.post(f"/api/sessions/{sid}/switch", json={})
     if resp.ok:
+        await resp.release()
         return True, "已切换到 remote 远程托管模式"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"切换失败: {resp.status} {body[:200]}"
 
 
@@ -93,9 +108,11 @@ async def abort_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
     """中断活跃的 session"""
     resp = await client.post(f"/api/sessions/{sid}/abort", json={})
     if resp.ok:
+        await resp.release()
         return True, f"已中断 [{sid[:8]}]"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"中断失败: {resp.status} {body[:200]}"
 
 
@@ -103,9 +120,11 @@ async def archive_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]
     """归档 session"""
     resp = await client.post(f"/api/sessions/{sid}/archive", json={})
     if resp.ok:
+        await resp.release()
         return True, f"归档成功 [{sid[:8]}]"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"归档失败: {resp.status} {body[:200]}"
 
 
@@ -113,9 +132,11 @@ async def rename_session(client: AsyncHapiClient, sid: str, new_name: str) -> tu
     """重命名 session"""
     resp = await client.patch(f"/api/sessions/{sid}", json={"name": new_name})
     if resp.ok:
+        await resp.release()
         return True, f"重命名成功 [{sid[:8]}]"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"重命名失败: {resp.status} {body[:200]}"
 
 
@@ -123,9 +144,11 @@ async def delete_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]:
     """删除 session"""
     resp = await client.delete(f"/api/sessions/{sid}")
     if resp.ok:
+        await resp.release()
         return True, f"删除成功 [{sid[:8]}]"
     else:
         body = await resp.text()
+        await resp.release()
         return False, f"删除失败: {resp.status} {body[:200]}"
 
 
@@ -134,6 +157,7 @@ async def fetch_machines(client: AsyncHapiClient) -> list[dict]:
     resp = await client.get("/api/machines")
     resp.raise_for_status()
     data = await resp.json()
+    await resp.release()
     machines = data.get("machines", [])
     return [m for m in machines if m.get("active")]
 
@@ -165,9 +189,11 @@ async def spawn_session(client: AsyncHapiClient, machine_id: str,
     resp = await client.post(f"/api/machines/{machine_id}/spawn", json=body)
     if resp.status != 200:
         body_text = await resp.text()
+        await resp.release()
         return False, f"创建失败: {resp.status} {body_text[:300]}", None
 
     result = await resp.json()
+    await resp.release()
     if result.get("type") == "success":
         sid = result["sessionId"]
         return True, f"创建成功! Session ID: {sid}", sid

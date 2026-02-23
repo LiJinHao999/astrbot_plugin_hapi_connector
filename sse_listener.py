@@ -21,7 +21,7 @@ class SSEListener:
         self.client = client
         self.sessions_cache = sessions_cache
         self.notify_callback = notify_callback
-        self.output_level: str = "summary"
+        self.output_level: str = "detail"
         # {session_id: {request_id: {tool, arguments, ...}}}
         self.pending: dict[str, dict] = {}
         # 跟踪 session 状态以检测变化
@@ -45,7 +45,9 @@ class SSEListener:
 
     async def stop(self):
         """停止 SSE 监听"""
-        for task in (self._task, self._remind_task):
+        for task in (self._task, self._remind_task,
+                     getattr(self, '_debounce_task', None),
+                     getattr(self, '_completion_task', None)):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -92,7 +94,7 @@ class SSEListener:
                 backoff = min(backoff * 2, max_backoff)
             finally:
                 if resp is not None:
-                    resp.close()
+                    await resp.release()
 
     async def _handle(self, evt: dict):
         """处理单个 SSE 事件"""
@@ -142,7 +144,8 @@ class SSEListener:
             for rid in new_ids:
                 req = requests_data[rid]
                 label = session_label_short(sid, self.sessions_cache)
-                total = sum(len(r) for r in self.pending.values())
+                async with self._lock:
+                    total = sum(len(r) for r in self.pending.values())
                 if is_question_request(req):
                     msg = format_question_notification(req, label, total)
                 else:
@@ -167,7 +170,9 @@ class SSEListener:
                 self._remind_task = asyncio.create_task(self._remind_once())
 
         # pending 已全部清空 → 取消提醒倒计时
-        if not self.pending and self._remind_task and not self._remind_task.done():
+        async with self._lock:
+            pending_empty = not self.pending
+        if pending_empty and self._remind_task and not self._remind_task.done():
             self._remind_task.cancel()
 
         # === 输出级别处理 ===
@@ -181,7 +186,8 @@ class SSEListener:
 
         # 所有模式都提醒：等待输入（防抖，避免 Codex 频繁切换 thinking 状态导致重复推送）
         if is_active and old_thinking and not is_thinking:
-            pending_count = len(self.pending.get(sid, {}))
+            async with self._lock:
+                pending_count = len(self.pending.get(sid, {}))
             if pending_count == 0:
                 self._completion_sids.add(sid)
                 if self._completion_task is None or self._completion_task.done():
@@ -193,8 +199,8 @@ class SSEListener:
             messages = await session_ops.fetch_messages(self.client, sid, limit=1)
             if messages:
                 return messages[0].get("seq", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"获取最新序号失败: {e}")
         return 0
 
     def _update_session_cache(self, sid: str, updated_data: dict):
@@ -223,7 +229,8 @@ class SSEListener:
         for sid in sids:
             async with self._lock:
                 state = self.session_states.get(sid, {})
-            if not state.get("thinking", False) and len(self.pending.get(sid, {})) == 0:
+                has_pending = len(self.pending.get(sid, {})) > 0
+            if not state.get("thinking", False) and not has_pending:
                 label = session_label_short(sid, self.sessions_cache)
                 await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
 
@@ -342,9 +349,10 @@ class SSEListener:
             await asyncio.sleep(self._remind_interval)
         except asyncio.CancelledError:
             return
-        if not self.pending:
-            return
-        total = sum(len(r) for r in self.pending.values())
+        async with self._lock:
+            if not self.pending:
+                return
+            total = sum(len(r) for r in self.pending.values())
         lines = [
             f"⏰ 提醒：仍有 {total} 个待审批请求，请及时处理以避免会话缓存失效",
             "  /hapi a        全部批准",
@@ -368,7 +376,8 @@ class SSEListener:
                 agent_state = detail.get("agentState") or {}
                 requests_data = agent_state.get("requests") or {}
                 if requests_data:
-                    self.pending[sid] = requests_data
+                    async with self._lock:
+                        self.pending[sid] = requests_data
                     logger.info("加载 session %s 的 %d 个待审批请求",
                                 sid[:8], len(requests_data))
             except Exception as e:

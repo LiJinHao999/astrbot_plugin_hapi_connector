@@ -1083,6 +1083,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("delete")
     async def cmd_delete(self, event: AstrMessageEvent):
         """删除当前 session"""
+        await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
@@ -1151,7 +1152,12 @@ class HapiConnectorPlugin(Star):
                      if formatters.is_question_request(req)]
 
         if regular:
-            result = await self._approve_all_pending()
+            results = []
+            for sid, rid, req in regular:
+                ok, msg = await session_ops.approve_permission(self.client, sid, rid)
+                tool = req.get("tool", "?")
+                results.append(f"{'✓' if ok else '✗'} {tool}")
+            result = f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
             yield event.plain_result(f"[戳一戳审批] {result}")
 
         if questions:

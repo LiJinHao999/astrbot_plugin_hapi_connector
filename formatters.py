@@ -223,7 +223,7 @@ def session_label(s: dict, current_sid: str | None = None, show_path: bool = Fal
     flavor = meta.get("flavor", "?")
     sid_short = s.get("id", "?")[:8]
 
-    summary = meta.get("summary", {}).get("text", "")
+    summary = (meta.get("summary") or {}).get("text", "")
     title = summary or "(无标题)"
 
     if s.get("active"):
@@ -261,7 +261,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
 
     meta = session.get("metadata", {})
     flavor = meta.get("flavor", "?")
-    summary = meta.get("summary", {}).get("text", "")
+    summary = (meta.get("summary") or ).get("text", "")
     path = meta.get("path", "")
 
     title = summary or "(无标题)"

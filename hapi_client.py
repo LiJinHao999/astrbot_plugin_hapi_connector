@@ -137,6 +137,7 @@ class AsyncHapiClient:
 
         if resp.status == 401 and retry_on_401:
             logger.warning("收到 401，尝试刷新 JWT 后重试 ...")
+            await resp.release()
             await self._token_mgr.force_refresh()
             headers.update(await self._auth_headers())
             resp = await self._session.request(
@@ -161,12 +162,24 @@ class AsyncHapiClient:
     async def get_json(self, path: str, **kwargs) -> dict:
         """GET 并返回 JSON"""
         resp = await self.get(path, **kwargs)
-        return await resp.json()
+        if resp.status >= 400:
+            body = await resp.text()
+            await resp.release()
+            raise Exception(f"HTTP {resp.status}: {body[:200]}")
+        data = await resp.json()
+        await resp.release()
+        return data
 
     async def post_json(self, path: str, **kwargs) -> dict:
         """POST 并返回 JSON"""
         resp = await self.post(path, **kwargs)
-        return await resp.json()
+        if resp.status >= 400:
+            body = await resp.text()
+            await resp.release()
+            raise Exception(f"HTTP {resp.status}: {body[:200]}")
+        data = await resp.json()
+        await resp.release()
+        return data
 
     async def health(self) -> bool:
         """GET /health，不需要 JWT"""
