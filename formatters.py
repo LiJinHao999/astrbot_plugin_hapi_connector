@@ -159,38 +159,6 @@ def _fmt_tool_call(block: dict, max_len: int) -> str:
     return f"[调用 {name}]"
 
 
-def _fmt_tool_result(block: dict, max_len: int) -> str:
-    """格式化工具返回 block"""
-    output = block.get("content", block.get("output", ""))
-    if isinstance(output, str):
-        if not output.strip():
-            return "[返回] (空)"
-        lines = output.split('\n')[:3]
-        return f"[返回] {chr(10).join(lines)[:max_len]}"
-    if isinstance(output, list):
-        # 嵌套 content blocks
-        texts = []
-        for sub in output:
-            if isinstance(sub, dict) and sub.get("type") == "text":
-                texts.append(sub.get("text", ""))
-            elif isinstance(sub, str):
-                texts.append(sub)
-        if texts:
-            return f"[返回] {' '.join(texts)[:max_len]}"
-        return "[返回]"
-    if isinstance(output, dict):
-        # Codex 风格结构化输出
-        exit_code = output.get("exit_code", "")
-        stdout = output.get("stdout", "")
-        if stdout:
-            lines = stdout.split('\n')[:3]
-            return f"[返回 exit={exit_code}] {chr(10).join(lines)[:max_len]}"
-        cmd = output.get("command", "")
-        if cmd:
-            return f"[返回 exit={exit_code}] {output.get('status', '')}"
-        return f"[返回] {json.dumps(output, ensure_ascii=False)[:max_len]}"
-    return "[返回]"
-
 
 def _extract_codex_block(data: dict, max_len: int) -> str | None:
     """处理 Codex 专有的包装格式"""
@@ -261,7 +229,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
 
     meta = session.get("metadata", {})
     flavor = meta.get("flavor", "?")
-    summary = (meta.get("summary") or ).get("text", "")
+    summary = (meta.get("summary") or {}).get("text", "")
     path = meta.get("path", "")
 
     title = summary or "(无标题)"
@@ -310,7 +278,7 @@ def format_session_status(s: dict) -> str:
     thinking = s.get("thinking", False)
     perm = s.get("permissionMode", "default")
     model = s.get("modelMode", "default")
-    summary = meta.get("summary", {}).get("text", "(无标题)")
+    summary = (meta.get("summary") or {}).get("text", "(无标题)")
 
     lines = [
         f"Session:  {sid[:8]}...",
