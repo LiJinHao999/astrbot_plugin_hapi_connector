@@ -35,6 +35,10 @@ class SSEListener:
         self._auto_approve_enabled: bool = False
         self._auto_approve_start: str = "23:00"
         self._auto_approve_end: str = "07:00"
+        # {session_id: True}，等待用户确认是否发送 /compact
+        self.pending_compact: dict[str, bool] = {}
+        # {session_id: seq}，记录已触发通知的消息序号，防止重复
+        self._compact_notified_seqs: dict[str, int] = {}
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00"):
@@ -49,13 +53,16 @@ class SSEListener:
         self._debounce_task: asyncio.Task | None = None
         self._completion_sids: set[str] = set()
         self._completion_task: asyncio.Task | None = None
+        self._compact_check_sids: set[str] = set()
+        self._compact_check_task: asyncio.Task | None = None
         self._task = asyncio.create_task(self._listen_loop())
 
     async def stop(self):
         """停止 SSE 监听"""
         for task in (self._task, self._remind_task,
                      getattr(self, '_debounce_task', None),
-                     getattr(self, '_completion_task', None)):
+                     getattr(self, '_completion_task', None),
+                     getattr(self, '_compact_check_task', None)):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -210,6 +217,12 @@ class SSEListener:
                 if self._completion_task is None or self._completion_task.done():
                     self._completion_task = asyncio.create_task(self._debounced_completion())
 
+        # silence 模式：单独检测 Prompt is too long（detail/simple 模式在 _show_* 里检测）
+        if self.output_level == "silence" and old_seq >= 0 and (is_active or is_thinking):
+            self._compact_check_sids.add(sid)
+            if self._compact_check_task is None or self._compact_check_task.done():
+                self._compact_check_task = asyncio.create_task(self._debounced_compact_check())
+
     async def _get_latest_seq(self, sid: str) -> int:
         """获取 session 当前的最新消息序号"""
         try:
@@ -251,6 +264,66 @@ class SSEListener:
                 label = session_label_short(sid, self.sessions_cache)
                 await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
 
+    async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
+        """检测新消息中是否含 Prompt is too long，触发压缩流程"""
+        last_notified = self._compact_notified_seqs.get(sid, -1)
+        for msg in messages:
+            seq = msg.get("seq", 0)
+            if seq <= old_seq or seq <= last_notified:
+                continue
+            content = msg.get("content", {})
+            text = extract_text_preview(content, max_len=0)
+            if text is None:
+                continue
+            if "prompt is too long" not in text.lower():
+                continue
+            # 命中：记录 seq 防重复触发
+            self._compact_notified_seqs[sid] = seq
+            label = session_label_short(sid, self.sessions_cache)
+            if self._auto_approve_enabled and self._in_auto_approve_window():
+                ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                mark = "✓" if ok else "✗"
+                await self._push_notification(
+                    f"[忙时托管审批] 已自动压缩上下文 {label}\n  {mark} /compact", sid)
+            else:
+                async with self._lock:
+                    self.pending.setdefault(sid, {})["__compact__"] = {
+                        "tool": "__compact__", "arguments": {}}
+                    total = sum(len(r) for r in self.pending.values())
+                lines = [
+                    f"⚠ 上下文过长 {label}",
+                    "  压缩上下文 (/compact)",
+                    "",
+                    f"当前共 {total} 个待审批，审批指令:",
+                    "  /hapi a        全部批准",
+                    "  /hapi deny     取消",
+                    "  /hapi pending  查看完整列表",
+                ]
+                await self._push_notification("\n".join(lines), sid)
+            break  # 每次只处理一条，避免重复触发
+
+    async def _debounced_compact_check(self):
+        """silence 模式下防抖检测 Prompt is too long"""
+        await asyncio.sleep(0.5)
+        sids = list(self._compact_check_sids)
+        self._compact_check_sids.clear()
+        for sid in sids:
+            async with self._lock:
+                old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
+            if old_seq < 0:
+                continue
+            try:
+                messages = await session_ops.fetch_messages(self.client, sid, limit=5)
+                if not messages:
+                    continue
+                latest_seq = max(m.get("seq", 0) for m in messages)
+                async with self._lock:
+                    if sid in self.session_states:
+                        self.session_states[sid]["lastSeq"] = latest_seq
+                await self._check_and_handle_compact(sid, messages, old_seq)
+            except Exception as e:
+                logger.warning("compact 检测失败 (sid=%s): %s", sid[:8], e)
+
     async def _debounced_fetch(self):
         """等一小段时间再拉取，合并密集的 SSE 事件"""
         await asyncio.sleep(0.5)
@@ -291,6 +364,9 @@ class SSEListener:
             async with self._lock:
                 if sid in self.session_states:
                     self.session_states[sid]["lastSeq"] = latest_seq
+
+            # 检测 Prompt is too long
+            await self._check_and_handle_compact(sid, messages, old_seq)
 
             if not visible_msgs:
                 return
@@ -338,6 +414,9 @@ class SSEListener:
             async with self._lock:
                 if sid in self.session_states:
                     self.session_states[sid]["lastSeq"] = latest_seq
+
+            # 检测 Prompt is too long
+            await self._check_and_handle_compact(sid, messages, old_seq)
 
             if not agent_texts:
                 return

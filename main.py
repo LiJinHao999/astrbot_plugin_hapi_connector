@@ -15,6 +15,7 @@ from .sse_listener import SSEListener
 from .constants import PERMISSION_MODES, MODEL_MODES, AGENTS
 from . import session_ops
 from . import formatters
+from .formatters import is_compact_request
 
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
@@ -190,6 +191,14 @@ class HapiConnectorPlugin(Star):
                 items.append((sid, rid, req))
         return items
 
+    def _remove_pending_entry(self, sid: str, rid: str):
+        """移除合成条目（如 __compact__），不触发 HAPI API"""
+        pending = self.sse_listener.pending
+        if sid in pending:
+            pending[sid].pop(rid, None)
+            if not pending[sid]:
+                del pending[sid]
+
     async def _approve_all_pending(self) -> str | None:
         """批准所有非 question 待审批请求，返回结果文本。无待审批时返回 None。"""
         items = self._flatten_pending()
@@ -200,9 +209,14 @@ class HapiConnectorPlugin(Star):
 
         results = []
         for sid, rid, req in regular:
-            ok, msg = await session_ops.approve_permission(self.client, sid, rid)
-            tool = req.get("tool", "?")
-            results.append(f"{'✓' if ok else '✗'} {tool}")
+            if is_compact_request(req):
+                ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                self._remove_pending_entry(sid, rid)
+                results.append(f"{'✓' if ok else '✗'} /compact")
+            else:
+                ok, msg = await session_ops.approve_permission(self.client, sid, rid)
+                tool = req.get("tool", "?")
+                results.append(f"{'✓' if ok else '✗'} {tool}")
 
         return f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
 
@@ -629,9 +643,14 @@ class HapiConnectorPlugin(Star):
         if regular:
             results = []
             for sid, rid, req in regular:
-                ok, _ = await session_ops.approve_permission(self.client, sid, rid)
-                tool = req.get("tool", "?")
-                results.append(f"{'✓' if ok else '✗'} {tool}")
+                if is_compact_request(req):
+                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                    self._remove_pending_entry(sid, rid)
+                    results.append(f"{'✓' if ok else '✗'} /compact")
+                else:
+                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                    tool = req.get("tool", "?")
+                    results.append(f"{'✓' if ok else '✗'} {tool}")
             yield event.plain_result(f"已批准 {len(regular)} 个权限请求:\n" + "\n".join(results))
 
         if questions:
@@ -662,15 +681,25 @@ class HapiConnectorPlugin(Star):
                 yield event.plain_result(f"无效序号，当前共 {len(regular)} 个待批准权限请求")
                 return
             sid, rid, req = regular[n - 1]
-            ok, _ = await session_ops.approve_permission(self.client, sid, rid)
-            tool = req.get("tool", "?")
-            yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: {tool}")
+            if is_compact_request(req):
+                ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                self._remove_pending_entry(sid, rid)
+                yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: /compact")
+            else:
+                ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                tool = req.get("tool", "?")
+                yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: {tool}")
         else:
             results = []
             for sid, rid, req in regular:
-                ok, _ = await session_ops.approve_permission(self.client, sid, rid)
-                tool = req.get("tool", "?")
-                results.append(f"{'✓' if ok else '✗'} {tool}")
+                if is_compact_request(req):
+                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                    self._remove_pending_entry(sid, rid)
+                    results.append(f"{'✓' if ok else '✗'} /compact")
+                else:
+                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                    tool = req.get("tool", "?")
+                    results.append(f"{'✓' if ok else '✗'} {tool}")
             yield event.plain_result(f"已批准 {len(regular)} 个权限请求:\n" + "\n".join(results))
 
     # ── answer ──
@@ -720,16 +749,24 @@ class HapiConnectorPlugin(Star):
                 yield event.plain_result(f"无效序号，当前共 {len(items)} 个待审批")
                 return
             sid, rid, req = items[n - 1]
-            ok, msg = await session_ops.deny_permission(self.client, sid, rid)
-            tool = req.get("tool", "?")
-            yield event.plain_result(f"{'✓' if ok else '✗'} 已拒绝: {tool}")
+            if is_compact_request(req):
+                self._remove_pending_entry(sid, rid)
+                yield event.plain_result("✓ 已取消压缩: /compact")
+            else:
+                ok, msg = await session_ops.deny_permission(self.client, sid, rid)
+                tool = req.get("tool", "?")
+                yield event.plain_result(f"{'✓' if ok else '✗'} 已拒绝: {tool}")
         else:
             # 全部拒绝
             results = []
             for sid, rid, req in items:
-                ok, msg = await session_ops.deny_permission(self.client, sid, rid)
-                tool = req.get("tool", "?")
-                results.append(f"{'✓' if ok else '✗'} {tool}")
+                if is_compact_request(req):
+                    self._remove_pending_entry(sid, rid)
+                    results.append("✓ /compact (已取消)")
+                else:
+                    ok, msg = await session_ops.deny_permission(self.client, sid, rid)
+                    tool = req.get("tool", "?")
+                    results.append(f"{'✓' if ok else '✗'} {tool}")
             yield event.plain_result(f"已全部拒绝 ({len(items)} 个):\n" + "\n".join(results))
 
     # ── create ──

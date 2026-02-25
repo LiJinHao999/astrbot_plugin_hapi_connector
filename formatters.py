@@ -414,11 +414,17 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
 
 
 _QUESTION_TOOLS = {"AskUserQuestion", "ask_user_question"}
+_COMPACT_TOOL = "__compact__"
 
 
 def is_question_request(req: dict) -> bool:
     """判断是否为 AskUserQuestion 类型的请求"""
     return req.get("tool", "") in _QUESTION_TOOLS
+
+
+def is_compact_request(req: dict) -> bool:
+    """判断是否为插件合成的上下文压缩请求"""
+    return req.get("tool", "") == _COMPACT_TOOL
 
 
 def format_question_notification(req: dict, label: str, total: int) -> str:
@@ -441,6 +447,8 @@ def format_question_notification(req: dict, label: str, total: int) -> str:
 def format_request_detail(req: dict) -> str:
     """格式化权限请求详情（工具 + 关键参数）"""
     tool = req.get("tool", "?")
+    if tool == _COMPACT_TOOL:
+        return "压缩上下文 (/compact)"
     args = req.get("arguments", {})
     if not isinstance(args, dict) or not args:
         return tool
