@@ -20,7 +20,7 @@ from .formatters import is_compact_request
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.3.0")
+          "1.3.1")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -641,17 +641,7 @@ class HapiConnectorPlugin(Star):
                      if formatters.is_question_request(req)]
 
         if regular:
-            results = []
-            for sid, rid, req in regular:
-                if is_compact_request(req):
-                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
-                    self._remove_pending_entry(sid, rid)
-                    results.append(f"{'✓' if ok else '✗'} /compact")
-                else:
-                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
-                    tool = req.get("tool", "?")
-                    results.append(f"{'✓' if ok else '✗'} {tool}")
-            yield event.plain_result(f"已批准 {len(regular)} 个权限请求:\n" + "\n".join(results))
+            yield event.plain_result(await self._approve_all_pending())
 
         if questions:
             yield event.plain_result(f"还有 {len(questions)} 个问题需要回答:")
@@ -1202,9 +1192,14 @@ class HapiConnectorPlugin(Star):
         if regular:
             results = []
             for sid, rid, req in regular:
-                ok, msg = await session_ops.approve_permission(self.client, sid, rid)
-                tool = req.get("tool", "?")
-                results.append(f"{'✓' if ok else '✗'} {tool}")
+                if is_compact_request(req):
+                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                    self._remove_pending_entry(sid, rid)
+                    results.append(f"{'✓' if ok else '✗'} /compact")
+                else:
+                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                    tool = req.get("tool", "?")
+                    results.append(f"{'✓' if ok else '✗'} {tool}")
             result = f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
             yield event.plain_result(f"[戳一戳审批] {result}")
 

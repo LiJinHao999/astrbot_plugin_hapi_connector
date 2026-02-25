@@ -35,10 +35,10 @@ class SSEListener:
         self._auto_approve_enabled: bool = False
         self._auto_approve_start: str = "23:00"
         self._auto_approve_end: str = "07:00"
-        # {session_id: True}，等待用户确认是否发送 /compact
-        self.pending_compact: dict[str, bool] = {}
         # {session_id: seq}，记录已触发通知的消息序号，防止重复
         self._compact_notified_seqs: dict[str, int] = {}
+        # {session_id: seq}，记录已处理的压缩完成消息序号，防止重复发「继续」
+        self._compaction_completed_seqs: dict[str, int] = {}
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00"):
@@ -265,42 +265,55 @@ class SSEListener:
                 await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
 
     async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
-        """检测新消息中是否含 Prompt is too long，触发压缩流程"""
+        """检测新消息中是否含 Prompt is too long 或 Compaction completed，触发对应流程"""
         last_notified = self._compact_notified_seqs.get(sid, -1)
+        last_completed = self._compaction_completed_seqs.get(sid, -1)
+        triggered_compact = False
+
         for msg in messages:
             seq = msg.get("seq", 0)
-            if seq <= old_seq or seq <= last_notified:
+            if seq <= old_seq:
                 continue
             content = msg.get("content", {})
             text = extract_text_preview(content, max_len=0)
             if text is None:
                 continue
-            if "prompt is too long" not in text.lower():
-                continue
-            # 命中：记录 seq 防重复触发
-            self._compact_notified_seqs[sid] = seq
-            label = session_label_short(sid, self.sessions_cache)
-            if self._auto_approve_enabled and self._in_auto_approve_window():
-                ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+            text_lower = text.lower()
+
+            # 检测 Prompt is too long → 触发压缩流程（每次只处理一条）
+            if not triggered_compact and seq > last_notified and "prompt is too long" in text_lower:
+                triggered_compact = True
+                self._compact_notified_seqs[sid] = seq
+                label = session_label_short(sid, self.sessions_cache)
+                if self._auto_approve_enabled and self._in_auto_approve_window():
+                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                    mark = "✓" if ok else "✗"
+                    await self._push_notification(
+                        f"[忙时托管审批] 已自动压缩上下文 {label}\n  {mark} /compact", sid)
+                else:
+                    async with self._lock:
+                        self.pending.setdefault(sid, {})["__compact__"] = {
+                            "tool": "__compact__", "arguments": {}}
+                        total = sum(len(r) for r in self.pending.values())
+                    lines = [
+                        f"⚠ 上下文过长 {label}",
+                        "  压缩上下文 (/compact)",
+                        "",
+                        f"当前共 {total} 个待审批，审批指令:",
+                        "  /hapi a        全部批准",
+                        "  /hapi deny     取消",
+                        "  /hapi pending  查看完整列表",
+                    ]
+                    await self._push_notification("\n".join(lines), sid)
+
+            # 检测 Compaction completed → 自动发送「继续」恢复会话
+            if seq > last_completed and "compaction completed" in text_lower:
+                self._compaction_completed_seqs[sid] = seq
+                label = session_label_short(sid, self.sessions_cache)
+                ok, _ = await session_ops.send_message(self.client, sid, "继续")
                 mark = "✓" if ok else "✗"
                 await self._push_notification(
-                    f"[忙时托管审批] 已自动压缩上下文 {label}\n  {mark} /compact", sid)
-            else:
-                async with self._lock:
-                    self.pending.setdefault(sid, {})["__compact__"] = {
-                        "tool": "__compact__", "arguments": {}}
-                    total = sum(len(r) for r in self.pending.values())
-                lines = [
-                    f"⚠ 上下文过长 {label}",
-                    "  压缩上下文 (/compact)",
-                    "",
-                    f"当前共 {total} 个待审批，审批指令:",
-                    "  /hapi a        全部批准",
-                    "  /hapi deny     取消",
-                    "  /hapi pending  查看完整列表",
-                ]
-                await self._push_notification("\n".join(lines), sid)
-            break  # 每次只处理一条，避免重复触发
+                    f"[上下文压缩完成] 已自动发送「继续」{label}\n  {mark}", sid)
 
     async def _debounced_compact_check(self):
         """silence 模式下防抖检测 Prompt is too long"""
@@ -383,8 +396,7 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
-            if self.output_level != "silence":
-                await self._push_notification(output, sid)
+            await self._push_notification(output, sid)
 
         except Exception as e:
             logger.warning("detail 模式获取消息异常: %s", e)
@@ -433,8 +445,7 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
-            if self.output_level != "silence":
-                await self._push_notification(output, sid)
+            await self._push_notification(output, sid)
 
         except Exception as e:
             logger.warning("simple 模式获取消息异常: %s", e)
