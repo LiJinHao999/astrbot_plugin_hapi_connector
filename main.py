@@ -19,7 +19,7 @@ from . import formatters
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.2.3")
+          "1.3.0")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -93,7 +93,17 @@ class HapiConnectorPlugin(Star):
         output_level = self.config.get("output_level", "detail")
         remind = self.config.get("remind_pending", False)
         remind_interval = self.config.get("remind_interval", 180)
-        self.sse_listener.start(output_level, remind_pending=remind, remind_interval=remind_interval)
+        auto_approve = self.config.get("auto_approve_enabled", False)
+        auto_approve_start = self.config.get("auto_approve_start", "23:00")
+        auto_approve_end = self.config.get("auto_approve_end", "07:00")
+        self.sse_listener.start(
+            output_level,
+            remind_pending=remind,
+            remind_interval=remind_interval,
+            auto_approve_enabled=auto_approve,
+            auto_approve_start=auto_approve_start,
+            auto_approve_end=auto_approve_end,
+        )
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
     async def terminate(self):
@@ -372,7 +382,8 @@ class HapiConnectorPlugin(Star):
             total = len(selected)
             for i, round_msgs in enumerate(selected, 1):
                 text = formatters.format_round(round_msgs, i, total)
-                yield event.plain_result(text)
+                for chunk in self._split_message(text):
+                    yield event.plain_result(chunk)
         except Exception as e:
             yield event.plain_result(f"获取消息失败: {e}")
 

@@ -57,5 +57,20 @@
     "description": "待审批重复提醒间隔（秒）",
     "type": "int",
     "default": 180
+  },
+  "auto_approve_enabled": {
+    "description": "忙时托管审批：在指定时间范围内自动批准所有权限请求（默认关闭）",
+    "type": "bool",
+    "default": false
+  },
+  "auto_approve_start": {
+    "description": "忙时托管审批开始时间（HH:MM，24小时制）",
+    "type": "string",
+    "default": "23:00"
+  },
+  "auto_approve_end": {
+    "description": "忙时托管审批结束时间（HH:MM，24小时制，可跨午夜）",
+    "type": "string",
+    "default": "07:00"
   }
 }

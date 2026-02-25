@@ -75,6 +75,9 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | `poke_approve` | 戳一戳自动全部审批（仅 QQ NapCat） | 开启 |
 | `remind_pending` | 待审批请求超时重复提醒，防止 AI 会话缓存失效 | 关闭 |
 | `remind_interval` | 待审批提醒间隔（秒），倒计时内处理完则不提醒 | 180 |
+| `auto_approve_enabled` | 忙时托管审批：在指定时间范围内自动批准所有权限请求 | 关闭 |
+| `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24小时制） | `23:00` |
+| `auto_approve_end` | 忙时托管审批结束时间（HH:MM，24小时制，支持跨午夜） | `07:00` |
 
 ---
 
@@ -107,6 +110,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 |------|------|
 | `/hapi create` | 创建新会话（5 步交互向导） |
 | `/hapi abort [序号\|ID前缀]` | 中断会话，默认当前（别名 `stop`） |
+| `/hapi remote` | 切换当前会话到 remote 远程托管模式 |
 | `/hapi archive` | 归档当前会话 |
 | `/hapi rename` | 重命名当前会话 |
 | `/hapi delete` | 删除当前会话 |

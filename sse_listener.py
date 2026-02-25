@@ -3,6 +3,7 @@
 import copy
 import json
 import asyncio
+import datetime
 from collections.abc import Callable, Awaitable
 
 from astrbot.api import logger
@@ -31,12 +32,19 @@ class SSEListener:
         self._remind_task: asyncio.Task | None = None
         self._remind_enabled: bool = False
         self._remind_interval: int = 180
+        self._auto_approve_enabled: bool = False
+        self._auto_approve_start: str = "23:00"
+        self._auto_approve_end: str = "07:00"
 
-    def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180):
+    def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
+              auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00"):
         """启动 SSE 监听任务"""
         self.output_level = output_level
         self._remind_enabled = remind_pending
         self._remind_interval = remind_interval
+        self._auto_approve_enabled = auto_approve_enabled
+        self._auto_approve_start = auto_approve_start
+        self._auto_approve_end = auto_approve_end
         self._debounce_sids: set[str] = set()
         self._debounce_task: asyncio.Task | None = None
         self._completion_sids: set[str] = set()
@@ -140,29 +148,38 @@ class SSEListener:
                 elif sid in self.pending:
                     del self.pending[sid]
 
-            # 有新的权限请求 -> 推送提醒
+            # 有新的权限请求 -> 推送提醒（或忙时自动批准）
             for rid in new_ids:
                 req = requests_data[rid]
                 label = session_label_short(sid, self.sessions_cache)
                 async with self._lock:
                     total = sum(len(r) for r in self.pending.values())
-                if is_question_request(req):
-                    msg = format_question_notification(req, label, total)
+
+                if self._auto_approve_enabled and self._in_auto_approve_window() and not is_question_request(req):
+                    # 忙时托管审批：自动批准非 question 请求
+                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                    tool = req.get("tool", "?")
+                    result_mark = "✓" if ok else "✗"
+                    notify_msg = f"[忙时托管审批] 已自动批准 {label}\n  {result_mark} {tool}"
+                    await self._push_notification(notify_msg, sid)
                 else:
-                    detail = format_request_detail(req)
-                    lines = [
-                        f"⚠ 权限请求 {label}",
-                        f"  {detail}",
-                        "",
-                        f"当前共 {total} 个待审批，审批指令:",
-                        "  /hapi a        全部批准",
-                        "  /hapi allow <序号>  批准单个",
-                        "  /hapi deny     全部拒绝",
-                        "  /hapi deny <序号> 拒绝单个",
-                        "  /hapi pending   查看完整列表",
-                    ]
-                    msg = "\n".join(lines)
-                await self._push_notification(msg, sid)
+                    if is_question_request(req):
+                        msg = format_question_notification(req, label, total)
+                    else:
+                        detail = format_request_detail(req)
+                        lines = [
+                            f"⚠ 权限请求 {label}",
+                            f"  {detail}",
+                            "",
+                            f"当前共 {total} 个待审批，审批指令:",
+                            "  /hapi a        全部批准",
+                            "  /hapi allow <序号>  批准单个",
+                            "  /hapi deny     全部拒绝",
+                            "  /hapi deny <序号> 拒绝单个",
+                            "  /hapi pending   查看完整列表",
+                        ]
+                        msg = "\n".join(lines)
+                    await self._push_notification(msg, sid)
 
         # 有新请求 → 启动一次性提醒倒计时（如未启动）
         if new_ids and self._remind_enabled:
@@ -359,6 +376,21 @@ class SSEListener:
             "  /hapi pending  查看列表",
         ]
         await self._push_notification("\n".join(lines), "")
+
+    def _in_auto_approve_window(self) -> bool:
+        """判断当前本地时间是否在忙时托管审批时间窗口内"""
+        try:
+            now = datetime.datetime.now().time()
+            h_s, m_s = map(int, self._auto_approve_start.split(":"))
+            h_e, m_e = map(int, self._auto_approve_end.split(":"))
+            start = datetime.time(h_s, m_s)
+            end = datetime.time(h_e, m_e)
+            if start <= end:
+                return start <= now <= end
+            else:  # 跨午夜，如 23:00 ~ 07:00
+                return now >= start or now <= end
+        except Exception:
+            return False
 
     async def _push_notification(self, text: str, session_id: str):
         """通过回调向所有已注册的管理员推送消息"""
