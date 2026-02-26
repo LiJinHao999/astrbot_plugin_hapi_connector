@@ -31,11 +31,22 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 这是一个**通过聊天指令远程管理 AI 编码会话的插件**。
 
-你在外面摸鱼，电脑在家跑代码——通过这个插件，你可以在 QQ、微信、Telegram 等任意聊天平台上，直接操控跑在远端机器上的 Claude Code / Codex / Gemini / OpenCode，发消息、审批权限、切换模型，一条指令搞定。
+你在外面摸鱼，电脑在家跑代码——通过这个插件，你可以在 QQ、微信、Telegram 等任意聊天平台上，直接操控跑在远端机器上的 Claude Code / Codex / Gemini / OpenCode，发消息、审批权限、切换模型，一条指令,甚至拍一拍QQ机器人搞定。
 
-**它连接的后端是 [HAPI](https://github.com/tiann/hapi)**，一个统一用于方便管理多个 AI 编码代理会话后台运行和管理的服务，是 [happy coder](https://github.com/slopus/happy?tab=readme-ov-file) 的开源本地实现版本
+**它连接的后端是 [HAPI](https://github.com/tiann/hapi)**，一个统一用于方便管理多个 AI 编码代理会话后台运行和管理的服务，是 [HAPPY CODER](https://github.com/slopus/happy?tab=readme-ov-file) 的开源本地实现版本
 
-> **一句话总结**： AI 编码会话的远程控制台。
+部署极简，数据全部留在本地——只需在机器上安装 HAPI 服务，启动 AI 编码会话时加上 `hapi` 前缀，会话即自动接入 Hub 管理：
+
+```bash
+hapi claude   # Claude Code
+hapi codex    # OpenAI Codex
+```
+同时，也支持你远程启动claudecode/codex等vibe代理会话
+
+[HAPI 部署教程文档](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/blob/master/install.md)
+
+
+> **一句话总结**：AI 编码会话的远程控制台。
 
 ---
 
@@ -43,6 +54,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 - **离开电脑时继续推进任务**：手机上发一条消息，让 Claude Code 继续干活
 - **快速审批权限请求**：AI 要执行危险操作时，戳一戳机器人或发 `/hapi a` 一键放行
+- **忙时全自动审批**：忙时如睡眠时可以自动接管权限，一键放行与长时间托管
 - **将vibe coding窗口切到后台时接收原生聊天软件的通知**：方便vibe时摸鱼、做其他事，提升效率
 - **多会话并行管理**：同时跑多个项目，随时切换、查看进度
 - **实时接收 AI 输出**：后台 SSE 推送，AI 说了什么、做了什么，第一时间推到聊天窗口
@@ -65,12 +77,12 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `hapi_endpoint` | HAPI 服务地址，如 `http://localhost:3006` | |
-| `access_token` | HAPI Access Token，支持 `token:namespace` 格式 | |
+| `access_token` | HAPI Access Token，支持 `token:namespace` 格式，关于namespace，见[官方文档说明](https://github.com/tiann/hapi/blob/main/docs/guide/namespace.md) | |
 | `proxy_url` | 代理地址，支持 `socks5h://` 和 `http://` | 空 |
 | `jwt_lifetime` | JWT 有效期（秒） | 900 |
 | `refresh_before_expiry` | JWT 提前刷新时间（秒） | 180 |
-| `output_level` | SSE 推送级别：`silence` / `simple` / `detail` | detail |
-| `simple_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
+| `output_level` | SSE 推送级别：`silence` / `simple` /  /`summary`/`detail` | detail |
+| `summary_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 戳一戳自动全部审批（仅 QQ NapCat） | 开启 |
 | `remind_pending` | 待审批请求超时重复提醒，防止 AI 会话缓存失效 | 关闭 |
@@ -178,8 +190,8 @@ astrbot_plugin_hapi_connector/
 
 ## 📌 TODO
 
-- [ ] 优化输出格式，提升交互可读性
-- [ ] 支持将 Markdown 文字渲染为图片（可选）
+- ✅ 优化输出格式，提升交互可读性
+- [ ] 支持将 Markdown 文字、AI编辑等影响观感长上下文渲染为图片（可选）
 - [ ] 完善部署文档与使用教程
 - [ ] 支持文件上传逻辑
 - [ ] 通过 AstrBot 自然语言触发指令，让聊天 LLM 感知当前编码任务
