@@ -394,7 +394,7 @@ class SSEListener:
                 msg, text = visible_msgs[0]
                 output = f"{label}\n{format_agent_line(text)}"
             else:
-                lines = [f"━━━ {label} — {len(visible_msgs)} 条新消息 ━━━"]
+                lines = [f"{label}\n━━━ {len(visible_msgs)} 条新消息 ━━━"]
                 for msg, text in sorted(visible_msgs, key=lambda x: x[0].get("seq", 0)):
                     lines.append(format_agent_line(text))
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -443,7 +443,7 @@ class SSEListener:
                 _, text = agent_texts[0]
                 output = f"{label}\n[Message]: {text}"
             else:
-                lines = [f"━━━ {label} ━━━"]
+                lines = [f"{label}\n━━━ {len(agent_texts)} 条新消息 ━━━"]
                 for _, text in agent_texts:
                     lines.append(f"[Message]: {text}")
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")

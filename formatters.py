@@ -235,7 +235,7 @@ def session_label(s: dict, current_sid: str | None = None, show_path: bool = Fal
 
 
 def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
-    """获取 session 的简短标识（用于 SSE 推送）"""
+    """获取 session 的简短标识（用于 SSE 推送，多行格式）"""
     session = None
     for s in sessions_cache:
         if s.get("id") == sid:
@@ -243,7 +243,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
             break
 
     if not session:
-        return f"[{sid[:8]}]"
+        return f"🏷️ {sid[:8]}"
 
     meta = session.get("metadata", {})
     flavor = meta.get("flavor", "?")
@@ -254,7 +254,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
     if len(path) > 40:
         path = "..." + path[-37:]
 
-    return f"[{sid[:8]} | {flavor} | {title}] @ {path}"
+    return f"💬 {title}\n📂 {path}\n🤖 {flavor} | 🏷️ {sid[:8]}"
 
 
 def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
