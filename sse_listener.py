@@ -87,18 +87,22 @@ class SSEListener:
                 resp = await self.client.subscribe_events_raw(all_events=True)
                 backoff = 1  # 连接成功，重置退避
 
+                buf = b""
                 while True:
-                    line_bytes = await resp.content.readline()
-                    if not line_bytes:
+                    chunk = await resp.content.read(1024 * 1024)
+                    if not chunk:
                         break  # 连接关闭
-                    line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
-                    if not line or not line.startswith("data: "):
-                        continue
-                    try:
-                        evt = json.loads(line[6:])
-                    except json.JSONDecodeError:
-                        continue
-                    await self._handle(evt)
+                    buf += chunk
+                    while b"\n" in buf:
+                        line_bytes, buf = buf.split(b"\n", 1)
+                        line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
+                        if not line or not line.startswith("data: "):
+                            continue
+                        try:
+                            evt = json.loads(line[6:])
+                        except json.JSONDecodeError:
+                            continue
+                        await self._handle(evt)
 
             except asyncio.CancelledError:
                 logger.info("SSE 监听已取消")
