@@ -145,18 +145,40 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     return raw[:max_len] if raw != "{}" else None
 
 
+_TODO_STATUS_ICON = {
+    "completed": "✅",
+    "in_progress": "🔄",
+    "pending": "⬜",
+}
+
+
+def _fmt_todo_write(inp: dict) -> str:
+    """格式化 TodoWrite 工具调用，将 todos 列表渲染为可读清单"""
+    todos = inp.get("todos", [])
+    if not todos:
+        return "🛠️ TodoWrite"
+    lines = ["🛠️ TodoWrite 任务列表:"]
+    for item in todos:
+        status = item.get("status", "pending")
+        icon = _TODO_STATUS_ICON.get(status, "⬜")
+        content = item.get("content", item.get("activeForm", "?"))
+        lines.append(f"  {icon} {content}")
+    return "\n".join(lines)
+
+
 def _fmt_tool_call(block: dict, max_len: int) -> str:
     """格式化工具调用 block"""
     name = block.get("name", "?")
     inp = block.get("input", {})
     if isinstance(inp, dict):
-        # 优先显示 command（bash 类工具最常见）
+        if name == "TodoWrite":
+            return _fmt_todo_write(inp)
         cmd = inp.get("command", "")
         if cmd:
-            return f"[调用 {name}] {cmd[:max_len]}"
+            return f"🛠️ {name}: {cmd[:max_len]}"
         args_str = json.dumps(inp, ensure_ascii=False)[:max_len]
-        return f"[调用 {name}] {args_str}"
-    return f"[调用 {name}]"
+        return f"🛠️ {name}: {args_str}"
+    return f"🛠️ {name}"
 
 
 
@@ -186,7 +208,7 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
 
 
 def session_label(s: dict, current_sid: str | None = None, show_path: bool = False) -> str:
-    """生成 session 标签"""
+    """生成 session 标签（多行格式）"""
     meta = s.get("metadata", {})
     flavor = meta.get("flavor", "?")
     sid_short = s.get("id", "?")[:8]
@@ -194,26 +216,22 @@ def session_label(s: dict, current_sid: str | None = None, show_path: bool = Fal
     summary = (meta.get("summary") or {}).get("text", "")
     title = summary or "(无标题)"
 
-    if s.get("active"):
-        status = "ACTIVE"
-    else:
-        status = "idle"
-
+    status = "ACTIVE" if s.get("active") else "idle"
     pending = s.get("pendingRequestsCount", 0)
-    parts = [flavor, status]
-    if pending:
-        parts.append(f"!{pending}待审批")
-    if current_sid and s.get("id") == current_sid:
-        parts.append("<<当前")
 
-    tag = " | ".join(parts)
-    label = f"({sid_short}) [{tag}] {title}"
+    agent_parts = [f"🤖 {flavor}", f"🏷️ {sid_short}", status]
+    if pending:
+        agent_parts.append(f"⚠️ {pending}待审批")
+    if current_sid and s.get("id") == current_sid:
+        agent_parts.append("<<当前")
+
+    lines = [f"💬 {title}", " | ".join(agent_parts)]
 
     if show_path:
         path = meta.get("path", "(无路径)")
-        label = f"{label} @ {path}"
+        lines.insert(1, f"📂 {path}")
 
-    return label
+    return "\n".join(lines)
 
 
 def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
@@ -261,7 +279,10 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
     for path, group in groups.items():
         lines.append(f"\n📁 {path}")
         for s in group:
-            lines.append(f"  [{idx}] {session_label(s, current_sid)}")
+            label_lines = session_label(s, current_sid).split("\n")
+            lines.append(f"\n  [{idx}] {label_lines[0]}")
+            for ll in label_lines[1:]:
+                lines.append(f"       {ll}")
             idx += 1
 
     lines.append("\n用 /hapi sw <序号> 切换")
@@ -375,19 +396,9 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
 
 
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → [Function Calling - ...]，系统事件 → 透传，普通文本 → [Message]"""
-    if text.startswith("[System]:"):
+    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件 → 透传，普通文本 → [Message]"""
+    if text.startswith("[System]:") or text.startswith("🛠️"):
         return text
-    if text.startswith("[调用 "):
-        try:
-            bracket_end = text.index("]")
-            tool_part = text[1:bracket_end]          # "调用 Bash"
-            rest = text[bracket_end + 1:].strip()
-            if rest:
-                return f"[Function Calling - {tool_part}]: {rest}"
-            return f"[Function Calling - {tool_part}]"
-        except ValueError:
-            pass
     return f"[Message]: {text}"
 
 
