@@ -35,15 +35,18 @@ class SSEListener:
         self._auto_approve_enabled: bool = False
         self._auto_approve_start: str = "23:00"
         self._auto_approve_end: str = "07:00"
+        self._summary_msg_count: int = 5
         # {session_id: seq}，记录已触发通知的消息序号，防止重复
         self._compact_notified_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已处理的压缩完成消息序号，防止重复发「继续」
         self._compaction_completed_seqs: dict[str, int] = {}
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
-              auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00"):
+              auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00",
+              summary_msg_count: int = 5):
         """启动 SSE 监听任务"""
         self.output_level = output_level
+        self._summary_msg_count = summary_msg_count
         self._remind_enabled = remind_pending
         self._remind_interval = remind_interval
         self._auto_approve_enabled = auto_approve_enabled
@@ -265,8 +268,12 @@ class SSEListener:
                 state = self.session_states.get(sid, {})
                 has_pending = len(self.pending.get(sid, {})) > 0
             if not state.get("thinking", False) and not has_pending:
-                label = session_label_short(sid, self.sessions_cache)
-                await self._push_notification(f"✅ 任务已完成，等待新的输入\n{label}", sid)
+                if self.output_level == "summary":
+                    old_seq = state.get("lastSeq", 0)
+                    await self._show_summary(sid, old_seq)
+                else:
+                    label = session_label_short(sid, self.sessions_cache)
+                    await self._push_notification(f"✅ 任务已完成，等待新的输入\n{label}", sid)
 
     async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
         """检测新消息中是否含 Prompt is too long 或 Compaction completed，触发对应流程"""
@@ -421,7 +428,7 @@ class SSEListener:
                 if content.get("role") not in ("agent", "assistant"):
                     continue
                 text = extract_text_preview(content, max_len=0)
-                if text is None or text.startswith("["):
+                if text is None or text.startswith("🛠️"):
                     continue
                 agent_texts.append((msg, text))
 
@@ -453,6 +460,53 @@ class SSEListener:
 
         except Exception as e:
             logger.warning("simple 模式获取消息异常: %s", e)
+
+    async def _show_summary(self, sid: str, old_seq: int):
+        """summary 模式：获取并显示最近 N 条新 agent 消息（过滤工具调用）"""
+        try:
+            messages = await session_ops.fetch_messages(self.client, sid, limit=50)
+            if not messages:
+                return
+
+            agent_texts = []
+            for msg in messages:
+                if msg.get("seq", 0) <= old_seq:
+                    continue
+                content = msg.get("content", {})
+                if content.get("role") not in ("agent", "assistant"):
+                    continue
+                text = extract_text_preview(content, max_len=0)
+                if text is None or text.startswith("🛠️"):
+                    continue
+                agent_texts.append((msg, text))
+
+            latest_seq = max(m.get("seq", 0) for m in messages)
+            async with self._lock:
+                if sid in self.session_states:
+                    self.session_states[sid]["lastSeq"] = latest_seq
+
+            await self._check_and_handle_compact(sid, messages, old_seq)
+
+            if not agent_texts:
+                return
+
+            agent_texts = agent_texts[-self._summary_msg_count:]
+            label = session_label_short(sid, self.sessions_cache)
+
+            if len(agent_texts) == 1:
+                _, text = agent_texts[0]
+                output = f"{label}\n{format_agent_line(text)}"
+            else:
+                lines = [f"{label}\n━━━ 最近 {len(agent_texts)} 条消息 ━━━"]
+                for _, text in agent_texts:
+                    lines.append(format_agent_line(text))
+                lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                output = "\n\n".join(lines)
+
+            await self._push_notification(output, sid)
+
+        except Exception as e:
+            logger.warning("summary 模式获取消息异常: %s", e)
 
     async def _remind_once(self):
         """倒计时结束后，若仍有待审批请求则发一次提醒"""

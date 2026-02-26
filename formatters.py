@@ -197,9 +197,6 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
     if dtype == "token_count":
         return None
     if dtype in ("reasoning", "agent_reasoning"):
-        text = data.get("text", data.get("content", data.get("reasoning", "")))
-        if isinstance(text, str) and text.strip():
-            return f"[Reasoning]: {text[:max_len]}"
         return None
     if dtype == "message":
         msg_text = data.get("message", "")
@@ -395,9 +392,12 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
+_PASSTHROUGH_PREFIXES = ("[System]:", "[Summary]:", "🛠️")
+
+
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件 → 透传，普通文本 → [Message]"""
-    if text.startswith("[System]:") or text.startswith("🛠️"):
+    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件/摘要 → 透传，普通文本 → [Message]"""
+    if any(text.startswith(p) for p in _PASSTHROUGH_PREFIXES):
         return text
     return f"[Message]: {text}"
 
@@ -484,11 +484,10 @@ def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]
 
     lines = [f"全局待审批 ({len(items)} 个):"]
     for i, (sid, rid, req) in enumerate(items, 1):
-        tool = req.get("tool", "?")
-        args = json.dumps(req.get("arguments", {}), ensure_ascii=False)[:80]
         label = session_label_short(sid, sessions_cache)
-        lines.append(f"[{i}] {label} {tool}")
-        lines.append(f"    {args}")
+        detail = format_request_detail(req)
+        lines.append(f"\n[{i}] {label}")
+        lines.append(f"    🛠️ {detail}")
 
     lines.append("\n/hapi a 全部批准 | /hapi a <序号> 批准单个")
     lines.append("/hapi deny 全部拒绝 | /hapi deny <序号> 拒绝单个")
@@ -525,7 +524,7 @@ def get_help_text() -> str:
   /hapi perm [模式] 查看/切换权限模式
   /hapi model [模式] 查看/切换模型 (仅 Claude)
   /hapi remote     切换到 remote 远程托管模式
-  /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/detail)
+  /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/summary/detail)
 
 ── Session 管理 ──
   /hapi list       列出所有 session

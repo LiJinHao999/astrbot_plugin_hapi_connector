@@ -70,7 +70,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | `jwt_lifetime` | JWT 有效期（秒） | 900 |
 | `refresh_before_expiry` | JWT 提前刷新时间（秒） | 180 |
 | `output_level` | SSE 推送级别：`silence` / `simple` / `detail` | detail |
-| `simple_msg_count` | simple 级别显示的 agent 消息条数 | 5 |
+| `simple_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 戳一戳自动全部审批（仅 QQ NapCat） | 开启 |
 | `remind_pending` | 待审批请求超时重复提醒，防止 AI 会话缓存失效 | 关闭 |
@@ -143,7 +143,8 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 | 级别 | 说明 |
 |------|------|
 | `silence` | 仅推送权限请求和等待输入提醒，其余静默 |
-| `simple` | AI 思考完成后推送最近 N 条 agent 文本消息 |
+| `simple` | AI 思考完成后推送纯文本 agent 消息及系统事件（过滤工具调用） |
+| `summary` | AI 思考完成后推送最近 N 条 agent 消息（N 由 simple_msg_count 控制，过滤工具调用） |
 | `detail` | 实时推送所有新消息（信息量较大，默认） |
 
 ---

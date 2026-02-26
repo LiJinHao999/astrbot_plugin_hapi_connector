@@ -20,7 +20,7 @@ from .formatters import is_compact_request
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.3.1")
+          "1.4.1")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -57,8 +57,8 @@ class HapiConnectorPlugin(Star):
         # 戳一戳审批开关
         self._poke_approve = self.config.get("poke_approve", False)
 
-        # simple 模式消息条数
-        self._simple_msg_count = self.config.get("simple_msg_count", 5)
+        # summary 模式消息条数
+        self._summary_msg_count = self.config.get("simple_msg_count", 5)
 
         # 管理员列表（用于 catch-all 处理器手动鉴权）
         astrbot_config = self.context.get_config()
@@ -104,6 +104,7 @@ class HapiConnectorPlugin(Star):
             auto_approve_enabled=auto_approve,
             auto_approve_start=auto_approve_start,
             auto_approve_end=auto_approve_end,
+            summary_msg_count=self._summary_msg_count,
         )
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
