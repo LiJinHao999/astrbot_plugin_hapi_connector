@@ -41,7 +41,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 hapi claude   # Claude Code
 hapi codex    # OpenAI Codex
 ```
-同时，也支持你远程启动claudecode/codex等vibe代理会话
+同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话
 
 [HAPI 部署教程文档](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/blob/master/install.md)
 
