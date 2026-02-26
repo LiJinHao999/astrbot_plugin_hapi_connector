@@ -92,7 +92,7 @@ class HapiConnectorPlugin(Star):
 
         # 启动 SSE
         output_level = self.config.get("output_level", "detail")
-        remind = self.config.get("remind_pending", False)
+        remind = self.config.get("remind_pending", True)
         remind_interval = self.config.get("remind_interval", 180)
         auto_approve = self.config.get("auto_approve_enabled", False)
         auto_approve_start = self.config.get("auto_approve_start", "23:00")

@@ -76,16 +76,16 @@ hapi codex    # OpenAI Codex
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `hapi_endpoint` | HAPI 服务地址，如 `http://localhost:3006` | |
+| `hapi_endpoint` | HAPI 服务地址，如 `http://0.0.0.0:3006` | |
 | `access_token` | HAPI Access Token，支持 `token:namespace` 格式，关于namespace，见[官方文档说明](https://github.com/tiann/hapi/blob/main/docs/guide/namespace.md) | |
 | `proxy_url` | 代理地址，支持 `socks5h://` 和 `http://` | 空 |
 | `jwt_lifetime` | JWT 有效期（秒） | 900 |
 | `refresh_before_expiry` | JWT 提前刷新时间（秒） | 180 |
-| `output_level` | SSE 推送级别：`silence` / `simple` /  /`summary`/`detail` | detail |
+| `output_level` | SSE 推送级别：`silence` / `simple` /  `summary`/`detail` | detail |
 | `summary_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 戳一戳自动全部审批（仅 QQ NapCat） | 开启 |
-| `remind_pending` | 待审批请求超时重复提醒，防止 AI 会话缓存失效 | 关闭 |
+| `remind_pending` | 待审批请求超时重复提醒，防止 AI 会话缓存失效 | 开启 |
 | `remind_interval` | 待审批提醒间隔（秒），倒计时内处理完则不提醒 | 180 |
 | `auto_approve_enabled` | 忙时托管审批：在指定时间范围内自动批准所有权限请求 | 关闭 |
 | `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24小时制） | `23:00` |

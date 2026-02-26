@@ -53,7 +53,7 @@
   "remind_pending": {
     "description": "待审批请求超时重复提醒",
     "type": "bool",
-    "default": false,
+    "default": true,
     "hint": "防止 AI 会话缓存失效"
   },
   "remind_interval": {
