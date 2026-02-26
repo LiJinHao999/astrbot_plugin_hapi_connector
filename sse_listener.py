@@ -171,7 +171,7 @@ class SSEListener:
                     ok, _ = await session_ops.approve_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
                     result_mark = "✓" if ok else "✗"
-                    notify_msg = f"[忙时托管审批] 已自动批准 {label}\n  {result_mark} {tool}"
+                    notify_msg = f"[忙时托管审批] 已自动批准\n{label}\n  {result_mark} {tool}"
                     await self._push_notification(notify_msg, sid)
                 else:
                     if is_question_request(req):
@@ -179,7 +179,7 @@ class SSEListener:
                     else:
                         detail = format_request_detail(req)
                         lines = [
-                            f"⚠ 权限请求 {label}",
+                            f"⚠ 权限请求\n{label}",
                             f"  {detail}",
                             "",
                             f"当前共 {total} 个待审批，审批指令:",
@@ -266,7 +266,7 @@ class SSEListener:
                 has_pending = len(self.pending.get(sid, {})) > 0
             if not state.get("thinking", False) and not has_pending:
                 label = session_label_short(sid, self.sessions_cache)
-                await self._push_notification(f"✅ 任务已完成，等待新的输入 {label}", sid)
+                await self._push_notification(f"✅ 任务已完成，等待新的输入\n{label}", sid)
 
     async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
         """检测新消息中是否含 Prompt is too long 或 Compaction completed，触发对应流程"""
@@ -293,14 +293,14 @@ class SSEListener:
                     ok, _ = await session_ops.send_message(self.client, sid, "/compact")
                     mark = "✓" if ok else "✗"
                     await self._push_notification(
-                        f"[忙时托管审批] 已自动压缩上下文 {label}\n  {mark} /compact", sid)
+                        f"[忙时托管审批] 已自动压缩上下文\n{label}\n  {mark} /compact", sid)
                 else:
                     async with self._lock:
                         self.pending.setdefault(sid, {})["__compact__"] = {
                             "tool": "__compact__", "arguments": {}}
                         total = sum(len(r) for r in self.pending.values())
                     lines = [
-                        f"⚠ 上下文过长 {label}",
+                        f"⚠ 上下文过长\n{label}",
                         "  压缩上下文 (/compact)",
                         "",
                         f"当前共 {total} 个待审批，审批指令:",
@@ -317,7 +317,7 @@ class SSEListener:
                 ok, _ = await session_ops.send_message(self.client, sid, "继续")
                 mark = "✓" if ok else "✗"
                 await self._push_notification(
-                    f"[上下文压缩完成] 已自动发送「继续」{label}\n  {mark}", sid)
+                    f"[上下文压缩完成] 已自动发送「继续」\n{label}\n  {mark}", sid)
 
     async def _debounced_compact_check(self):
         """silence 模式下防抖检测 Prompt is too long"""
