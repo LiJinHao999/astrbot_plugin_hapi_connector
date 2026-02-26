@@ -2,7 +2,7 @@
 
 ![:name](https://count.getloli.com/@astrbot_plugin_hapi_connector?name=astrbot_plugin_hapi_connector&theme=minecraft&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
 
-# astrbot_plugin_hapi_connector
+# HAPI Vibe Coding 遥控器
 
 _✨ 随时随地 Vibe Coding ✨_
 
