@@ -88,16 +88,9 @@ class SSEListener:
                 backoff = 1  # 连接成功，重置退避
 
                 while True:
-                    try:
-                        line_bytes = await resp.content.readuntil(
-                            b'\n', max_line_size=10 * 1024 * 1024  # 10MB，应对超大 SSE 行
-                        )
-                    except asyncio.IncompleteReadError as e:
-                        line_bytes = e.partial
-                        if not line_bytes:
-                            break  # 连接关闭
+                    line_bytes = await resp.content.readline()
                     if not line_bytes:
-                        break
+                        break  # 连接关闭
                     line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
                     if not line or not line.startswith("data: "):
                         continue

@@ -145,40 +145,18 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     return raw[:max_len] if raw != "{}" else None
 
 
-_TODO_STATUS_ICON = {
-    "completed": "✅",
-    "in_progress": "🔄",
-    "pending": "⬜",
-}
-
-
-def _fmt_todo_write(inp: dict) -> str:
-    """格式化 TodoWrite 工具调用，将 todos 列表渲染为可读清单"""
-    todos = inp.get("todos", [])
-    if not todos:
-        return "🛠️  TodoWrite"
-    lines = ["🛠️  TodoWrite 任务列表:"]
-    for item in todos:
-        status = item.get("status", "pending")
-        icon = _TODO_STATUS_ICON.get(status, "⬜")
-        content = item.get("content", item.get("activeForm", "?"))
-        lines.append(f"  {icon} {content}")
-    return "\n".join(lines)
-
-
 def _fmt_tool_call(block: dict, max_len: int) -> str:
     """格式化工具调用 block"""
     name = block.get("name", "?")
     inp = block.get("input", {})
     if isinstance(inp, dict):
-        if name == "TodoWrite":
-            return _fmt_todo_write(inp)
+        # 优先显示 command（bash 类工具最常见）
         cmd = inp.get("command", "")
         if cmd:
-            return f"🛠️  {name}: {cmd[:max_len]}"
+            return f"[调用 {name}] {cmd[:max_len]}"
         args_str = json.dumps(inp, ensure_ascii=False)[:max_len]
-        return f"🛠️  {name}: {args_str}"
-    return f"🛠️  {name}"
+        return f"[调用 {name}] {args_str}"
+    return f"[调用 {name}]"
 
 
 
@@ -397,9 +375,19 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
 
 
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件 → 透传，普通文本 → [Message]"""
-    if text.startswith("[System]:") or text.startswith("🛠️"):
+    """格式化 agent 消息：工具调用 → [Function Calling - ...]，系统事件 → 透传，普通文本 → [Message]"""
+    if text.startswith("[System]:"):
         return text
+    if text.startswith("[调用 "):
+        try:
+            bracket_end = text.index("]")
+            tool_part = text[1:bracket_end]          # "调用 Bash"
+            rest = text[bracket_end + 1:].strip()
+            if rest:
+                return f"[Function Calling - {tool_part}]: {rest}"
+            return f"[Function Calling - {tool_part}]"
+        except ValueError:
+            pass
     return f"[Message]: {text}"
 
 
