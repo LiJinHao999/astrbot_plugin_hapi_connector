@@ -204,33 +204,6 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
     return f"[{dtype}]" if dtype else None
 
 
-def session_label(s: dict, current_sid: str | None = None, show_path: bool = False) -> str:
-    """生成 session 标签（多行格式）"""
-    meta = s.get("metadata", {})
-    flavor = meta.get("flavor", "?")
-    sid_short = s.get("id", "?")[:8]
-
-    summary = (meta.get("summary") or {}).get("text", "")
-    title = summary or "(无标题)"
-
-    status = "ACTIVE" if s.get("active") else "idle"
-    pending = s.get("pendingRequestsCount", 0)
-
-    agent_parts = [f"🤖 {flavor}", f"🏷️ {sid_short}", status]
-    if pending:
-        agent_parts.append(f"⚠️ {pending}待审批")
-    if current_sid and s.get("id") == current_sid:
-        agent_parts.append("<<当前")
-
-    lines = [f"💬 {title}", " | ".join(agent_parts)]
-
-    if show_path:
-        path = meta.get("path", "(无路径)")
-        lines.insert(1, f"📂 {path}")
-
-    return "\n".join(lines)
-
-
 def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
     """获取 session 的简短标识（用于 SSE 推送，多行格式）"""
     session = None
@@ -266,7 +239,7 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
 
 
 def format_session_list(sessions: list[dict], current_sid: str | None = None) -> str:
-    """格式化 session 列表（按 path 分组）"""
+    """格式化 session 列表（按 path 分组，紧凑格式）"""
     if not sessions:
         return "没有任何 session"
 
@@ -274,15 +247,36 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
     groups = group_sessions_by_path(sessions)
     idx = 1
     for path, group in groups.items():
-        lines.append(f"\n📁 {path}")
+        lines.append(f"\n📁 {path} ({len(group)})")
         for s in group:
-            label_lines = session_label(s, current_sid).split("\n")
-            lines.append(f"\n  [{idx}] {label_lines[0]}")
-            for ll in label_lines[1:]:
-                lines.append(f"       {ll}")
+            meta = s.get("metadata", {})
+            sid_short = s.get("id", "?")[:8]
+            summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
+            flavor = meta.get("flavor", "?")
+            model = s.get("modelMode", "default")
+            pending = s.get("pendingRequestsCount", 0)
+
+            # 状态
+            if s.get("thinking"):
+                status = "思考中"
+            elif s.get("active"):
+                status = "ACTIVE"
+            else:
+                status = "idle"
+
+            # 第一行：[序号|🏷️sid] 标题
+            lines.append(f"[{idx}|🏷️{sid_short}] {summary}")
+
+            # 第二行：状态 | flavor | model | 待审批 | 当前
+            parts = [status, flavor, model]
+            if pending:
+                parts.append(f"⚠️ {pending}待审批")
+            if current_sid and s.get("id") == current_sid:
+                parts.append("<<当前")
+            lines.append(" | ".join(parts))
             idx += 1
 
-    lines.append("\n用 /hapi sw <序号> 切换")
+    lines.append(f"\n用 /hapi sw <序号>或<🏷️session id> 切换")
     return "\n".join(lines)
 
 

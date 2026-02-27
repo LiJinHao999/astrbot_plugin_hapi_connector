@@ -8,7 +8,7 @@ from collections.abc import Callable, Awaitable
 
 from astrbot.api import logger
 
-from .hapi_client import AsyncHapiClient
+from .hapi_client import AsyncHapiClient, ContentTypeError
 from .formatters import (extract_text_preview, session_label_short, format_request_detail,
                          format_agent_line, is_question_request, format_question_notification)
 from . import session_ops
@@ -28,6 +28,10 @@ class SSEListener:
         # 跟踪 session 状态以检测变化
         self.session_states: dict[str, dict] = {}
         self._lock = asyncio.Lock()
+        # 上次 SSE 连接错误描述，None 表示连接正常
+        self.conn_error: str | None = None
+        # 连续失败计数（内存，重启归零）
+        self.conn_fail_count: int = 0
         self._task: asyncio.Task | None = None
         self._remind_task: asyncio.Task | None = None
         self._remind_enabled: bool = False
@@ -88,13 +92,20 @@ class SSEListener:
             resp = None
             try:
                 resp = await self.client.subscribe_events_raw(all_events=True)
-                backoff = 1  # 连接成功，重置退避
 
                 buf = b""
+                got_data = False
                 while True:
                     chunk = await resp.content.read(1024 * 1024)
                     if not chunk:
-                        break  # 连接关闭
+                        break
+                    if not got_data:
+                        got_data = True
+                        self.conn_error = None
+                        if self.conn_fail_count > 0:
+                            logger.info("SSE 连接已恢复（此前连续失败 %d 次）", self.conn_fail_count)
+                        backoff = 1
+                        self.conn_fail_count = 0
                     buf += chunk
                     while b"\n" in buf:
                         line_bytes, buf = buf.split(b"\n", 1)
@@ -110,13 +121,26 @@ class SSEListener:
             except asyncio.CancelledError:
                 logger.info("SSE 监听已取消")
                 return
+            except ContentTypeError as e:
+                self.conn_fail_count += 1
+                backoff = min(max(backoff, 15) * 2, max_backoff)
+                hint = "（疑似 Cloudflare 验证页）" if "text/html" in e.content_type else ""
+                self.conn_error = f"{e} {hint}".strip()
+                logger.warning("SSE 连接异常: %s %s, %ds 后重连", e, hint, backoff)
             except Exception as e:
-                logger.warning("SSE 断线: %s, %ds 后重连", e, backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
+                self.conn_fail_count += 1
+                err_desc = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                self.conn_error = err_desc
+                logger.warning("SSE 断线: %s, %ds 后重连", err_desc, backoff)
             finally:
                 if resp is not None:
                     await resp.release()
+
+            if self.conn_fail_count == 20:
+                logger.warning("SSE 已连续失败 20 次，请检查 HAPI 服务或网络")
+
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
     async def _handle(self, evt: dict):
         """处理单个 SSE 事件"""

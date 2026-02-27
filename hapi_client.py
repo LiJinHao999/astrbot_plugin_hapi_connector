@@ -12,6 +12,15 @@ import aiohttp
 from astrbot.api import logger
 
 
+class ContentTypeError(Exception):
+    """SSE 端点返回了非预期的 Content-Type（如 Cloudflare 挑战页）"""
+
+    def __init__(self, message: str, *, content_type: str = "", snippet: str = ""):
+        super().__init__(message)
+        self.content_type = content_type
+        self.snippet = snippet
+
+
 def _build_connector(proxy_url: str | None):
     """根据 proxy_url 构造 aiohttp connector"""
     if proxy_url:
@@ -214,4 +223,21 @@ class AsyncHapiClient:
         url = f"{self._endpoint}/api/events"
         resp = await self._session.get(url, params=params, timeout=None)
         resp.raise_for_status()
+
+        # 校验 Content-Type，防止 Cloudflare 挑战页等非 SSE 响应
+        ct = resp.content_type or ""
+        if "text/event-stream" not in ct:
+            snippet = ""
+            try:
+                raw = await resp.content.read(512)
+                snippet = raw.decode("utf-8", errors="replace")[:200]
+            except Exception:
+                pass
+            await resp.release()
+            raise ContentTypeError(
+                f"SSE 端点返回了非预期的 Content-Type: {ct}",
+                content_type=ct,
+                snippet=snippet,
+            )
+
         return resp

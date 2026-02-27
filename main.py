@@ -20,7 +20,7 @@ from .formatters import is_compact_request
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.4.1")
+          "1.4.2")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -145,6 +145,13 @@ class HapiConnectorPlugin(Star):
 
     def _current_flavor(self, event: AstrMessageEvent) -> str | None:
         return self._get_user_state(event).get("current_flavor")
+
+    def _conn_warning(self) -> str | None:
+        """SSE 连接异常时返回警告文本，正常时返回 None"""
+        n = self.sse_listener.conn_fail_count
+        if n > 0:
+            return f"⚠ SSE 连接已连续失败 {n} 次，请检查 HAPI 服务状态或网络连接\n"
+        return None
 
     async def _refresh_sessions(self):
         """刷新 session 缓存"""
@@ -295,6 +302,8 @@ class HapiConnectorPlugin(Star):
     async def cmd_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
         await self._set_user_state(event)
+        if w := self._conn_warning():
+            yield event.plain_result(w)
         yield event.plain_result(formatters.get_help_text())
 
     # ── list ──
@@ -304,6 +313,8 @@ class HapiConnectorPlugin(Star):
     async def cmd_list(self, event: AstrMessageEvent):
         """列出所有 session"""
         await self._set_user_state(event)
+        if w := self._conn_warning():
+            yield event.plain_result(w)
         await self._refresh_sessions()
         current_sid = self._current_sid(event)
         text = formatters.format_session_list(self.sessions_cache, current_sid)
