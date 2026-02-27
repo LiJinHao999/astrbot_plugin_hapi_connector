@@ -54,6 +54,8 @@ hapi codex    # OpenAI Codex
 
 > **一句话总结**：AI 编码会话的远程控制台。
 
+![架构图展示](docs/pics/Architecture.png)
+
 ---
 
 ## 💡 实际应用场景
