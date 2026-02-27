@@ -25,7 +25,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 依赖（`aiohttp`、`aiohttp-socks`）会由 AstrBot 自动安装。
 
-项目需要后端，项目的后端为HAPI,[连接部署教程](docs/install.md)
+项目需要后端，项目的后端服务为[HAPI](https://github.com/tiann/hapi)，[连接部署教程](docs/install.md)
 
 ---
 
@@ -74,24 +74,36 @@ hapi codex    # OpenAI Codex
 
 安装后在 AstrBot 管理面板的插件配置页填写：
 
+### 连接与认证
+
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `hapi_endpoint` | HAPI 服务地址，如 `http://0.0.0.0:3006` | |
 | `access_token` | HAPI Access Token，支持 `token:namespace` 格式，关于namespace，见[官方文档说明](https://github.com/tiann/hapi/blob/main/docs/guide/namespace.md) | |
 | `proxy_url` | 代理地址，支持 `socks5h://` 和 `http://` | 空 |
+| `cf_access_client_id` | [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) Service Token 的 Client ID，兼容带 `CF-Access-Client-Id:` 前缀粘贴，详见[部署说明](docs/cf_access_guide.md) | 空 |
+| `cf_access_client_secret` | Cloudflare Zero Trust Service Token 的 Client Secret，兼容带 `CF-Access-Client-Secret:` 前缀粘贴 | 空 |
 | `jwt_lifetime` | JWT 有效期（秒） | 900 |
 | `refresh_before_expiry` | JWT 提前刷新时间（秒） | 180 |
-| `output_level` | SSE 推送级别：`silence` / `simple` /  `summary`/`detail` | detail |
+
+### 推送与交互
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `output_level` | SSE 推送级别：`silence` / `simple` / `summary` / `detail` | detail |
 | `summary_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 戳一戳自动全部审批（仅 QQ NapCat） | 开启 |
+
+### 自动审批
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
 | `remind_pending` | 待审批请求超时重复提醒，防止 AI 会话缓存失效 | 开启 |
 | `remind_interval` | 待审批提醒间隔（秒），倒计时内处理完则不提醒 | 180 |
 | `auto_approve_enabled` | 忙时托管审批：在指定时间范围内自动批准所有权限请求 | 关闭 |
 | `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24小时制） | `23:00` |
 | `auto_approve_end` | 忙时托管审批结束时间（HH:MM，24小时制，支持跨午夜） | `07:00` |
-| `cf_access_client_id` | [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) Service Token 的 Client ID，兼容带 `CF-Access-Client-Id:` 前缀粘贴，详见[部署说明](docs/cf_access_guide.md) | 空 |
-| `cf_access_client_secret` | Cloudflare Zero Trust Service Token 的 Client Secret，兼容带 `CF-Access-Client-Secret:` 前缀粘贴 | 空 |
 
 ---
 
@@ -193,9 +205,9 @@ astrbot_plugin_hapi_connector/
 ## 📌 TODO
 
 - ✅ 优化输出格式，提升交互可读性
-- [ ] 支持将 Markdown 文字、AI编辑等影响观感长上下文渲染为图片（可选）
-- [ ] 完善部署文档与使用教程
-- [ ] 支持文件上传逻辑
+- ✅ 完善部署文档与使用教程
+- [ ] 支持文件上传与下载逻辑 - 预计将在1.5.0版本实现
+- [ ] 支持将 Markdown 文字、AI编辑等影响观感长上下文渲染为图片（依赖库独立，可选下载）
 - [ ] 通过 AstrBot 自然语言触发指令，让聊天 LLM 感知当前编码任务
 - [ ] 支持多用户独立会话状态
 
