@@ -580,6 +580,7 @@ class HapiConnectorPlugin(Star):
 
     _OUTPUT_LEVELS = {
         "silence": "仅推送权限请求和任务完成提醒",
+        "summary": "任务完成时推送最近几条 agent 消息摘要",
         "simple": "AI 思考完成后推送最近 agent 文本消息",
         "detail": "实时推送所有新消息（信息量较大）",
     }
@@ -706,17 +707,7 @@ class HapiConnectorPlugin(Star):
                 tool = req.get("tool", "?")
                 yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: {tool}")
         else:
-            results = []
-            for sid, rid, req in regular:
-                if is_compact_request(req):
-                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
-                    self._remove_pending_entry(sid, rid)
-                    results.append(f"{'✓' if ok else '✗'} /compact")
-                else:
-                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
-                    tool = req.get("tool", "?")
-                    results.append(f"{'✓' if ok else '✗'} {tool}")
-            yield event.plain_result(f"已批准 {len(regular)} 个权限请求:\n" + "\n".join(results))
+            yield event.plain_result(await self._approve_all_pending())
 
     # ── answer ──
 
@@ -1216,17 +1207,7 @@ class HapiConnectorPlugin(Star):
                      if formatters.is_question_request(req)]
 
         if regular:
-            results = []
-            for sid, rid, req in regular:
-                if is_compact_request(req):
-                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
-                    self._remove_pending_entry(sid, rid)
-                    results.append(f"{'✓' if ok else '✗'} /compact")
-                else:
-                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
-                    tool = req.get("tool", "?")
-                    results.append(f"{'✓' if ok else '✗'} {tool}")
-            result = f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
+            result = await self._approve_all_pending()
             yield event.plain_result(f"[戳一戳审批] {result}")
 
         if questions:
