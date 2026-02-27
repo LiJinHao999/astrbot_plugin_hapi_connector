@@ -27,7 +27,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 项目需要后端，项目的后端服务为[HAPI](https://github.com/tiann/hapi)
 
-点击查看[连接部署教程](docs/install.md)
+点击查看[部署＆连接插件教程](docs/install.md)
 
 ---
 
@@ -37,15 +37,19 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 你在外面摸鱼，电脑在家跑代码——通过这个插件，你可以在 QQ、微信、Telegram 等任意聊天平台上，直接操控跑在远端机器上的 Claude Code / Codex / Gemini / OpenCode，发消息、审批权限、切换模型，一条指令,甚至拍一拍QQ机器人搞定。
 
-**它连接的后端是 [HAPI](https://github.com/tiann/hapi)**，一个统一用于方便管理多个 AI 编码代理会话后台运行和管理的服务，是 [HAPPY CODER](https://github.com/slopus/happy?tab=readme-ov-file) 的开源本地实现版本
+**它连接的后端是 [HAPI](https://github.com/tiann/hapi)**，一个统一用于方便管理多个 AI 编码代理会话后台运行和管理的服务，是 [HAPPY CODER](https://github.com/slopus/happy?tab=readme-ov-file) 的开源本地实现版本——**数据全部留在本地**
 
-部署极简，数据全部留在本地——只需在机器上安装 HAPI 服务，启动 AI 编码会话时加上 `hapi` 前缀，会话即自动接入 Hub 管理：
+如果你的机器上已经安装过claude code、codex等软件，安装会非常简单
+
+只需在机器上通过 NPM 安装 HAPI，启动 AI 编码会话时加上 `hapi` 前缀，会话即自动接入 Hub 管理：
 
 ```bash
 hapi claude   # Claude Code
 hapi codex    # OpenAI Codex
 ```
-同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话
+
+同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话。
+点击查看[部署＆连接插件教程](docs/install.md)
 
 
 > **一句话总结**：AI 编码会话的远程控制台。
