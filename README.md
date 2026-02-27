@@ -43,7 +43,7 @@ hapi codex    # OpenAI Codex
 ```
 同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话
 
-[HAPI 部署教程文档](docs\install.md)
+[HAPI 部署教程文档](docs/install.md)
 
 
 > **一句话总结**：AI 编码会话的远程控制台。

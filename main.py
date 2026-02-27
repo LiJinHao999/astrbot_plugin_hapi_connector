@@ -36,8 +36,13 @@ class HapiConnectorPlugin(Star):
         refresh_before = self.config.get("refresh_before_expiry", 180)
 
         # Cloudflare Zero Trust Access（可选，仅在填写了 client_id 时生效）
-        cf_id = self.config.get("cf_access_client_id", "")
-        cf_secret = self.config.get("cf_access_client_secret", "")
+        # 兼容用户从 CF 控制台一键复制时带上的请求头前缀
+        cf_id = self.config.get("cf_access_client_id", "").strip()
+        cf_secret = self.config.get("cf_access_client_secret", "").strip()
+        if cf_id.lower().startswith("cf-access-client-id:"):
+            cf_id = cf_id.split(":", 1)[1].strip()
+        if cf_secret.lower().startswith("cf-access-client-secret:"):
+            cf_secret = cf_secret.split(":", 1)[1].strip()
         cf_mgr = None
         if cf_id and cf_secret:
             cf_mgr = CfAccessManager(

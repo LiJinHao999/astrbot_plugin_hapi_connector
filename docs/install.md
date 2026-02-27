@@ -1,7 +1,6 @@
 # HAPI 安装与启动指南
 
-本文档说明如何在本地机器上安装并启动 HAPI 服务，以便配合本插件使用。
-
+本文档说明如何安装并启动 [HAPI](https://github.com/tiann/hapi) 服务，以便配合本插件使用。
 
 ---
 
@@ -19,7 +18,7 @@ npm install -g @twsxtd/hapi
 brew install tiann/tap/hapi
 ```
 
-**npx（免安装，临时使用）：**
+**npx（免安装，临时体验）：**
 
 ```bash
 npx @twsxtd/hapi
@@ -29,18 +28,27 @@ npx @twsxtd/hapi
 
 ## 2. 启动 Hub
 
-Hub 是 HAPI 的核心服务，负责会话持久化、权限管理和远程访问。
+Hub 是 HAPI 的**核心服务**，负责会话持久化、权限管理和远程访问。
 
-首次启动时，HAPI 会自动创建 `~/.hapi/` 目录、生成 Access Token 并保存到 `~/.hapi/settings.json`。
+首次启动时，HAPI 会自动创建 `~/.hapi/` 目录、生成 **Access Token** 并保存到 `~/.hapi/settings.json`。
 
-根据你的网络环境选择部署模式：
+**根据你的网络环境选择部署模式：**
 
-<details>
-<summary>纯本地模式（AstrBot 与 HAPI Hub 位于同一内网）</summary>
+| 模式 | 适用场景 | 跳转 |
+|------|---------|------|
+| **A. 纯本地** | AstrBot 与 HAPI 在同一内网 | [查看](#a-纯本地模式) |
+| **B. 公共中继** | 使用 HAPI 官方中继，零配置外网访问 | [查看](#b-公共中继模式) |
+| **C. 外网远程** | 自建隧道 / VPS / Cloudflare Tunnel 等 | [查看](#c-外网远程自建隧道) |
 
-Hub 默认只监听本机（`127.0.0.1:3006`）。根据 AstrBot 的部署方式选择：
+---
 
-**情况 A：AstrBot 与 HAPI 在同一宿主机（非 Docker）**
+### A. 纯本地模式
+
+> AstrBot 与 HAPI Hub 位于**同一内网**
+
+Hub 默认只监听 `127.0.0.1:3006`，根据 AstrBot 部署方式选择：
+
+**情况 1：AstrBot 与 HAPI 在同一宿主机（非 Docker）**
 
 直接启动，无需额外配置：
 
@@ -48,9 +56,9 @@ Hub 默认只监听本机（`127.0.0.1:3006`）。根据 AstrBot 的部署方式
 hapi hub --no-relay
 ```
 
-**情况 B：AstrBot 在 Docker 容器内，或二者在同一局域网内**
+**情况 2：AstrBot 在 Docker 容器内，或二者在同一局域网**
 
-先在 `~/.hapi/settings.json` 中添加此配置项（文件不存在则新建）：
+需要先让 Hub 监听所有网卡。在 `~/.hapi/settings.json` 中添加（文件不存在则新建）：
 
 ```json
 {
@@ -58,36 +66,38 @@ hapi hub --no-relay
 }
 ```
 
-再启动：
+然后启动：
 
 ```bash
 hapi hub --no-relay
 ```
 
-</details>
+---
 
-<details>
-<summary>公共中继模式（使用 HAPI 提供的公网中继，可从外网访问）</summary>
+### B. 公共中继模式
+
+> 使用 HAPI 官方中继，**零配置**即可外网访问
 
 ```bash
 hapi hub --relay
 ```
 
-不带参数时默认也会使用中继模式（`hapi hub` 等同于 `hapi hub --relay`）。启动后终端会显示访问 URL 和二维码，扫码即可从任意设备访问。
+不带参数时默认使用中继模式（`hapi hub` 等同于 `hapi hub --relay`）。启动后终端会显示**访问 URL 和二维码**，扫码即可从任意设备访问。
 
-- 端对端加密（WireGuard + TLS），无需额外配置，穿透 NAT 和防火墙
+- **端对端加密**（WireGuard + TLS），无需额外配置，自动穿透 NAT 和防火墙
 - 默认使用 UDP，如遇连接问题可强制 TCP：`HAPI_RELAY_FORCE_TCP=true hapi hub --relay`
 
-</details>
+---
 
-<details>
-<summary>外网远程（自建隧道、VPS 等其他方案，适用于hapi与astrbot无法互相访问的情况）</summary>
+### C. 外网远程（自建隧道）
 
-你可以自行参考 [HAPI 官方部署文档推荐的自建方法](https://github.com/tiann/hapi/blob/main/docs/guide/installation.md#self-hosted-tunnels)。
+> 适用于 HAPI 与 AstrBot **无法直接互访**的情况
 
-**Cloudflare Zero Trust 隧道**
+可参考 [HAPI 官方部署文档](https://github.com/tiann/hapi/blob/main/docs/guide/installation.md#self-hosted-tunnels) 了解更多自建方案。
 
-> 注意：不支持 Cloudflare Quick Tunnels（TryCloudflare），因其不支持 SSE。请使用 Named Tunnel。
+**Cloudflare Zero Trust 隧道（推荐）**
+
+> ⚠️ **不支持** Cloudflare Quick Tunnels（TryCloudflare），因其不支持 SSE。请使用 **Named Tunnel**。
 
 ```bash
 cloudflared tunnel create hapi
@@ -95,10 +105,7 @@ cloudflared tunnel route dns hapi hapi.yourdomain.com
 cloudflared tunnel --protocol http2 run hapi
 ```
 
-推荐使用zero trust. 已支持远程验证逻辑。你可以参考官方部署文档.
-
-[以下介绍了如何为zero_trust提供可用的鉴权配置](docs\cf_access_guide.md)
-
+推荐配合 **Cloudflare Zero Trust Access** 保护你的服务。本插件已内置 CF Access 认证支持，配置方法见 👉 [CF Access 配置指南](cf_access_guide.md)
 
 **Tailscale**
 
@@ -111,13 +118,11 @@ hapi hub --no-relay
 
 **公网 IP / 反向代理**
 
-直接通过 `http://your-server-ip:3006` 访问，生产环境建议配合 Nginx/Caddy 启用 HTTPS。
-
-</details>
+直接通过 `http://your-server-ip:3006` 访问，生产环境**强烈建议**配合 Nginx / Caddy 启用 HTTPS。
 
 ### 后台持久运行
 
-以上命令均为前台运行，关闭终端后 Hub 即停止。生产使用请选择以下方式之一：
+> 以上命令均为**前台运行**，关闭终端后 Hub 即停止。生产环境请选择以下方式之一：
 
 <details>
 <summary>nohup（快速临时方案）</summary>
@@ -243,7 +248,7 @@ journalctl --user -u hapi-hub -f
 
 ## 3. 启动 Runner（可选）
 
-Runner 是后台服务，允许从 手机/网页/astrbot 远程创建新会话，无需保持终端开启。否则，你需要伴随hapi命令启动一个session。
+Runner 是后台服务，允许从手机 / 网页 / AstrBot **远程创建新会话**，无需保持终端开启。不启动 Runner 的话，你需要手动通过 `hapi` 命令启动 session。
 
 ```bash
 hapi runner start    # 启动
@@ -258,7 +263,7 @@ hapi runner stop     # 停止
 
 ## 4. CLI 认证配置（多机器场景）
 
-如果 Hub 在其它服务器上启动，不在本机，需要在运行 `hapi` 前配置连接信息：
+如果 Hub **不在本机**（部署在其它服务器上），需要先配置连接信息：
 
 **方式一：环境变量**
 
@@ -279,17 +284,14 @@ hapi auth login
 hapi auth status    # 查看当前认证状态
 hapi auth logout    # 登出
 ```
-在这之后，你可以参考步骤 3 在机器上启动runner，此时同一个hub即可管理多个机器。
+
+配置完成后，可参考步骤 3 在该机器上启动 Runner，实现**同一个 Hub 管理多台机器**。
 
 ---
 
 ## 5. 获取 Access Token
 
-首次启动 Hub 后，Token 会打印在终端，同时保存在：
-
-```
-~/.hapi/settings.json
-```
+首次启动 Hub 后，Token 会**打印在终端**，同时保存在 `~/.hapi/settings.json`。
 
 查看 Token：
 
@@ -297,29 +299,29 @@ hapi auth logout    # 登出
 cat ~/.hapi/settings.json
 ```
 
-找到 `cliApiToken` 字段的值，即为 Access Token。
+找到 **`cliApiToken`** 字段的值，即为 Access Token。
 
 ---
 
 ## 6. 填写插件配置
 
-在 AstrBot 管理面板的插件配置页填写以下两个关键字段：
+在 AstrBot 管理面板的插件配置页填写以下**必填**字段：
 
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
-| `hapi_endpoint` | HAPI Hub 的访问地址 | 见下表 |
-| `access_token` | 上一步获取的 Access Token | `your-token-here` |
+| **`hapi_endpoint`** | HAPI Hub 的访问地址 | 见下表 |
+| **`access_token`** | 上一步获取的 Access Token | `your-token-here` |
 
 **`hapi_endpoint` 根据部署方式填写：**
 
-| 场景 | `hapi_endpoint` 填写值 | 前置条件 |
-|------|----------------------|----------|
-| AstrBot 与 HAPI 在同一台宿主机（非 Docker） | `http://localhost:3006` | 无 |
-| AstrBot 在 Docker，HAPI 宿主机为 macOS / Windows | `http://host.docker.internal:3006` | `listenHost` 改为 `0.0.0.0` |
-| AstrBot 在 Docker，HAPI 宿主机为 Linux | `http://172.17.0.1:3006` | `listenHost` 改为 `0.0.0.0` |
-| AstrBot 与 HAPI 位于同一内网 / 使用 Tailscale 组网 | `http://<HAPI机器IP>:3006` | `listenHost` 改为 `0.0.0.0` |
-| 使用公共中继模式 / 自行使用其它域名 | 终端显示的中继域名，或你的域名，如 `https://xxx.hapi.run` | `hapi hub --relay` |
+| 场景 | 填写值 | 前置条件 |
+|------|--------|----------|
+| 同一宿主机（非 Docker） | `http://localhost:3006` | 无 |
+| Docker 内，宿主机为 macOS / Windows | `http://host.docker.internal:3006` | `listenHost` → `0.0.0.0` |
+| Docker 内，宿主机为 Linux | `http://172.17.0.1:3006` | `listenHost` → `0.0.0.0` |
+| 同一内网 / Tailscale | `http://<HAPI机器IP>:3006` | `listenHost` → `0.0.0.0` |
+| 公共中继 / 自建隧道 | 中继域名或你的域名，如 `https://xxx.hapi.run` | 对应模式已启动 |
 
-> Docker 场景下，容器内无法直接访问宿主机的 `localhost`。需先按第 2 节将 `listenHost` 改为 `0.0.0.0`，再用上表对应地址。Linux 的 `172.17.0.1` 是默认 docker0 网桥地址，如有自定义网络请替换为实际网关 IP。
+> ⚠️ **Docker 用户注意**：容器内无法直接访问宿主机的 `localhost`，需先按第 2 节将 `listenHost` 改为 `0.0.0.0`，再用上表对应地址。Linux 的 `172.17.0.1` 是默认 docker0 网桥地址，如有自定义网络请替换为实际网关 IP。
 
-配置完成后，发送 `/hapi list` 验证连接是否正常。
+配置完成后，发送 **`/hapi list`** 验证连接是否正常。
