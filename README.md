@@ -90,6 +90,8 @@ hapi codex    # OpenAI Codex
 | `auto_approve_enabled` | 忙时托管审批：在指定时间范围内自动批准所有权限请求 | 关闭 |
 | `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24小时制） | `23:00` |
 | `auto_approve_end` | 忙时托管审批结束时间（HH:MM，24小时制，支持跨午夜） | `07:00` |
+| `cf_access_client_id` | [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) Service Token 的 Client ID，兼容带 `CF-Access-Client-Id:` 前缀粘贴，详见[部署说明](docs/cf_access_guide.md) | 空 |
+| `cf_access_client_secret` | Cloudflare Zero Trust Service Token 的 Client Secret，兼容带 `CF-Access-Client-Secret:` 前缀粘贴 | 空 |
 
 ---
 
