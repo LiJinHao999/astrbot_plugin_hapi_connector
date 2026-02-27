@@ -11,6 +11,7 @@ from astrbot.api.message_components import Poke
 from astrbot.core.utils.session_waiter import session_waiter, SessionController
 
 from .hapi_client import AsyncHapiClient
+from .cf_access import CfAccessManager
 from .sse_listener import SSEListener
 from .constants import PERMISSION_MODES, MODEL_MODES, AGENTS
 from . import session_ops
@@ -20,7 +21,7 @@ from .formatters import is_compact_request
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.4.2")
+          "1.4.3")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -34,12 +35,26 @@ class HapiConnectorPlugin(Star):
         jwt_life = self.config.get("jwt_lifetime", 900)
         refresh_before = self.config.get("refresh_before_expiry", 180)
 
+        # Cloudflare Zero Trust Access（可选，仅在填写了 client_id 时生效）
+        cf_id = self.config.get("cf_access_client_id", "")
+        cf_secret = self.config.get("cf_access_client_secret", "")
+        cf_mgr = None
+        if cf_id and cf_secret:
+            cf_mgr = CfAccessManager(
+                endpoint=endpoint,
+                client_id=cf_id,
+                client_secret=cf_secret,
+                cookie_save=lambda data: self.put_kv_data("cf_cookie", data),
+                cookie_load=lambda: self.get_kv_data("cf_cookie", None),
+            )
+
         self.client = AsyncHapiClient(
             endpoint=endpoint,
             access_token=token,
             proxy_url=proxy,
             jwt_lifetime=jwt_life,
             refresh_before=refresh_before,
+            cf_access_mgr=cf_mgr,
         )
 
         # session 缓存

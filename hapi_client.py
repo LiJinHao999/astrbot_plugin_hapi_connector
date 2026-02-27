@@ -36,12 +36,14 @@ class AsyncTokenManager:
     """异步 JWT 令牌管理：获取、缓存、主动刷新"""
 
     def __init__(self, endpoint: str, access_token: str, proxy_url: str | None,
-                 jwt_lifetime: int = 900, refresh_before: int = 180):
+                 jwt_lifetime: int = 900, refresh_before: int = 180,
+                 cf_access_mgr=None):
         self._endpoint = endpoint
         self._access_token = access_token
         self._proxy_url = proxy_url
         self._jwt_lifetime = jwt_lifetime
         self._refresh_before = refresh_before
+        self._cf_mgr = cf_access_mgr
 
         self._jwt: str | None = None
         self._obtained_at: float = 0
@@ -70,6 +72,8 @@ class AsyncTokenManager:
         """调用 POST /api/auth 换取 JWT"""
         url = f"{self._endpoint}/api/auth"
         payload = {"accessToken": self._access_token}
+        # 临时 session 需要携带 CF Access cookie 才能通过 Cloudflare
+        extra_headers = self._cf_mgr.get_cookie_header() if self._cf_mgr else {}
 
         logger.info("正在获取 JWT ...")
         connector = _build_connector(self._proxy_url)
@@ -77,7 +81,8 @@ class AsyncTokenManager:
             async with aiohttp.ClientSession(
                 connector=connector, connector_owner=True
             ) as session:
-                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.post(url, json=payload, headers=extra_headers,
+                                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
                     self._jwt = data["token"]
@@ -92,9 +97,11 @@ class AsyncHapiClient:
     """异步 HAPI HTTP 客户端，封装鉴权、重试"""
 
     def __init__(self, endpoint: str, access_token: str, proxy_url: str | None = None,
-                 jwt_lifetime: int = 900, refresh_before: int = 180):
+                 jwt_lifetime: int = 900, refresh_before: int = 180,
+                 cf_access_mgr=None):
         self._endpoint = endpoint.rstrip("/")
         self._proxy_url = proxy_url
+        self._cf_mgr = cf_access_mgr
 
         self._token_mgr = AsyncTokenManager(
             endpoint=self._endpoint,
@@ -102,6 +109,7 @@ class AsyncHapiClient:
             proxy_url=proxy_url,
             jwt_lifetime=jwt_lifetime,
             refresh_before=refresh_before,
+            cf_access_mgr=cf_access_mgr,
         )
         self._session: aiohttp.ClientSession | None = None
 
@@ -112,6 +120,9 @@ class AsyncHapiClient:
             self._session = aiohttp.ClientSession(
                 connector=connector, connector_owner=True
             )
+        # 加载持久化的 CF Access cookie
+        if self._cf_mgr:
+            await self._cf_mgr.load_cached_cookie()
 
     async def close(self):
         """关闭 aiohttp.ClientSession"""
@@ -135,6 +146,8 @@ class AsyncHapiClient:
         返回 aiohttp.ClientResponse（已读取 body）。
         """
         await self._ensure_session()
+        if self._cf_mgr:
+            await self._cf_mgr.ensure_auth(self._session)
         url = f"{self._endpoint}{path}"
         headers = kwargs.pop("headers", {})
         headers.update(await self._auth_headers())
@@ -194,6 +207,8 @@ class AsyncHapiClient:
         """GET /health，不需要 JWT"""
         try:
             await self._ensure_session()
+            if self._cf_mgr:
+                await self._cf_mgr.ensure_auth(self._session)
             async with self._session.get(
                 f"{self._endpoint}/health",
                 timeout=aiohttp.ClientTimeout(total=5)
@@ -209,6 +224,8 @@ class AsyncHapiClient:
         返回 aiohttp 流式 response 供外部逐行解析。
         """
         await self._ensure_session()
+        if self._cf_mgr:
+            await self._cf_mgr.ensure_auth(self._session)
         params = {}
         if all_events:
             params["all"] = "1"

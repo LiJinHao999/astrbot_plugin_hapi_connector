@@ -258,17 +258,17 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
 
             # 状态
             if s.get("thinking"):
-                status = "思考中"
+                status = "💭思考中"
             elif s.get("active"):
-                status = "ACTIVE"
+                status = "🟢运行中"
             else:
-                status = "idle"
+                status = "⚪已关闭"
 
             # 第一行：[序号|🏷️sid] 标题
-            lines.append(f"[{idx}|🏷️{sid_short}] {summary}")
+            lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
 
-            # 第二行：状态 | flavor | model | 待审批 | 当前
-            parts = [status, flavor, model]
+            # 第二行：状态 | 模型 | 待审批 | 当前
+            parts = [status, f"🤖{flavor}:{model}"]
             if pending:
                 parts.append(f"⚠️ {pending}待审批")
             if current_sid and s.get("id") == current_sid:

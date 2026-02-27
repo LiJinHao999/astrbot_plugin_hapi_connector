@@ -16,6 +16,18 @@
     "default": "",
     "hint": "例如: socks5h://127.0.0.1:1080 或 http://127.0.0.1:7890"
   },
+  "cf_access_client_id": {
+    "description": "Cloudflare Zero Trust Access Client ID（留空则不启用 CF 认证）",
+    "type": "string",
+    "default": "",
+    "hint": "部署在 Cloudflare Access 后面时需要填写，可在 Zero Trust 控制台创建 Service Token 获取"
+  },
+  "cf_access_client_secret": {
+    "description": "Cloudflare Zero Trust Access Client Secret",
+    "type": "string",
+    "default": "",
+    "hint": "与 Client ID 配对使用"
+  },
   "jwt_lifetime": {
     "description": "JWT 有效期 (秒)",
     "type": "int",

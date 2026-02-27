@@ -95,7 +95,10 @@ cloudflared tunnel route dns hapi hapi.yourdomain.com
 cloudflared tunnel --protocol http2 run hapi
 ```
 
-推荐使用zero trust. 已计划支持zero trust情况下的远程验证逻辑
+推荐使用zero trust. 已支持远程验证逻辑。你可以参考官方部署文档.
+
+[以下介绍了如何为zero_trust提供可用的鉴权配置](docs\cf_access_guide.md)
+
 
 **Tailscale**
 
