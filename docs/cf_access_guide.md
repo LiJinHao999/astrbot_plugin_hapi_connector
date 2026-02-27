@@ -7,6 +7,8 @@
 - HAPI 服务已部署并通过 Cloudflare Tunnel 或其他方式接入 Cloudflare
 - 已在 Cloudflare Zero Trust 中为 HAPI 服务创建并托管了 Access Application
 
+若未完成此这两步，建议先参考[HAPI 官方部署文档](https://github.com/tiann/hapi/blob/main/docs/guide/installation.md#self-hosted-tunnels)
+
 ## 步骤一：创建 Service Token（服务令牌）
 
 插件是后台程序，需要使用Cloudflare的 **Service Token** 方式认证。

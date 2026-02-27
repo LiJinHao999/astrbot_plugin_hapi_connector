@@ -25,6 +25,8 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 依赖（`aiohttp`、`aiohttp-socks`）会由 AstrBot 自动安装。
 
+项目需要后端，项目的后端为HAPI,[连接部署教程](docs/install.md)
+
 ---
 
 ## 🤝 这是干嘛用的？
@@ -42,8 +44,6 @@ hapi claude   # Claude Code
 hapi codex    # OpenAI Codex
 ```
 同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话
-
-[HAPI 部署教程文档](docs/install.md)
 
 
 > **一句话总结**：AI 编码会话的远程控制台。
