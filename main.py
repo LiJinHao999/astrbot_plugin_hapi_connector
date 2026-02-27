@@ -45,13 +45,7 @@ class HapiConnectorPlugin(Star):
             cf_secret = cf_secret.split(":", 1)[1].strip()
         cf_mgr = None
         if cf_id and cf_secret:
-            cf_mgr = CfAccessManager(
-                endpoint=endpoint,
-                client_id=cf_id,
-                client_secret=cf_secret,
-                cookie_save=lambda data: self.put_kv_data("cf_cookie", data),
-                cookie_load=lambda: self.get_kv_data("cf_cookie", None),
-            )
+            cf_mgr = CfAccessManager(client_id=cf_id, client_secret=cf_secret)
 
         self.client = AsyncHapiClient(
             endpoint=endpoint,

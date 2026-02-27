@@ -72,8 +72,8 @@ class AsyncTokenManager:
         """调用 POST /api/auth 换取 JWT"""
         url = f"{self._endpoint}/api/auth"
         payload = {"accessToken": self._access_token}
-        # 临时 session 需要携带 CF Access cookie 才能通过 Cloudflare
-        extra_headers = self._cf_mgr.get_cookie_header() if self._cf_mgr else {}
+        # 临时 session 需要携带 CF Access 请求头才能通过 Cloudflare
+        extra_headers = self._cf_mgr.get_headers() if self._cf_mgr else {}
 
         logger.info("正在获取 JWT ...")
         connector = _build_connector(self._proxy_url)
@@ -120,9 +120,6 @@ class AsyncHapiClient:
             self._session = aiohttp.ClientSession(
                 connector=connector, connector_owner=True
             )
-        # 加载持久化的 CF Access cookie
-        if self._cf_mgr:
-            await self._cf_mgr.load_cached_cookie()
 
     async def close(self):
         """关闭 aiohttp.ClientSession"""
@@ -146,10 +143,10 @@ class AsyncHapiClient:
         返回 aiohttp.ClientResponse（已读取 body）。
         """
         await self._ensure_session()
-        if self._cf_mgr:
-            await self._cf_mgr.ensure_auth(self._session)
         url = f"{self._endpoint}{path}"
         headers = kwargs.pop("headers", {})
+        if self._cf_mgr:
+            headers.update(self._cf_mgr.get_headers())
         headers.update(await self._auth_headers())
 
         resp = await self._session.request(
@@ -207,10 +204,10 @@ class AsyncHapiClient:
         """GET /health，不需要 JWT"""
         try:
             await self._ensure_session()
-            if self._cf_mgr:
-                await self._cf_mgr.ensure_auth(self._session)
+            cf_headers = self._cf_mgr.get_headers() if self._cf_mgr else {}
             async with self._session.get(
                 f"{self._endpoint}/health",
+                headers=cf_headers,
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 return resp.ok
@@ -224,8 +221,6 @@ class AsyncHapiClient:
         返回 aiohttp 流式 response 供外部逐行解析。
         """
         await self._ensure_session()
-        if self._cf_mgr:
-            await self._cf_mgr.ensure_auth(self._session)
         params = {}
         if all_events:
             params["all"] = "1"
@@ -238,7 +233,8 @@ class AsyncHapiClient:
         params["token"] = await self._token_mgr.get_token()
 
         url = f"{self._endpoint}/api/events"
-        resp = await self._session.get(url, params=params, timeout=None)
+        sse_headers = self._cf_mgr.get_headers() if self._cf_mgr else {}
+        resp = await self._session.get(url, params=params, headers=sse_headers, timeout=None)
         resp.raise_for_status()
 
         # 校验 Content-Type，防止 Cloudflare 挑战页等非 SSE 响应
