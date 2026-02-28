@@ -519,7 +519,9 @@ def format_file_list(files: list[dict], query: str = "") -> str:
     lines = [f"📂 文件列表 ({total} 个)" + (f" — 搜索: {query}" if query else "") + ":"]
     for i, f in enumerate(files[:cap], 1):
         # files 端点返回的条目可能是字符串路径或 dict
-        name = f if isinstance(f, str) else f.get("path", f.get("name", "?"))
+        name = f if isinstance(f, str) else (
+            f.get("fullPath") or f.get("path") or f.get("fileName") or f.get("name") or "?"
+        )
         lines.append(f"  [{i}] {name}")
     if total > cap:
         lines.append(f"  ... 还有 {total - cap} 个文件未显示")
