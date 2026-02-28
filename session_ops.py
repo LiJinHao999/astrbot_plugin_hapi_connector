@@ -230,6 +230,6 @@ async def read_file(client: AsyncHapiClient, sid: str,
     data = await resp.json()
     resp.release()
     if not data.get("success"):
-        return False, f"读取失败: {data.get('message', '未知错误')}"
+        return False, f"读取失败: {data.get('error', data.get('message', '未知错误'))}"
     return True, data.get("content", "")
 

@@ -1208,6 +1208,12 @@ class HapiConnectorPlugin(Star):
     # ── get ──
 
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+    _TEXT_EXTS = {
+        ".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml",
+        ".toml", ".cfg", ".ini", ".sh", ".bash", ".zsh", ".html", ".css",
+        ".xml", ".csv", ".log", ".conf", ".env", ".gitignore", ".dockerfile",
+        ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp", ".rb", ".lua",
+    }
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("download", alias={"dl"})
@@ -1283,11 +1289,17 @@ class HapiConnectorPlugin(Star):
 
         # 发送到聊天
         try:
+            filename = os.path.basename(path)
             if ext.lower() in self._IMAGE_EXTS:
-                chain = [Comp.Image.fromFileSystem(tmp_path)]
+                yield event.image_result(tmp_path)
+            elif ext.lower() in self._TEXT_EXTS or not ext:
+                # 文本文件直接发内容（Comp.File 部分平台不支持）
+                text_content = raw.decode("utf-8", errors="replace")
+                header = f"📄 {filename}\n{'─' * 20}\n"
+                yield event.plain_result(header + text_content)
             else:
-                chain = [Comp.File(file=tmp_path, name=os.path.basename(path))]
-            yield event.chain_result(chain)
+                chain = [Comp.File(file=tmp_path, name=filename)]
+                yield event.chain_result(chain)
         except Exception as e:
             yield event.plain_result(f"发送文件失败: {e}")
 
