@@ -200,8 +200,12 @@ hapi codex    # OpenAI Codex
 astrbot_plugin_hapi_connector/
 ├── main.py              # 插件入口：指令组、前缀处理、生命周期
 ├── hapi_client.py       # 异步 HAPI HTTP 客户端 + JWT 管理
+├── cf_access.py         # Cloudflare Zero Trust Access 认证
 ├── sse_listener.py      # 后台 SSE 监听 + 消息推送
 ├── session_ops.py       # Session CRUD 操作
+├── file_ops.py          # 文件查询与下载
+├── approval_ops.py      # 审批业务逻辑
+├── create_wizard.py     # 创建会话向导状态机
 ├── formatters.py        # 格式化输出
 ├── constants.py         # 常量定义
 ├── _conf_schema.json    # 配置 schema

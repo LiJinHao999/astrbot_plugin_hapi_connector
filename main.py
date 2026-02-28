@@ -8,18 +8,18 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.message_components import Poke
 import astrbot.api.message_components as Comp
-import base64
-import tempfile
-import os
 
 from astrbot.core.utils.session_waiter import session_waiter, SessionController
 
 from .hapi_client import AsyncHapiClient
 from .cf_access import CfAccessManager
 from .sse_listener import SSEListener
-from .constants import PERMISSION_MODES, MODEL_MODES, AGENTS
+from .constants import PERMISSION_MODES, MODEL_MODES
 from . import session_ops
 from . import formatters
+from . import file_ops
+from . import approval_ops
+from .create_wizard import CreateWizard
 from .formatters import is_compact_request
 
 
@@ -210,41 +210,14 @@ class HapiConnectorPlugin(Star):
     # ──── 审批快捷操作（内部复用） ────
 
     def _flatten_pending(self) -> list[tuple[str, str, dict]]:
-        """将 pending 请求扁平化为 [(sid, rid, req), ...]"""
-        items = []
-        for sid, reqs in self.sse_listener.get_all_pending().items():
-            for rid, req in reqs.items():
-                items.append((sid, rid, req))
-        return items
+        return approval_ops.flatten_pending(self.sse_listener.get_all_pending())
 
     def _remove_pending_entry(self, sid: str, rid: str):
-        """移除合成条目（如 __compact__），不触发 HAPI API"""
-        pending = self.sse_listener.pending
-        if sid in pending:
-            pending[sid].pop(rid, None)
-            if not pending[sid]:
-                del pending[sid]
+        approval_ops.remove_pending_entry(self.sse_listener.pending, sid, rid)
 
     async def _approve_all_pending(self) -> str | None:
-        """批准所有非 question 待审批请求，返回结果文本。无待审批时返回 None。"""
-        items = self._flatten_pending()
-        regular = [(sid, rid, req) for sid, rid, req in items
-                   if not formatters.is_question_request(req)]
-        if not regular:
-            return None
-
-        results = []
-        for sid, rid, req in regular:
-            if is_compact_request(req):
-                ok, _ = await session_ops.send_message(self.client, sid, "/compact")
-                self._remove_pending_entry(sid, rid)
-                results.append(f"{'✓' if ok else '✗'} /compact")
-            else:
-                ok, msg = await session_ops.approve_permission(self.client, sid, rid)
-                tool = req.get("tool", "?")
-                results.append(f"{'✓' if ok else '✗'} {tool}")
-
-        return f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
+        return await approval_ops.approve_all(
+            self.client, self.sse_listener.pending)
 
     async def _answer_questions_interactive(self, event: AstrMessageEvent,
                                              q_items: list) -> bool:
@@ -252,25 +225,13 @@ class HapiConnectorPlugin(Star):
         for qi_idx, (sid, rid, req) in enumerate(q_items):
             args = req.get("arguments") or {}
             questions = args.get("questions", []) if isinstance(args, dict) else []
-            label = formatters.session_label_short(sid, self.sessions_cache)
             answers = {}
 
             for qi, q in enumerate(questions):
                 opts = q.get("options", [])
-                lines = []
-                if len(q_items) > 1:
-                    lines.append(f"问题请求 [{qi_idx + 1}/{len(q_items)}] {label}")
-                if len(questions) > 1:
-                    lines.append(f"[{qi + 1}/{len(questions)}]")
-                if q.get("header"):
-                    lines.append(f"[{q['header']}]")
-                if q.get("question"):
-                    lines.append(q["question"])
-                for i, opt in enumerate(opts, 1):
-                    desc = f" — {opt['description']}" if opt.get("description") else ""
-                    lines.append(f"  [{i}] {opt['label']}{desc}")
-                lines.append(f"  [{len(opts) + 1}] 其他（自定义输入）")
-                await event.send(event.plain_result("\n".join(lines)))
+                prompt = approval_ops.build_question_prompt(
+                    q_items, qi_idx, qi, q, self.sessions_cache)
+                await event.send(event.plain_result(prompt))
 
                 collected = []
 
@@ -803,225 +764,67 @@ class HapiConnectorPlugin(Star):
             plat = meta.get("platform", "?")
             labels.append(f"{host} ({plat})")
 
-        wizard = {
-            "step": 1,
-            "machines": machines,
-            "labels": labels,
-            "machine_id": None,
-            "machine_label": None,
-            "directory": None,
-            "session_type": "simple",
-            "worktree_name": "",
-            "agent": None,
-            "yolo": False,
-            "recent_paths": [],
-        }
+        wiz = CreateWizard(machines, labels)
+        result = wiz.initial_prompt()
 
-        if len(machines) == 1:
-            wizard["machine_id"] = machines[0]["id"]
-            wizard["machine_label"] = labels[0]
-            wizard["step"] = 2
-
-        if wizard["step"] == 1:
-            lines = ["步骤 1/5 — 选择机器:"]
-            for i, label in enumerate(labels, 1):
-                lines.append(f"  [{i}] {label}")
-            lines.append("\n回复序号选择")
-            yield event.plain_result("\n".join(lines))
-        else:
+        # 初始提示可能需要先拉 recent_paths
+        if result.need_recent_paths:
             try:
-                wizard["recent_paths"] = await session_ops.fetch_recent_paths(self.client)
+                wiz.set_recent_paths(await session_ops.fetch_recent_paths(self.client))
             except Exception:
                 pass
-
-            lines = [f"自动选择机器: {wizard['machine_label']}", "", "步骤 2/5 — 工作目录:"]
-            if wizard["recent_paths"]:
-                lines.append("最近使用的目录:")
-                for i, p in enumerate(wizard["recent_paths"], 1):
-                    lines.append(f"  [{i}] {p}")
-                lines.append("回复序号选择，或直接输入新路径")
-            else:
-                lines.append("请输入完整路径")
-            yield event.plain_result("\n".join(lines))
+            prompt = wiz._step2_prompt(result.prompt)
+            yield event.plain_result(prompt)
+        else:
+            yield event.plain_result(result.prompt)
 
         @session_waiter(timeout=120, record_history_chains=False)
         async def create_waiter(controller: SessionController, ev: AstrMessageEvent):
             raw = ev.message_str.strip()
-            step = wizard["step"]
+            r = wiz.process(raw)
 
-            if step == 1:
-                if not raw.isdigit() or not (1 <= int(raw) <= len(wizard["machines"])):
-                    await ev.send(ev.plain_result(f"请输入 1~{len(wizard['machines'])} 的数字"))
-                    controller.keep(timeout=120, reset_timeout=True)
-                    return
-
-                idx = int(raw) - 1
-                wizard["machine_id"] = wizard["machines"][idx]["id"]
-                wizard["machine_label"] = wizard["labels"][idx]
-                wizard["step"] = 2
-
+            # 需要拉 recent_paths 再显示步骤 2
+            if r.need_recent_paths:
                 try:
-                    wizard["recent_paths"] = await session_ops.fetch_recent_paths(self.client)
+                    wiz.set_recent_paths(await session_ops.fetch_recent_paths(self.client))
                 except Exception:
                     pass
-
-                lines = [f"已选机器: {wizard['machine_label']}", "", "步骤 2/5 — 工作目录:"]
-                if wizard["recent_paths"]:
-                    lines.append("最近使用的目录:")
-                    for i, p in enumerate(wizard["recent_paths"], 1):
-                        lines.append(f"  [{i}] {p}")
-                    lines.append("回复序号选择，或直接输入新路径")
-                else:
-                    lines.append("请输入完整路径")
-                await ev.send(ev.plain_result("\n".join(lines)))
+                prompt = wiz._step2_prompt(r.prompt)
+                await ev.send(ev.plain_result(prompt))
                 controller.keep(timeout=120, reset_timeout=True)
+                return
 
-            elif step == 2:
-                recent = wizard["recent_paths"]
-                if raw.isdigit() and recent and 1 <= int(raw) <= len(recent):
-                    wizard["directory"] = recent[int(raw) - 1]
-                elif raw:
-                    wizard["directory"] = raw
-                else:
-                    await ev.send(ev.plain_result("目录不能为空，请重新输入"))
-                    controller.keep(timeout=120, reset_timeout=True)
-                    return
+            # 用户取消
+            if r.cancelled:
+                await ev.send(ev.plain_result(r.prompt))
+                controller.stop()
+                return
 
-                wizard["step"] = 3
-                lines = [
-                    f"目录: {wizard['directory']}",
-                    "",
-                    "步骤 3/5 — 会话类型:",
-                    "  [1] simple  — 直接使用选定目录",
-                    "  [2] worktree — 在仓库旁创建新工作树",
-                ]
-                await ev.send(ev.plain_result("\n".join(lines)))
-                controller.keep(timeout=120, reset_timeout=True)
-
-            elif step == 3:
-                if raw == "1":
-                    wizard["session_type"] = "simple"
-                elif raw == "2":
-                    wizard["session_type"] = "worktree"
-                else:
-                    await ev.send(ev.plain_result("请输入 1 或 2"))
-                    controller.keep(timeout=120, reset_timeout=True)
-                    return
-
-                if wizard["session_type"] == "worktree":
-                    wizard["step"] = 31
-                    await ev.send(ev.plain_result("工作树名称 (回复任意名称，或输入 - 自动生成):"))
-                    controller.keep(timeout=120, reset_timeout=True)
-                else:
-                    wizard["step"] = 4
-                    lines = [
-                        f"类型: {wizard['session_type']}",
-                        "",
-                        "步骤 4/5 — 选择 Vibe Coding 代理:",
-                    ]
-                    for i, a in enumerate(AGENTS, 1):
-                        lines.append(f"  [{i}] {a}")
-                    await ev.send(ev.plain_result("\n".join(lines)))
-                    controller.keep(timeout=120, reset_timeout=True)
-
-            elif step == 31:
-                if raw != "-":
-                    wizard["worktree_name"] = raw
-                wizard["step"] = 4
-                lines = [
-                    f"类型: {wizard['session_type']}"
-                    + (f" (工作树: {wizard['worktree_name']})" if wizard["worktree_name"] else ""),
-                    "",
-                    "步骤 4/5 — 选择 Vibe Coding 代理:",
-                ]
-                for i, a in enumerate(AGENTS, 1):
-                    lines.append(f"  [{i}] {a}")
-                await ev.send(ev.plain_result("\n".join(lines)))
-                controller.keep(timeout=120, reset_timeout=True)
-
-            elif step == 4:
-                if raw.isdigit() and 1 <= int(raw) <= len(AGENTS):
-                    wizard["agent"] = AGENTS[int(raw) - 1]
-                elif raw in AGENTS:
-                    wizard["agent"] = raw
-                else:
-                    await ev.send(ev.plain_result(f"请输入 1~{len(AGENTS)} 的数字或代理名"))
-                    controller.keep(timeout=120, reset_timeout=True)
-                    return
-
-                wizard["step"] = 5
-                lines = [
-                    f"代理: {wizard['agent']}",
-                    "",
-                    "步骤 5/5 — 启用 YOLO 模式?",
-                    "  [1] 否 — 正常审批流程",
-                    "  [2] 是 — 跳过审批和沙箱 (危险)",
-                ]
-                await ev.send(ev.plain_result("\n".join(lines)))
-                controller.keep(timeout=120, reset_timeout=True)
-
-            elif step == 5:
-                if raw == "1":
-                    wizard["yolo"] = False
-                elif raw == "2":
-                    wizard["yolo"] = True
-                else:
-                    await ev.send(ev.plain_result("请输入 1 或 2"))
-                    controller.keep(timeout=120, reset_timeout=True)
-                    return
-
-                wizard["step"] = 6
-                lines = [
-                    "即将创建 Session:",
-                    f"  机器:     {wizard['machine_label']}",
-                    f"  目录:     {wizard['directory']}",
-                    f"  类型:     {wizard['session_type']}",
-                    f"  代理:     {wizard['agent']}",
-                    f"  YOLO:     {'是' if wizard['yolo'] else '否'}",
-                ]
-                if wizard["worktree_name"]:
-                    lines.append(f"  工作树名: {wizard['worktree_name']}")
-                if wizard["agent"] == "codex" and wizard["yolo"]:
-                    lines.append(f"\n⚠ 提醒: Codex YOLO 模式需要在配置中设置信任等级，否则无法使用 tools:")
-                    lines.append(f'  [projects."{wizard["directory"]}"]')
-                    lines.append(f'  trust_level = "trusted"')
-                if wizard["agent"] == "codex":
-                    lines.append(
-                        "\n⚠ 已知问题: 远程创建的 Codex 可能因缺少 TTY 而无法调用工具。"
-                        "\n如遇此问题，建议手动操作:"
-                        "\n  1. SSH 到目标机器，启动 screen: screen -S codex"
-                        "\n  2. cd 到工作目录，运行 codex"
-                        "\n  3. Ctrl+A Ctrl+D 挂到后台"
-                        "\n效果与此处创建相同，且拥有完整 TTY 环境。"
-                    )
-                lines.append("\n回复 y 确认创建，其他取消")
-                await ev.send(ev.plain_result("\n".join(lines)))
-                controller.keep(timeout=60, reset_timeout=True)
-
-            elif step == 6:
-                if raw.lower() != "y":
-                    await ev.send(ev.plain_result("已取消"))
-                    controller.stop()
-                    return
-
-                await ev.send(ev.plain_result("正在创建 ..."))
-
+            # 用户确认创建
+            if r.confirmed:
+                await ev.send(ev.plain_result(r.prompt))
+                s = wiz.state
                 ok, msg, new_sid = await session_ops.spawn_session(
                     self.client,
-                    machine_id=wizard["machine_id"],
-                    directory=wizard["directory"],
-                    agent=wizard["agent"],
-                    session_type=wizard["session_type"],
-                    yolo=wizard["yolo"],
-                    worktree_name=wizard["worktree_name"],
+                    machine_id=s["machine_id"],
+                    directory=s["directory"],
+                    agent=s["agent"],
+                    session_type=s["session_type"],
+                    yolo=s["yolo"],
+                    worktree_name=s["worktree_name"],
                 )
                 await self._refresh_sessions()
                 if ok and new_sid:
-                    flavor = wizard["agent"]
+                    flavor = s["agent"]
                     await self._set_user_state(ev, current_session=new_sid, current_flavor=flavor)
                     msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
                 await ev.send(ev.plain_result(msg))
                 controller.stop()
+                return
+
+            # 普通步骤推进 / 校验失败重试
+            await ev.send(ev.plain_result(r.prompt))
+            controller.keep(timeout=120, reset_timeout=True)
 
         try:
             await create_waiter(event)
@@ -1205,15 +1008,7 @@ class HapiConnectorPlugin(Star):
         except Exception as e:
             yield event.plain_result(f"获取文件列表失败: {e}")
 
-    # ── get ──
-
-    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-    _TEXT_EXTS = {
-        ".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml",
-        ".toml", ".cfg", ".ini", ".sh", ".bash", ".zsh", ".html", ".css",
-        ".xml", ".csv", ".log", ".conf", ".env", ".gitignore", ".dockerfile",
-        ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp", ".rb", ".lua",
-    }
+    # ── download ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("download", alias={"dl"})
@@ -1230,20 +1025,8 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("用法: /hapi download <文件路径>\n示例: /hapi dl README.md")
             return
 
-        # 查父目录获取文件大小
-        try:
-            parent = os.path.dirname(path) or "."
-            entries = await session_ops.list_directory(self.client, sid, path=parent)
-            fname = os.path.basename(path)
-            size = 0
-            for entry in entries:
-                if entry.get("name") == fname:
-                    size = entry.get("size", 0)
-                    break
-        except Exception:
-            size = 0  # 查不到大小不阻塞下载
-
         # 大文件确认
+        size = await file_ops.get_file_size(self.client, sid, path)
         size_mb = 10
         if size > size_mb * 1024 * 1024:
             yield event.plain_result(
@@ -1265,38 +1048,18 @@ class HapiConnectorPlugin(Star):
                 event.stop_event()
                 return
 
-        # 读取文件
+        # 下载、解码、写临时文件
         try:
-            ok, content = await session_ops.read_file(self.client, sid, path)
+            tmp_path, filename, is_image = await file_ops.download_to_tmp(
+                self.client, sid, path)
         except Exception as e:
-            yield event.plain_result(f"读取文件失败: {e}")
-            return
-        if not ok:
-            yield event.plain_result(content)
-            return
-
-        # 解码并写入临时文件
-        try:
-            raw = base64.b64decode(content)
-            ext = os.path.splitext(path)[1] or ""
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-            tmp.write(raw)
-            tmp.close()
-            tmp_path = tmp.name
-        except Exception as e:
-            yield event.plain_result(f"文件解码失败: {e}")
+            yield event.plain_result(f"下载文件失败: {e}")
             return
 
         # 发送到聊天
         try:
-            filename = os.path.basename(path)
-            if ext.lower() in self._IMAGE_EXTS:
+            if is_image:
                 yield event.image_result(tmp_path)
-            elif ext.lower() in self._TEXT_EXTS or not ext:
-                # 文本文件直接发内容（Comp.File 部分平台不支持）
-                text_content = raw.decode("utf-8", errors="replace")
-                header = f"📄 {filename}\n{'─' * 20}\n"
-                yield event.plain_result(header + text_content)
             else:
                 chain = [Comp.File(file=tmp_path, name=filename)]
                 yield event.chain_result(chain)
