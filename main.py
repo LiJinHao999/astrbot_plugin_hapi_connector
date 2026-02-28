@@ -1200,11 +1200,6 @@ class HapiConnectorPlugin(Star):
             return
         try:
             files = await session_ops.list_files(self.client, sid, query=query)
-            # DEBUG: 查看 API 返回的实际数据结构
-            if files:
-                sample = files[0]
-                yield event.plain_result(f"[DEBUG] type={type(sample).__name__}, value={sample}")
-                return
             text = formatters.format_file_list(files, query=query)
             yield event.plain_result(text)
         except Exception as e:
