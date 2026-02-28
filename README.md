@@ -74,7 +74,7 @@ hapi codex    # OpenAI Codex
 1. 插件启动后连接 HAPI 服务，建立 SSE 长连接监听所有事件
 2. AI 有新消息、权限请求、任务完成时，自动推送到你的聊天窗口
 3. 你发指令 → 插件调用 HAPI REST API → 操作对应的 AI 会话
-4. 快捷前缀（默认 `>`）让你不用打 `/hapi to` 长串也能快速发消息
+4. 快捷前缀（默认 `>`）让你不用打 `/hapi to` 长串命令也能快速发消息，同时和astrbot原生对话区分开
 
 ---
 
@@ -178,7 +178,7 @@ hapi codex    # OpenAI Codex
 |------|------|
 | `silence` | 仅推送权限请求和等待输入提醒，其余静默 |
 | `simple` | AI 思考完成后推送纯文本 agent 消息及系统事件（过滤工具调用） |
-| `summary` | AI 思考完成后推送最近 N 条 agent 消息（N 由 simple_msg_count 控制，过滤工具调用） |
+| `summary` | AI 思考完成后推送最近 N 条 agent 消息（N 由 summary_msg_count 控制，过滤工具调用） |
 | `detail` | 实时推送所有新消息（信息量较大，默认） |
 
 ---
@@ -234,3 +234,4 @@ astrbot_plugin_hapi_connector/
 - 🐛 提交 Issue 报告问题
 - 💡 提出新功能建议
 - 🔧 提交 Pull Request 改进代码
+

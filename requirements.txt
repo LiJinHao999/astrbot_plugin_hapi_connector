@@ -1,2 +1,3 @@
-aiohttp>=3.9
-aiohttp-socks>=0.8
+aiohttp>=3.9,<4
+aiohttp-socks>=0.8,<1
+

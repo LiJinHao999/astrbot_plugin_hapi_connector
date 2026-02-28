@@ -134,7 +134,7 @@ class SSEListener:
                 logger.warning("SSE 断线: %s, %ds 后重连", err_desc, backoff)
             finally:
                 if resp is not None:
-                    await resp.release()
+                    resp.release()
 
             if self.conn_fail_count == 20:
                 logger.warning("SSE 已连续失败 20 次，请检查 HAPI 服务或网络")
@@ -586,3 +586,4 @@ class SSEListener:
                                 sid[:8], len(requests_data))
             except Exception as e:
                 logger.warning("加载 session %s 待审批失败: %s", sid[:8], e)
+

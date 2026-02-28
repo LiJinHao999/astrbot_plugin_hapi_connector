@@ -72,7 +72,7 @@ class HapiConnectorPlugin(Star):
         self._poke_approve = self.config.get("poke_approve", False)
 
         # summary 模式消息条数
-        self._summary_msg_count = self.config.get("simple_msg_count", 5)
+        self._summary_msg_count = self.config.get("summary_msg_count", 5)
 
         # 管理员列表（用于 catch-all 处理器手动鉴权）
         astrbot_config = self.context.get_config()
@@ -680,7 +680,7 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("allow")
-    async def cmd_allow(self, event: AstrMessageEvent):
+    async def cmd_allow(self, event: AstrMessageEvent, target: str = ""):
         """批准权限请求（跳过 question）: /hapi allow [序号]"""
         await self._set_user_state(event)
         items = self._flatten_pending()
@@ -691,7 +691,7 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("没有待批准的权限请求")
             return
 
-        raw = event.message_str.strip()
+        raw = (target or "").strip()
         if raw and raw.isdigit():
             n = int(raw)
             if n < 1 or n > len(regular):
@@ -739,7 +739,7 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("deny")
-    async def cmd_deny(self, event: AstrMessageEvent):
+    async def cmd_deny(self, event: AstrMessageEvent, target: str = ""):
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
         await self._set_user_state(event)
         items = self._flatten_pending()
@@ -747,8 +747,7 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("没有待审批的请求")
             return
 
-        raw = event.message_str.strip()
-
+        raw = (target or "").strip()
         if raw and raw.isdigit():
             # 拒绝单个
             n = int(raw)
@@ -1279,3 +1278,5 @@ class HapiConnectorPlugin(Star):
         await self._set_user_state(event)
         yield event.plain_result(msg)
         event.stop_event()
+
+

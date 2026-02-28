@@ -156,7 +156,7 @@ class AsyncHapiClient:
 
         if resp.status == 401 and retry_on_401:
             logger.warning("收到 401，尝试刷新 JWT 后重试 ...")
-            await resp.release()
+            resp.release()
             await self._token_mgr.force_refresh()
             headers.update(await self._auth_headers())
             resp = await self._session.request(
@@ -183,10 +183,10 @@ class AsyncHapiClient:
         resp = await self.get(path, **kwargs)
         if resp.status >= 400:
             body = await resp.text()
-            await resp.release()
+            resp.release()
             raise Exception(f"HTTP {resp.status}: {body[:200]}")
         data = await resp.json()
-        await resp.release()
+        resp.release()
         return data
 
     async def post_json(self, path: str, **kwargs) -> dict:
@@ -194,10 +194,10 @@ class AsyncHapiClient:
         resp = await self.post(path, **kwargs)
         if resp.status >= 400:
             body = await resp.text()
-            await resp.release()
+            resp.release()
             raise Exception(f"HTTP {resp.status}: {body[:200]}")
         data = await resp.json()
-        await resp.release()
+        resp.release()
         return data
 
     async def health(self) -> bool:
@@ -246,7 +246,7 @@ class AsyncHapiClient:
                 snippet = raw.decode("utf-8", errors="replace")[:200]
             except Exception:
                 pass
-            await resp.release()
+            resp.release()
             raise ContentTypeError(
                 f"SSE 端点返回了非预期的 Content-Type: {ct}",
                 content_type=ct,
@@ -254,3 +254,4 @@ class AsyncHapiClient:
             )
 
         return resp
+
