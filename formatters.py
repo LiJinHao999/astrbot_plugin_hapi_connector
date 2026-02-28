@@ -508,6 +508,24 @@ def format_model_modes(modes: list[str], current: str) -> str:
     return "\n".join(lines)
 
 
+def format_file_list(files: list[dict], query: str = "") -> str:
+    """格式化文件列表（/hapi files 返回结果）"""
+    if not files:
+        hint = f"（关键词: {query}）" if query else ""
+        return f"未找到文件{hint}"
+
+    total = len(files)
+    cap = 50
+    lines = [f"📂 文件列表 ({total} 个)" + (f" — 搜索: {query}" if query else "") + ":"]
+    for i, f in enumerate(files[:cap], 1):
+        # files 端点返回的条目可能是字符串路径或 dict
+        name = f if isinstance(f, str) else f.get("path", f.get("name", "?"))
+        lines.append(f"  [{i}] {name}")
+    if total > cap:
+        lines.append(f"  ... 还有 {total - cap} 个文件未显示")
+    return "\n".join(lines)
+
+
 def get_help_text() -> str:
     """返回帮助信息"""
     return """HAPI Connector 指令帮助 (仅管理员可用)
@@ -544,6 +562,10 @@ def get_help_text() -> str:
   /hapi deny       全部拒绝
   /hapi deny <序号> 拒绝单个
   戳一戳机器人      批准所有权限请求 (仅 QQ NapCat)
+
+── 文件 ──
+  /hapi files [关键词]  搜索远端文件
+  /hapi download <路径>  下载远端文件到聊天 (别名: dl)
 
 ── 其他 ──
   /hapi help       显示此帮助"""

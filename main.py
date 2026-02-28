@@ -7,6 +7,10 @@ from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.message_components import Poke
+import astrbot.api.message_components as Comp
+import base64
+import tempfile
+import os
 
 from astrbot.core.utils.session_waiter import session_waiter, SessionController
 
@@ -21,7 +25,7 @@ from .formatters import is_compact_request
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.4.3")
+          "1.5.0")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1180,6 +1184,112 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("操作超时，已取消")
         finally:
             event.stop_event()
+
+    # ── files ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("files")
+    async def cmd_files(self, event: AstrMessageEvent, query: str = ""):
+        """搜索远端文件: /hapi files [关键词]"""
+        await self._set_user_state(event)
+        if w := self._conn_warning():
+            yield event.plain_result(w)
+        sid = self._current_sid(event)
+        if not sid:
+            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+            return
+        try:
+            files = await session_ops.list_files(self.client, sid, query=query)
+            text = formatters.format_file_list(files, query=query)
+            yield event.plain_result(text)
+        except Exception as e:
+            yield event.plain_result(f"获取文件列表失败: {e}")
+
+    # ── get ──
+
+    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("download", alias={"dl"})
+    async def cmd_download(self, event: AstrMessageEvent, path: str = ""):
+        """下载远端文件到聊天: /hapi download <路径>"""
+        await self._set_user_state(event)
+        if w := self._conn_warning():
+            yield event.plain_result(w)
+        sid = self._current_sid(event)
+        if not sid:
+            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+            return
+        if not path:
+            yield event.plain_result("用法: /hapi download <文件路径>\n示例: /hapi dl README.md")
+            return
+
+        # 查父目录获取文件大小
+        try:
+            parent = os.path.dirname(path) or "."
+            entries = await session_ops.list_directory(self.client, sid, path=parent)
+            fname = os.path.basename(path)
+            size = 0
+            for entry in entries:
+                if entry.get("name") == fname:
+                    size = entry.get("size", 0)
+                    break
+        except Exception:
+            size = 0  # 查不到大小不阻塞下载
+
+        # 大文件确认
+        size_mb = 10
+        if size > size_mb * 1024 * 1024:
+            yield event.plain_result(
+                f"⚠ 文件较大 ({size / 1024 / 1024:.1f} MB)，确认下载?\n回复 y 确认")
+            confirmed = False
+            @session_waiter(timeout=30, record_history_chains=False)
+            async def size_waiter(controller: SessionController, ev: AstrMessageEvent):
+                nonlocal confirmed
+                confirmed = ev.message_str.strip().lower() in ("y", "yes")
+                controller.stop()
+            try:
+                await size_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("操作超时，已取消")
+                event.stop_event()
+                return
+            if not confirmed:
+                yield event.plain_result("已取消")
+                event.stop_event()
+                return
+
+        # 读取文件
+        try:
+            ok, content = await session_ops.read_file(self.client, sid, path)
+        except Exception as e:
+            yield event.plain_result(f"读取文件失败: {e}")
+            return
+        if not ok:
+            yield event.plain_result(content)
+            return
+
+        # 解码并写入临时文件
+        try:
+            raw = base64.b64decode(content)
+            ext = os.path.splitext(path)[1] or ""
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+            tmp.write(raw)
+            tmp.close()
+            tmp_path = tmp.name
+        except Exception as e:
+            yield event.plain_result(f"文件解码失败: {e}")
+            return
+
+        # 发送到聊天
+        try:
+            if ext.lower() in self._IMAGE_EXTS:
+                chain = [Comp.Image.fromFileSystem(tmp_path)]
+            else:
+                chain = [Comp.File(file=tmp_path, name=os.path.basename(path))]
+            yield event.chain_result(chain)
+        except Exception as e:
+            yield event.plain_result(f"发送文件失败: {e}")
 
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 

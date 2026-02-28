@@ -200,3 +200,36 @@ async def spawn_session(client: AsyncHapiClient, machine_id: str,
     else:
         return False, f"创建失败: {result.get('message', '未知错误')}", None
 
+
+async def list_files(client: AsyncHapiClient, sid: str,
+                     query: str = "", limit: int = 200) -> list[dict]:
+    """搜索 session 工作目录下的文件（ripgrep）"""
+    params: dict = {"limit": limit}
+    if query:
+        params["query"] = query
+    data = await client.get_json(f"/api/sessions/{sid}/files", params=params)
+    return data.get("files", [])
+
+
+async def list_directory(client: AsyncHapiClient, sid: str,
+                         path: str = ".") -> list[dict]:
+    """列出远端目录，每个条目含 name/type/size/modified"""
+    data = await client.get_json(f"/api/sessions/{sid}/directory",
+                                 params={"path": path})
+    return data.get("entries", [])
+
+
+async def read_file(client: AsyncHapiClient, sid: str,
+                    path: str) -> tuple[bool, str]:
+    """读取远端文件，返回 (成功, base64内容或错误信息)"""
+    resp = await client.get(f"/api/sessions/{sid}/file", params={"path": path})
+    if not resp.ok:
+        body = await resp.text()
+        resp.release()
+        return False, f"读取失败: {resp.status} {body[:200]}"
+    data = await resp.json()
+    resp.release()
+    if not data.get("success"):
+        return False, f"读取失败: {data.get('message', '未知错误')}"
+    return True, data.get("content", "")
+
