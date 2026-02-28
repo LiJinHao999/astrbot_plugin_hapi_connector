@@ -22,6 +22,15 @@ from . import approval_ops
 from .create_wizard import CreateWizard
 from .formatters import is_compact_request
 
+# ── 修补 File.__setattr__，绕过 pydantic v1 拦截 property setter 的 bug ──
+_original_file_setattr = Comp.File.__setattr__
+def _patched_file_setattr(self, name, value):
+    if name == "file":
+        _original_file_setattr(self, "file_", value)
+    else:
+        _original_file_setattr(self, name, value)
+Comp.File.__setattr__ = _patched_file_setattr
+
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
