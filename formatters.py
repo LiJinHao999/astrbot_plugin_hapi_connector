@@ -508,23 +508,57 @@ def format_model_modes(modes: list[str], current: str) -> str:
     return "\n".join(lines)
 
 
-def format_file_list(files: list[dict], query: str = "") -> str:
-    """格式化文件列表（/hapi files 返回结果）"""
+def format_directory(entries: list[dict], path: str = ".",
+                     detail: bool = False) -> str:
+    """格式化目录浏览（/hapi files 返回结果），目录在前文件在后"""
+    if not entries:
+        return f"📂 {path}\n（空目录）"
+
+    dirs = [e for e in entries if e.get("type") == "directory"]
+    files = [e for e in entries if e.get("type") != "directory"]
+    dirs.sort(key=lambda e: e.get("name", ""))
+    files.sort(key=lambda e: e.get("name", ""))
+
+    lines = [f"📂 {path}  ({len(dirs)} 个文件夹, {len(files)} 个文件)"]
+    for d in dirs:
+        lines.append(f"  📁 {d.get('name', '?')}/")
+    for f in files:
+        name = f.get("name", "?")
+        if detail:
+            size = f.get("size", 0)
+            if size >= 1024 * 1024:
+                size_str = f"{size / 1024 / 1024:.1f}MB"
+            elif size >= 1024:
+                size_str = f"{size / 1024:.1f}KB"
+            else:
+                size_str = f"{size}B"
+            lines.append(f"  📄 {name}  ({size_str})")
+        else:
+            lines.append(f"  📄 {name}")
+
+    lines.append("")
+    lines.append("💡 /hapi files <文件夹> — 查看子目录")
+    lines.append("💡 /hapi files -l — 显示文件大小")
+    lines.append("💡 /hapi find <关键词> — 搜索文件")
+    lines.append("💡 /hapi dl <路径> — 下载文件")
+    return "\n".join(lines)
+
+
+def format_file_search(files: list[dict], query: str) -> str:
+    """格式化文件搜索结果（/hapi find 返回结果）"""
     if not files:
-        hint = f"（关键词: {query}）" if query else ""
-        return f"未找到文件{hint}"
+        return f"未找到匹配「{query}」的文件"
 
     total = len(files)
     cap = 50
-    lines = [f"📂 文件列表 ({total} 个)" + (f" — 搜索: {query}" if query else "") + ":"]
+    lines = [f"🔍 搜索「{query}」({total} 个结果):"]
     for i, f in enumerate(files[:cap], 1):
-        # files 端点返回的条目可能是字符串路径或 dict
         name = f if isinstance(f, str) else (
             f.get("fullPath") or f.get("path") or f.get("fileName") or f.get("name") or "?"
         )
         lines.append(f"  [{i}] {name}")
     if total > cap:
-        lines.append(f"  ... 还有 {total - cap} 个文件未显示")
+        lines.append(f"  ... 还有 {total - cap} 个未显示")
     return "\n".join(lines)
 
 
@@ -566,7 +600,8 @@ def get_help_text() -> str:
   戳一戳机器人      批准所有权限请求 (仅 QQ NapCat)
 
 ── 文件 ──
-  /hapi files [关键词]  搜索远端文件
+  /hapi files [-l] [路径]   浏览远端目录 (-l 显示文件大小)
+  /hapi find <关键词>  搜索远端文件
   /hapi download <路径>  下载远端文件到聊天 (别名: dl)
 
 ── 其他 ──
