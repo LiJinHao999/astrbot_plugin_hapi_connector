@@ -22,14 +22,19 @@ from . import approval_ops
 from .create_wizard import CreateWizard
 from .formatters import is_compact_request
 
-# ── 修补 File.__setattr__，绕过 pydantic v1 拦截 property setter 的 bug ──
-_original_file_setattr = Comp.File.__setattr__
-def _patched_file_setattr(self, name, value):
-    if name == "file":
-        _original_file_setattr(self, "file_", value)
-    else:
-        _original_file_setattr(self, name, value)
-Comp.File.__setattr__ = _patched_file_setattr
+# ── AstrBot v4.18.3 pydantic v1 的 __setattr__ 会拦截 File 的 property setter，
+# ── 导致设置 file 属性时写入错误字段,文件传输会直接报错。此处的补丁在 bug 存在时自动生效，官方修复后自动跳过。
+try:
+    _test_file = Comp.File(name="test", url="test")
+    _test_file.file = "test"
+except Exception:
+    _original_file_setattr = Comp.File.__setattr__
+    def _patched_file_setattr(self, name, value):
+        if name == "file":
+            _original_file_setattr(self, "file_", value)
+        else:
+            _original_file_setattr(self, name, value)
+    Comp.File.__setattr__ = _patched_file_setattr
 
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
