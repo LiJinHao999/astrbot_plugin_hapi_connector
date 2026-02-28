@@ -509,17 +509,21 @@ def format_model_modes(modes: list[str], current: str) -> str:
 
 
 def format_directory(entries: list[dict], path: str = ".",
-                     detail: bool = False) -> str:
+                     detail: bool = False, sid: str = "") -> str:
     """格式化目录浏览（/hapi files 返回结果），目录在前文件在后"""
     if not entries:
-        return f"📂 {path}\n（空目录）"
+        header = f"📌 Session: {sid}\n" if sid else ""
+        return f"{header}📂 {path}\n（空目录）"
 
     dirs = [e for e in entries if e.get("type") == "directory"]
     files = [e for e in entries if e.get("type") != "directory"]
     dirs.sort(key=lambda e: e.get("name", ""))
     files.sort(key=lambda e: e.get("name", ""))
 
-    lines = [f"📂 {path}  ({len(dirs)} 个文件夹, {len(files)} 个文件)"]
+    lines = []
+    if sid:
+        lines.append(f"📌 Session: {sid}")
+    lines.append(f"📂 {path}  ({len(dirs)} 个文件夹, {len(files)} 个文件)")
     for d in dirs:
         lines.append(f"  📁 {d.get('name', '?')}/")
     for f in files:
@@ -538,7 +542,6 @@ def format_directory(entries: list[dict], path: str = ".",
 
     lines.append("")
     lines.append("💡 /hapi files <文件夹> — 查看子目录")
-    lines.append("💡 /hapi files -l — 显示文件大小")
     lines.append("💡 /hapi find <关键词> — 搜索文件")
     lines.append("💡 /hapi dl <路径> — 下载文件")
     return "\n".join(lines)

@@ -1006,7 +1006,7 @@ class HapiConnectorPlugin(Star):
     # ── files ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("files")
+    @hapi.command("files", alias={"file"})
     async def cmd_files(self, event: AstrMessageEvent, path: str = "."):
         """浏览远端目录: /hapi files [-l] [路径]"""
         await self._set_user_state(event)
@@ -1023,7 +1023,7 @@ class HapiConnectorPlugin(Star):
         path = parts[0] if parts else "."
         try:
             entries = await session_ops.list_directory(self.client, sid, path=path)
-            text = formatters.format_directory(entries, path=path, detail=detail)
+            text = formatters.format_directory(entries, path=path, detail=detail, sid=sid)
             for chunk in self._split_message(text):
                 yield event.plain_result(chunk)
         except Exception as e:
