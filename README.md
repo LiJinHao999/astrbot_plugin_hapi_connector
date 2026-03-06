@@ -47,6 +47,12 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 hapi claude   # Claude Code
 hapi codex    # OpenAI Codex
 ```
+当然，如果你在服务器上使用，期望长时间挂在后台，需要使用screen命令
+```bash
+screen -S hapi
+hapi codex    # Open Codex
+然后 : 按 ctrl+A ，ctrl+D
+```
 
 同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话。
 点击查看[部署＆连接插件教程](docs/install.md)
