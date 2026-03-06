@@ -1016,8 +1016,19 @@ class HapiConnectorPlugin(Star):
         targets = [s for s in self.sessions_cache if not s.get("active", False)]
 
         # 路径过滤
+        warning = ""
         if path:
-            targets = [s for s in targets if s.get("metadata", {}).get("path", "").startswith(path)]
+            matched = [s for s in targets if s.get("metadata", {}).get("path", "").startswith(path)]
+            if not matched:
+                # 模糊匹配：找相似度最高的路径
+                all_paths = list(set(s.get("metadata", {}).get("path", "") for s in targets))
+                if all_paths:
+                    from difflib import get_close_matches
+                    closest = get_close_matches(path, all_paths, n=1, cutoff=0.3)
+                    if closest:
+                        matched = [s for s in targets if s.get("metadata", {}).get("path", "") == closest[0]]
+                        warning = f"⚠️ 未找到路径 '{path}'，已匹配相似路径: {closest[0]}，请务必注意需要删除的文件夹是否符合预期\n\n"
+            targets = matched
 
         if not targets:
             yield event.plain_result("没有符合条件的 inactive session")
@@ -1025,7 +1036,7 @@ class HapiConnectorPlugin(Star):
 
         # 使用 formatters 格式化列表
         summary = formatters.format_session_list(targets, current_sid=None)
-        yield event.plain_result(f"将删除以下 inactive sessions:\n\n{summary}\n\n输入 yes 确认:")
+        yield event.plain_result(f"{warning}\n将删除以下 inactive sessions:\n\n{summary}\n\n输入 yes 确认:")
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def clean_waiter(controller: SessionController, ev: AstrMessageEvent):
