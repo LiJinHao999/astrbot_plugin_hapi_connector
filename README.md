@@ -54,11 +54,12 @@ screen -S hapi
 hapi codex    # Open Codex
 然后 : 按 ctrl+A ，ctrl+D
 ```
-如果你想在手机上远程启动一个 session ，使用 /hapi create 命令，会立刻启动交互式会话并辅助你将session挂在后台
+
 
 同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话。
 点击查看[部署＆连接插件教程](docs/install.md)
 
+如果你想在手机上远程启动一个 session ，使用 /hapi create 命令，会立刻启动交互式会话并辅助你将session挂在后台（需要参考上方配置教程启动runner服务哦）
 
 > **一句话总结**：AI 编码会话的远程控制台。
 
