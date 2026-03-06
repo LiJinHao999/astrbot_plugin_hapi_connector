@@ -231,5 +231,8 @@ async def read_file(client: AsyncHapiClient, sid: str,
     resp.release()
     if not data.get("success"):
         return False, f"读取失败: {data.get('error', data.get('message', '未知错误'))}"
-    return True, data.get("content", "")
+    content = data.get("content", "")
+    if not content:
+        return False, "文件内容为空或不存在"
+    return True, content
 
