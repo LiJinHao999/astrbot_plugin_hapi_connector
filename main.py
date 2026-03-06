@@ -1003,6 +1003,65 @@ class HapiConnectorPlugin(Star):
         finally:
             event.stop_event()
 
+    # ── clean ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("clean")
+    async def cmd_clean(self, event: AstrMessageEvent, path: str = ""):
+        """清理 inactive sessions: /hapi clean [路径]"""
+        await self._set_user_state(event)
+        await self._refresh_sessions()
+
+        # 筛选 inactive
+        targets = [s for s in self.sessions_cache if not s.get("active", False)]
+
+        # 路径过滤
+        if path:
+            targets = [s for s in targets if s.get("metadata", {}).get("path", "").startswith(path)]
+
+        if not targets:
+            yield event.plain_result("没有符合条件的 inactive session")
+            return
+
+        # 按文件夹分组
+        from collections import defaultdict
+        by_path = defaultdict(list)
+        for s in targets:
+            p = s.get("metadata", {}).get("path", "?")
+            by_path[p].append(s)
+
+        # 格式化输出
+        lines = [f"将删除 {len(targets)} 个 inactive session:\n"]
+        for p in sorted(by_path.keys()):
+            lines.append(f"📁 {p}")
+            for s in by_path[p]:
+                lines.append(f"  • {s.get('name', s['id'][:8])}")
+
+        summary = "\n".join(lines)
+        yield event.plain_result(f"{summary}\n\n输入 yes 确认:")
+
+        @session_waiter(timeout=30, record_history_chains=False)
+        async def clean_waiter(controller: SessionController, ev: AstrMessageEvent):
+            if ev.message_str.strip().lower() == "yes":
+                success = 0
+                for s in targets:
+                    ok, _ = await session_ops.delete_session(self.client, s["id"])
+                    if ok:
+                        success += 1
+                await ev.send(ev.plain_result(f"清理完成: {success}/{len(targets)}"))
+                if success > 0:
+                    await self._refresh_sessions()
+            else:
+                await ev.send(ev.plain_result("已取消"))
+            controller.stop()
+
+        try:
+            await clean_waiter(event)
+        except TimeoutError:
+            yield event.plain_result("操作超时，已取消")
+        finally:
+            event.stop_event()
+
     # ── files ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
