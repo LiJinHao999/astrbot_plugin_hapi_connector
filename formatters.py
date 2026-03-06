@@ -238,19 +238,30 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def format_session_list(sessions: list[dict], current_sid: str | None = None) -> str:
-    """格式化 session 列表（按 path 分组，紧凑格式）"""
+def format_session_list(sessions: list[dict], current_sid: str | None = None, full_list: list[dict] | None = None) -> str:
+    """格式化 session 列表（按 path 分组，紧凑格式）
+
+    Args:
+        sessions: 要显示的 session 列表
+        current_sid: 当前选中的 session ID
+        full_list: 完整的 session 列表（用于计算正确的序号），如果为 None 则使用 sessions
+    """
     if not sessions:
         return "没有任何 session"
 
+    # 如果没有提供完整列表，使用当前列表
+    index_list = full_list if full_list is not None else sessions
+    # 构建 session_id -> 序号的映射
+    id_to_idx = {s.get("id"): i + 1 for i, s in enumerate(index_list)}
+
     lines = [f"共 {len(sessions)} 个 Session:"]
     groups = group_sessions_by_path(sessions)
-    idx = 1
     for path, group in groups.items():
         lines.append(f"\n📁 {path} ({len(group)})")
         for s in group:
             meta = s.get("metadata", {})
-            sid_short = s.get("id", "?")[:8]
+            sid = s.get("id", "?")
+            sid_short = sid[:8]
             summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
             flavor = meta.get("flavor", "?")
             model = s.get("modelMode", "default")
@@ -264,6 +275,8 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
             else:
                 status = "⚪已关闭"
 
+            # 使用映射表获取正确的序号
+            idx = id_to_idx.get(sid, "?")
             # 第一行：[序号|🏷️sid] 标题
             lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
 
@@ -271,10 +284,9 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
             parts = [status, f"🤖{flavor}:{model}"]
             if pending:
                 parts.append(f"⚠️ {pending}待审批")
-            if current_sid and s.get("id") == current_sid:
+            if current_sid and sid == current_sid:
                 parts.append("<<当前")
             lines.append(" | ".join(parts))
-            idx += 1
 
     lines.append(f"\n用 /hapi sw <序号>或<🏷️session id> 切换")
     return "\n".join(lines)

@@ -1034,8 +1034,8 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("没有符合条件的 inactive session")
             return
 
-        # 使用 formatters 格式化列表
-        summary = formatters.format_session_list(targets, current_sid=None)
+        # 使用 formatters 格式化列表，传入完整列表以保持编号一致
+        summary = formatters.format_session_list(targets, current_sid=None, full_list=self.sessions_cache)
         yield event.plain_result(f"{warning}\n将删除以下 inactive sessions:\n\n{summary}\n\n输入 yes 确认:")
 
         @session_waiter(timeout=30, record_history_chains=False)
