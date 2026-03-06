@@ -41,7 +41,7 @@ https://github.com/LiJinHao999/astrbot_plugin_hapi_connector
 
 如果你的机器上已经安装过claude code、codex等软件，安装会非常简单
 
-只需在机器上通过 NPM 安装 HAPI，启动 AI 编码会话时加上 `hapi` 前缀，会话即自动接入 Hub 管理：
+只需在机器上通过 NPM 安装 HAPI，启动 AI 编码会话时加上 `hapi` 前缀，会话即自动接入 Hub 管理，关闭终端则会自动停止（inactive）：
 
 ```bash
 hapi claude   # Claude Code
@@ -59,7 +59,7 @@ hapi codex    # Open Codex
 同时，也支持你通过astrbot远程启动claudecode/codex等vibe代理会话。
 点击查看[部署＆连接插件教程](docs/install.md)
 
-如果你想在手机上远程启动一个 session ，使用 /hapi create 命令，会立刻启动交互式会话并辅助你将session挂在后台（需要参考上方配置教程启动runner服务哦）
+如果你想在手机上远程启动一个 session ，使用 **/hapi create** 命令，会立刻启动交互式会话并辅助你将session挂在后台（需要参考上方配置教程启动runner服务哦）
 
 > **一句话总结**：AI 编码会话的远程控制台。
 
