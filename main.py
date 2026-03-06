@@ -1023,22 +1023,9 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("没有符合条件的 inactive session")
             return
 
-        # 按文件夹分组
-        from collections import defaultdict
-        by_path = defaultdict(list)
-        for s in targets:
-            p = s.get("metadata", {}).get("path", "?")
-            by_path[p].append(s)
-
-        # 格式化输出
-        lines = [f"将删除 {len(targets)} 个 inactive session:\n"]
-        for p in sorted(by_path.keys()):
-            lines.append(f"📁 {p}")
-            for s in by_path[p]:
-                lines.append(f"  • {s.get('name', s['id'][:8])}")
-
-        summary = "\n".join(lines)
-        yield event.plain_result(f"{summary}\n\n输入 yes 确认:")
+        # 使用 formatters 格式化列表
+        summary = formatters.format_session_list(targets, current_sid=None)
+        yield event.plain_result(f"将删除以下 inactive sessions:\n\n{summary}\n\n输入 yes 确认:")
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def clean_waiter(controller: SessionController, ev: AstrMessageEvent):
