@@ -239,43 +239,50 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
 
 
 def format_session_list(sessions: list[dict], current_sid: str | None = None) -> str:
-    """格式化 session 列表（按 path 分组，紧凑格式）"""
+    """格式化 session 列表（按原始顺序编号，path 作为视觉分组）"""
     if not sessions:
         return "没有任何 session"
 
     lines = [f"共 {len(sessions)} 个 Session:"]
-    groups = group_sessions_by_path(sessions)
-    idx = 1
-    for path, group in groups.items():
-        lines.append(f"\n📁 {path} ({len(group)})")
-        for s in group:
-            meta = s.get("metadata", {})
-            sid = s.get("id", "?")
-            sid_short = sid[:8]
-            summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
-            flavor = meta.get("flavor", "?")
-            model = s.get("modelMode", "default")
-            pending = s.get("pendingRequestsCount", 0)
 
-            # 状态
-            if s.get("thinking"):
-                status = "💭思考中"
-            elif s.get("active"):
-                status = "🟢运行中"
-            else:
-                status = "⚪已关闭"
+    # 按 path 分组但保持原始顺序
+    current_path = None
+    for idx, s in enumerate(sessions, 1):
+        meta = s.get("metadata", )
+        path = meta.get("path", "(无路径)")
 
-            # 第一行：[序号|🏷️sid] 标题
-            lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
+        # 当 path 变化时显示分组标题
+        if path != current_path:
+            # 统计该 path 下的 session 数量
+            count = sum(1 for x in sessions if x.get("metadata", {}).get("path", "(无路径)") == path)
+            lines.append(f"\n📁 {path} ({count})")
+            current_path = path
 
-            # 第二行：状态 | 模型 | 待审批 | 当前
-            parts = [status, f"🤖{flavor}:{model}"]
-            if pending:
-                parts.append(f"⚠️ {pending}待审批")
-            if current_sid and sid == current_sid:
-                parts.append("<<当前")
-            lines.append(" | ".join(parts))
-            idx += 1
+        sid = s.get("id", "?")
+        sid_short = sid[:8]
+        summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
+        flavor = meta.get("flavor", "?")
+        model = s.get("modelMode", "default")
+        pending = s.get("pendingRequestsCount", 0)
+
+        # 状态
+        if s.get("thinking"):
+            status = "💭思考中"
+        elif s.get("active"):
+            status = "🟢运行中"
+        else:
+            status = "⚪已关闭"
+
+        # 第一行：[序号|🏷️sid] 标题
+        lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
+
+        # 第二行：状态 | 模型 | 待审批 | 当前
+        parts = [status, f"🤖{flavor}:{model}"]
+        if pending:
+            parts.append(f"⚠️ {pending}待审批")
+        if current_sid and sid == current_sid:
+            parts.append("<<当前")
+        lines.append(" | ".join(parts))
 
     lines.append(f"\n用 /hapi sw <序号>或<🏷️session id> 切换")
     return "\n".join(lines)
