@@ -317,7 +317,7 @@ class HapiConnectorPlugin(Star):
         try:
             machines = await session_ops.fetch_machines(self.client)
             if not machines and self.sse_listener.conn_error is None:
-                text += "\n\n⚠️ HAPI Connector 服务没有获取到远端 machine，但 SSE 连接正常。\n请检查：\n1. HAPI Hub/HAPI Runner 服务是否在正常运行。如果在调整后始终没有获取到 machine，尝试在服务器终端运行 hapi daemon start\n2. 检查是否为 token 设置了 namespace，且是否与用户路径内 .hapi 路径内的配置文件中 token 的 namespace 保持一致。"
+                text += "\n\n⚠️ HAPI Connector 服务没有获取到远端 machine，但 SSE 连接正常。\n请检查：\n1. HAPI Hub/HAPI Runner 服务是否在正常运行。如果在调整后始终没有获取到 machine，尝试在服务器终端运行 hapi daemon start，或尝试关闭所有hapi相关服务并重启\n2. 检查是否为 token 设置了 namespace，且是否与用户路径内 .hapi 路径内的配置文件中 token 的 namespace 保持一致。"
         except Exception as e:
             logger.error(f"检查 machine 列表失败: {e}")
 
