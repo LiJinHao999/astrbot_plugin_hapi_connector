@@ -312,6 +312,15 @@ class HapiConnectorPlugin(Star):
         await self._refresh_sessions()
         current_sid = self._current_sid(event)
         text = formatters.format_session_list(self.sessions_cache, current_sid)
+
+        # 检查 machine 列表，如果为空但 SSE 连接正常则提示
+        try:
+            machines = await session_ops.fetch_machines(self.client)
+            if not machines and self.sse_listener.conn_error is None:
+                text += "\n\n⚠️ HAPI Connector 服务没有获取到远端 machine，但 SSE 连接正常。\n请检查：\n1. HAPI Hub/HAPI Runner 服务是否在正常运行。如果在调整后始终没有获取到 machine，尝试在服务器终端运行 hapi daemon start\n2. 检查是否为 token 设置了 namespace，且是否与用户路径内 .hapi 路径内的配置文件中 token 的 namespace 保持一致。"
+        except Exception as e:
+            logger.error(f"检查 machine 列表失败: {e}")
+
         yield event.plain_result(text)
 
     # ── sw ──
