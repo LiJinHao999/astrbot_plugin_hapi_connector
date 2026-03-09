@@ -183,11 +183,13 @@ class HapiConnectorPlugin(Star):
 
     def _conn_warning(self) -> str | None:
         """SSE 连接异常时返回警告文本，正常时返回 None"""
-        if self.sse_listener._hibernated:
-            return f"⚠ SSE 已休眠（连续失败 {self.sse_listener.conn_fail_count} 次达到上限），已自动唤醒重连\n"
+        was_hibernated = self.sse_listener._hibernated
+        self.sse_listener.wake_up()
+        if was_hibernated:
+            return "💤 SSE 已从休眠中唤醒，正在后台重连...\n请稍后再试或等待连接恢复通知\n"
         n = self.sse_listener.conn_fail_count
         if n > 0:
-            return f"⚠ SSE 连接已连续失败 {n} 次，请检查 HAPI 服务状态或网络连接\n"
+            return f"⚠ SSE 连接已连续失败 {n} 次，正在后台重连...\n"
         return None
 
     async def _refresh_sessions(self):
@@ -291,7 +293,7 @@ class HapiConnectorPlugin(Star):
     @filter.command_group("hapi")
     def hapi(self):
         """HAPI 远程 AI 编码会话管理 (仅管理员)"""
-        self.sse_listener.wake_up()
+        pass
 
     # ── help ──
 

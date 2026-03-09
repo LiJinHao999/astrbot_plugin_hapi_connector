@@ -117,8 +117,12 @@ class SSEListener:
                     if not got_data:
                         got_data = True
                         self.conn_error = None
+                        was_hibernated = self._hibernated
+                        self._hibernated = False
                         if self.conn_fail_count > 0:
                             logger.info("SSE 连接已恢复（此前连续失败 %d 次）", self.conn_fail_count)
+                            if was_hibernated:
+                                await self._push_notification("✅ SSE 连接已恢复", "")
                         backoff = 1
                         self.conn_fail_count = 0
                     buf += chunk
