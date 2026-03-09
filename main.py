@@ -186,7 +186,7 @@ class HapiConnectorPlugin(Star):
         was_hibernated = self.sse_listener._hibernated
         self.sse_listener.wake_up()
         if was_hibernated:
-            return "💤 SSE 已从休眠中唤醒，正在后台重连...\n请稍后使用 /hapi list 查看连接状态\n"
+            return "💤 SSE 已从休眠中唤醒，正在后台重连...\n请等待连接恢复通知后，使用 /hapi list 查看连接状态\n"
         n = self.sse_listener.conn_fail_count
         if n > 0:
             return f"⚠ SSE 连接已连续失败 {n} 次，正在后台重连...\n"
