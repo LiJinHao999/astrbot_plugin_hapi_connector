@@ -130,6 +130,7 @@ class HapiConnectorPlugin(Star):
         auto_approve = self.config.get("auto_approve_enabled", False)
         auto_approve_start = self.config.get("auto_approve_start", "23:00")
         auto_approve_end = self.config.get("auto_approve_end", "07:00")
+        max_reconnect = self.config.get("max_reconnect_attempts", 30)
         self.sse_listener.start(
             output_level,
             remind_pending=remind,
@@ -138,6 +139,7 @@ class HapiConnectorPlugin(Star):
             auto_approve_start=auto_approve_start,
             auto_approve_end=auto_approve_end,
             summary_msg_count=self._summary_msg_count,
+            max_reconnect_attempts=max_reconnect,
         )
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
@@ -181,6 +183,8 @@ class HapiConnectorPlugin(Star):
 
     def _conn_warning(self) -> str | None:
         """SSE 连接异常时返回警告文本，正常时返回 None"""
+        if self.sse_listener._hibernated:
+            return f"⚠ SSE 已休眠（连续失败 {self.sse_listener.conn_fail_count} 次达到上限），已自动唤醒重连\n"
         n = self.sse_listener.conn_fail_count
         if n > 0:
             return f"⚠ SSE 连接已连续失败 {n} 次，请检查 HAPI 服务状态或网络连接\n"
@@ -287,7 +291,7 @@ class HapiConnectorPlugin(Star):
     @filter.command_group("hapi")
     def hapi(self):
         """HAPI 远程 AI 编码会话管理 (仅管理员)"""
-        pass
+        self.sse_listener.wake_up()
 
     # ── help ──
 

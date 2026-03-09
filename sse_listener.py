@@ -32,6 +32,10 @@ class SSEListener:
         self.conn_error: str | None = None
         # 连续失败计数（内存，重启归零）
         self.conn_fail_count: int = 0
+        # 最大重连次数（0 表示无限）
+        self._max_reconnect: int = 0
+        # 是否已休眠（达到重连上限）
+        self._hibernated: bool = False
         self._task: asyncio.Task | None = None
         self._remind_task: asyncio.Task | None = None
         self._remind_enabled: bool = False
@@ -47,7 +51,7 @@ class SSEListener:
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00",
-              summary_msg_count: int = 5):
+              summary_msg_count: int = 5, max_reconnect_attempts: int = 0):
         """启动 SSE 监听任务"""
         self.output_level = output_level
         self._summary_msg_count = summary_msg_count
@@ -56,6 +60,7 @@ class SSEListener:
         self._auto_approve_enabled = auto_approve_enabled
         self._auto_approve_start = auto_approve_start
         self._auto_approve_end = auto_approve_end
+        self._max_reconnect = max_reconnect_attempts
         self._debounce_sids: set[str] = set()
         self._debounce_task: asyncio.Task | None = None
         self._completion_sids: set[str] = set()
@@ -78,6 +83,16 @@ class SSEListener:
                     pass
         self._task = None
         self._remind_task = None
+
+    def wake_up(self):
+        """唤醒休眠的监听器（重置失败计数并重启任务）"""
+        if self._hibernated:
+            self._hibernated = False
+            self.conn_fail_count = 0
+            self.conn_error = None
+            if self._task is None or self._task.done():
+                self._task = asyncio.create_task(self._listen_loop())
+                logger.info("SSE 监听器已唤醒，重新开始连接")
 
     def get_all_pending(self) -> dict[str, dict]:
         """返回所有 session 的待审批请求（同步读取快照）"""
@@ -135,6 +150,12 @@ class SSEListener:
             finally:
                 if resp is not None:
                     resp.release()
+
+            # 检查是否达到重连上限
+            if self._max_reconnect > 0 and self.conn_fail_count >= self._max_reconnect:
+                self._hibernated = True
+                logger.warning("SSE 已连续失败 %d 次，达到重连上限，进入休眠。发送 /hapi 命令可重新唤醒", self.conn_fail_count)
+                return
 
             if self.conn_fail_count == 20:
                 logger.warning("SSE 已连续失败 20 次，请检查 HAPI 服务或网络")
