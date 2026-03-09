@@ -20,7 +20,7 @@
     "description": "SSE 最大重连次数（0 表示无限重连）",
     "type": "int",
     "default": 10,
-    "hint": "达到上限后停止自动重连，节约资源。发送 /hapi 命令可重新唤醒"
+    "hint": "达到上限后停止自动重连，节约资源。发送 /hapi list 可重新唤醒"
   },
   "cf_access_client_id": {
     "description": "Cloudflare Zero Trust Access Client ID（留空则不启用 CF 认证）",

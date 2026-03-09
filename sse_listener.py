@@ -158,7 +158,10 @@ class SSEListener:
             # 检查是否达到重连上限
             if self._max_reconnect > 0 and self.conn_fail_count >= self._max_reconnect:
                 self._hibernated = True
-                logger.warning("SSE 已连续失败 %d 次，达到重连上限，进入休眠。发送 /hapi 命令可重新唤醒", self.conn_fail_count)
+                logger.warning("SSE 已连续失败 %d 次，达到重连上限，进入休眠。发送 /hapi list 可重新唤醒", self.conn_fail_count)
+                await self._push_notification(
+                    f"⚠ SSE 已连续失败 {self.conn_fail_count} 次，达到重连上限，已进入休眠\n"
+                    "发送 /hapi list 可重新唤醒并尝试重连", "")
                 return
 
             if self.conn_fail_count == 20:
