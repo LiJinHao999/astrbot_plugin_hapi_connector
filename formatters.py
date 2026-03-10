@@ -238,6 +238,22 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
+def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]]) -> str:
+    """格式化全局绑定状态"""
+    lines = ["=== 全局绑定状态 ===\n"]
+    for sess in sessions:
+        sid = sess["id"]
+        flavor = sess.get("metadata", {}).get("flavor", "unknown")
+        state = sess.get("state", "unknown")
+        owners = session_owners.get(sid, [])
+        if owners:
+            owner_str = ", ".join([o[:20] + "..." if len(o) > 20 else o for o in owners])
+            lines.append(f"{sid[:8]} [{flavor}] ({state}) → {owner_str}")
+        else:
+            lines.append(f"{sid[:8]} [{flavor}] ({state}) → 无绑定")
+    return "\n".join(lines)
+
+
 def format_session_list(sessions: list[dict], current_sid: str | None = None) -> str:
     """格式化 session 列表（按原始顺序编号，path 作为视觉分组）"""
     if not sessions:
@@ -554,6 +570,7 @@ def format_directory(entries: list[dict], path: str = ".",
     lines.append("💡 /hapi files <文件夹> — 查看子目录")
     lines.append("💡 /hapi find <关键词> — 搜索文件")
     lines.append("💡 /hapi dl <路径> — 下载文件")
+    lines.append("💡 /hapi upload — 上传文件")
     return "\n".join(lines)
 
 
@@ -576,9 +593,10 @@ def format_file_search(files: list[dict], query: str) -> str:
 
 
 HELP_TOPICS: list[tuple[str, str]] = [
-    ("会话", "会话管理"),
+    ("会话", "Session 管理"),
     ("对话", "对话与消息"),
     ("审批", "审批与回答"),
+    ("通知", "通知绑定管理"),
     ("文件", "文件操作"),
     ("配置", "模式与配置"),
     ("全部", "完整命令列表"),
@@ -604,6 +622,10 @@ HELP_TOPIC_ALIASES = {
     "approval": "approve",
     "pending": "approve",
     "审批": "approve",
+    "push": "push",
+    "notification": "push",
+    "通知": "push",
+    "绑定": "push",
     "files": "files",
     "file": "files",
     "文件": "files",
@@ -639,6 +661,8 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "rename",
     "delete",
     "clean",
+    "bind",
+    "unbind",
     "files", "file",
     "find",
     "download", "dl",
@@ -649,9 +673,37 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi list",
-        "summary": "查看所有 session",
+        "summary": "查看当前窗口绑定的 session",
         "example": None,
         "home": True,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi list all",
+        "summary": "查看所有 session 及绑定状态",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi bind",
+        "summary": "查看当前窗口绑定状态",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi bind force <flavor>",
+        "summary": "将所有指定 flavor 的 session 绑定到当前窗口",
+        "example": "/hapi bind force claude",
+        "home": True,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi unbind",
+        "summary": "解除当前窗口的所有绑定",
+        "example": None,
+        "home": False,
     },
     {
         "topic": "session",
@@ -808,6 +860,13 @@ HELP_COMMANDS = [
         "home": True,
     },
     {
+        "topic": "files",
+        "usage": "/hapi upload [cancel]",
+        "summary": "上传文件到当前 session，支持快捷前缀附件",
+        "example": "/hapi upload\n> 分析这张图 [附带图片]",
+        "home": True,
+    },
+    {
         "topic": "config",
         "usage": "/hapi perm [模式]",
         "summary": "查看或切换权限模式",
@@ -921,9 +980,10 @@ def _format_help_commands(title: str, topic: str) -> str:
     lines = [title, ""]
     if topic == "all":
         sections = [
-            ("💬 会话管理", "session"),
+            ("💬 Session 管理", "session"),
             ("📨 对话", "chat"),
             ("✅ 权限审批", "approve"),
+            ("🔔 通知绑定", "push"),
             ("📁 文件管理", "files"),
             ("⚙️ 配置管理", "config"),
         ]
@@ -942,9 +1002,10 @@ def _format_help_commands(title: str, topic: str) -> str:
 
 def _get_home_help_text() -> str:
     sections = [
-        ("💬 会话管理", "session"),
+        ("💬 Session 管理", "session"),
         ("📨 对话", "chat"),
         ("✅ 权限审批", "approve"),
+        ("🔔 通知绑定", "push"),
         ("📁 文件管理", "files"),
         ("⚙️ 配置管理", "config"),
     ]
@@ -977,11 +1038,13 @@ def get_help_text(topic: str = "") -> str:
     if normalized == "home":
         return _get_home_help_text()
     if normalized == "session":
-        return _format_help_commands("HAPI 帮助 / 会话管理", "session")
+        return _format_help_commands("HAPI 帮助 / Session 管理", "session")
     if normalized == "chat":
         return _format_help_commands("HAPI 帮助 / 对话与消息", "chat")
     if normalized == "approve":
         return _format_help_commands("HAPI 帮助 / 审批与回答", "approve")
+    if normalized == "push":
+        return _format_help_commands("HAPI 帮助 / 通知绑定管理", "push")
     if normalized == "files":
         return _format_help_commands("HAPI 帮助 / 文件操作", "files")
     if normalized == "config":

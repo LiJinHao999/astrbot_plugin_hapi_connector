@@ -16,6 +16,7 @@ from .hapi_client import AsyncHapiClient
 from .cf_access import CfAccessManager
 from .sse_listener import SSEListener
 from .constants import PERMISSION_MODES, MODEL_MODES
+from .binding_manager import BindingManager
 from . import session_ops
 from . import formatters
 from . import file_ops
@@ -40,7 +41,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.5.1")
+          "1.6.0-test")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -81,8 +82,14 @@ class HapiConnectorPlugin(Star):
         # SSE 监听器
         self.sse_listener = SSEListener(self.client, self.sessions_cache, self._push_notification)
 
-        # 用户状态缓存: {sender_id: {"current_session": ..., "current_flavor": ..., "notify_umo": ...}}
+        # 用户状态缓存: {sender_id: {"current_session": ..., "current_flavor": ..., "notify_umo": ..., "primary_umo": ...}}
         self._user_states_cache: dict[str, dict] = {}
+
+        # 绑定管理器
+        self.binding_mgr = BindingManager()
+        # 兼容旧代码的属性访问
+        self._chat_bindings = self.binding_mgr._chat_bindings
+        self._session_owners = self.binding_mgr._session_owners
 
         # 快捷前缀
         self._quick_prefix = self.config.get("quick_prefix", ">")
@@ -101,6 +108,39 @@ class HapiConnectorPlugin(Star):
         """检查发送者是否为管理员"""
         return str(event.get_sender_id()) in self._admin_ids
 
+    # ──── 会话绑定管理 ────
+
+    async def _bind_session(self, umo: str, session_id: str, flavor: str):
+        """将 session 绑定到聊天窗口（单窗口绑定）"""
+        self.binding_mgr.bind(umo, session_id, flavor)
+        await self.put_kv_data(f"chat_binding_{umo}", self._chat_bindings[umo])
+        known_chats = await self.get_kv_data("known_chats", [])
+        if umo not in known_chats:
+            known_chats.append(umo)
+            await self.put_kv_data("known_chats", known_chats)
+
+    async def _unbind_session(self, umo: str):
+        """解除聊天窗口的所有绑定"""
+        self.binding_mgr.unbind(umo)
+        await self.put_kv_data(f"chat_binding_{umo}", None)
+
+    def _get_current_session(self, event: AstrMessageEvent) -> tuple[str | None, str | None]:
+        """获取当前窗口绑定的 session"""
+        umo = event.unified_msg_origin
+        binding = self._chat_bindings.get(umo, {})
+        return binding.get("session_id"), binding.get("flavor")
+
+    async def _ensure_primary_session(self, event: AstrMessageEvent):
+        """确保用户有主会话（首次执行命令时自动设置）"""
+        sender_id = event.get_sender_id()
+        state = self._user_states_cache.get(sender_id, {})
+        if not state.get("primary_umo"):
+            umo = event.unified_msg_origin
+            state["primary_umo"] = umo
+            self._user_states_cache[sender_id] = state
+            await self.put_kv_data(f"user_state_{sender_id}", state)
+            logger.info("设置用户 %s 的主会话: %s", sender_id, umo[:20] if len(umo) > 20 else umo)
+
     # ──── 生命周期 ────
 
     async def initialize(self):
@@ -113,6 +153,31 @@ class HapiConnectorPlugin(Star):
             state = await self.get_kv_data(f"user_state_{uid}", None)
             if state:
                 self._user_states_cache[uid] = state
+
+        # 加载聊天绑定
+        known_chats = await self.get_kv_data("known_chats", [])
+        for umo in known_chats:
+            binding = await self.get_kv_data(f"chat_binding_{umo}", None)
+            if binding and binding.get("session_id"):
+                self._chat_bindings[umo] = binding
+                sid = binding["session_id"]
+                if sid not in self._session_owners:
+                    self._session_owners[sid] = []
+                self._session_owners[sid].append(umo)
+
+        # 迁移旧数据：将 current_session + notify_umo 转为绑定
+        for uid, state in self._user_states_cache.items():
+            old_session = state.get("current_session")
+            old_umo = state.get("notify_umo")
+            if old_session and old_umo:
+                if old_umo not in self._chat_bindings:
+                    flavor = state.get("current_flavor", "unknown")
+                    await self._bind_session(old_umo, old_session, flavor)
+                    logger.info("迁移用户 %s 的会话绑定: %s → %s", uid, old_session[:8], old_umo[:20] if len(old_umo) > 20 else old_umo)
+            # 设置主会话（如果还没有）
+            if old_umo and not state.get("primary_umo"):
+                state["primary_umo"] = old_umo
+                await self.put_kv_data(f"user_state_{uid}", state)
 
         # 加载 session 缓存
         try:
@@ -176,9 +241,17 @@ class HapiConnectorPlugin(Star):
             await self.put_kv_data("known_users", known)
 
     def _current_sid(self, event: AstrMessageEvent) -> str | None:
+        """获取当前会话 ID（优先使用窗口绑定，兜底使用用户状态）"""
+        session_id, _ = self._get_current_session(event)
+        if session_id:
+            return session_id
         return self._get_user_state(event).get("current_session")
 
     def _current_flavor(self, event: AstrMessageEvent) -> str | None:
+        """获取当前 flavor（优先使用窗口绑定，兜底使用用户状态）"""
+        _, flavor = self._get_current_session(event)
+        if flavor:
+            return flavor
         return self._get_user_state(event).get("current_flavor")
 
     def _conn_warning(self) -> str | None:
@@ -200,18 +273,24 @@ class HapiConnectorPlugin(Star):
             logger.warning("刷新 session 列表失败: %s", e)
 
     async def _push_notification(self, text: str, session_id: str):
-        """向所有已注册的管理员推送消息（供 SSEListener 回调），超过 4200 字自动分片"""
+        """推送通知到绑定窗口"""
         chunks = self._split_message(text) if len(text) > 4200 else [text]
-        for sender_id, state in self._user_states_cache.items():
-            umo = state.get("notify_umo")
-            if umo:
+        target_umos = self._session_owners.get(session_id, [])
+
+        if target_umos:
+            for umo in target_umos:
                 for chunk in chunks:
                     try:
                         chain = MessageChain().message(chunk)
                         await self.context.send_message(umo, chain)
                     except Exception as e:
-                        logger.warning("推送消息失败 (user=%s): %s", sender_id, e)
+                        logger.warning("推送消息失败 (umo=%s): %s", umo[:20], e)
                         break
+        else:
+            # 无绑定：记录错误日志
+            sess = next((s for s in self.sessions_cache if s["id"] == session_id), None)
+            flavor = sess.get("metadata", {}).get("flavor", "unknown") if sess else "unknown"
+            logger.error("Session %s [%s] 无绑定窗口，推送失败", session_id[:8], flavor)
 
     @staticmethod
     def _split_message(text: str, max_len: int = 4200) -> list[str]:
@@ -388,14 +467,31 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("list", alias={"ls"})
-    async def cmd_list(self, event: AstrMessageEvent):
-        """列出所有 session"""
+    async def cmd_list(self, event: AstrMessageEvent, scope: str = ""):
+        """列出 session: /hapi list [all]"""
+        await self._ensure_primary_session(event)
         await self._set_user_state(event)
         if w := self._conn_warning():
             yield event.plain_result(w)
         await self._refresh_sessions()
+
+        # /hapi list all - 显示所有 + 绑定状态
+        if scope == "all":
+            text = formatters.format_bind_status(self.sessions_cache, self._session_owners)
+            yield event.plain_result(text)
+            return
+
+        # /hapi list - 只显示当前窗口绑定的
+        umo = event.unified_msg_origin
+        bound_sids = [sid for sid, umos in self._session_owners.items() if umo in umos]
+        filtered = [s for s in self.sessions_cache if s["id"] in bound_sids]
+
+        if not filtered:
+            yield event.plain_result("当前窗口没有绑定任何 session\n提示: 使用 /hapi list all 查看所有 session")
+            return
+
         current_sid = self._current_sid(event)
-        text = formatters.format_session_list(self.sessions_cache, current_sid)
+        text = formatters.format_session_list(filtered, current_sid)
 
         # 检查 machine 列表，如果为空但 SSE 连接正常则提示
         try:
@@ -413,6 +509,8 @@ class HapiConnectorPlugin(Star):
     @hapi.command("sw")
     async def cmd_sw(self, event: AstrMessageEvent, target: str = ""):
         """切换当前 session: /hapi sw <序号或ID前缀>"""
+        await self._ensure_primary_session(event)
+
         if not target:
             await self._refresh_sessions()
             current_sid = self._current_sid(event)
@@ -448,6 +546,9 @@ class HapiConnectorPlugin(Star):
 
         sid = chosen["id"]
         flavor = chosen.get("metadata", {}).get("flavor", "claude")
+        # 双写模式：新机制 + 旧机制（兼容）
+        umo = event.unified_msg_origin
+        await self._bind_session(umo, sid, flavor)
         await self._set_user_state(event, current_session=sid, current_flavor=flavor)
         summary = chosen.get("metadata", {}).get("summary", {}).get("text", "(无标题)")
         yield event.plain_result(f"已切换到 [{flavor}] {sid[:8]}... {summary}")
@@ -458,6 +559,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("s", alias={"status"})
     async def cmd_status(self, event: AstrMessageEvent):
         """查看当前 session 状态"""
+        await self._ensure_primary_session(event)
         await self._set_user_state(event)
         sid = self._current_sid(event)
         if not sid:
@@ -863,6 +965,7 @@ class HapiConnectorPlugin(Star):
     @hapi.command("create")
     async def cmd_create(self, event: AstrMessageEvent):
         """创建新 session (5 步向导)"""
+        await self._ensure_primary_session(event)
         await self._set_user_state(event)
         try:
             machines = await session_ops.fetch_machines(self.client)
@@ -936,6 +1039,9 @@ class HapiConnectorPlugin(Star):
                 await self._refresh_sessions()
                 if ok and new_sid:
                     flavor = s["agent"]
+                    # 双写模式：新机制 + 旧机制（兼容）
+                    umo = ev.unified_msg_origin
+                    await self._bind_session(umo, new_sid, flavor)
                     await self._set_user_state(ev, current_session=new_sid, current_flavor=flavor)
                     msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
                 await ev.send(ev.plain_result(msg))
@@ -1274,6 +1380,246 @@ class HapiConnectorPlugin(Star):
             except OSError:
                 pass
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("upload")
+    async def cmd_upload(self, event: AstrMessageEvent, action: str = ""):
+        """上传文件到当前 session: /hapi upload [cancel]"""
+        await self._ensure_primary_session(event)
+        sid = self._current_sid(event)
+        if not sid:
+            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+            return
+
+        # cancel 子命令：删除所有已上传文件
+        if action == "cancel":
+            try:
+                entries = await session_ops.list_directory(self.client, sid, path="/blobs")
+            except Exception as e:
+                yield event.plain_result(f"获取文件列表失败: {e}")
+                return
+
+            files = [e for e in entries if e.get("type") == "file"]
+            if not files:
+                yield event.plain_result("当前 session 没有已上传的文件")
+                return
+
+            results = []
+            for f in files:
+                path = f"/blobs/{f['name']}"
+                ok, msg = await file_ops.delete_uploaded_file(self.client, sid, path)
+                results.append(msg)
+
+            yield event.plain_result("\n".join(results))
+            event.stop_event()
+            return
+
+        # 交互式上传
+        yield event.plain_result(
+            "请发送要上传的文件（支持图片和文件，可多个）\n"
+            "完成后输入 done，取消输入 cancel"
+        )
+
+        collected_files = []
+
+        @session_waiter(timeout=120, record_history_chains=False)
+        async def upload_waiter(controller: SessionController, ev: AstrMessageEvent):
+            nonlocal collected_files
+
+            text = ev.message_str.strip().lower()
+
+            # 忽略空消息
+            if not text:
+                controller.keep(timeout=120, reset_timeout=True)
+                return
+
+            # 取消
+            if text == "cancel":
+                await ev.send(ev.plain_result("已取消上传"))
+                controller.stop()
+                return
+
+            # 完成
+            if text == "done":
+                if not collected_files:
+                    await ev.send(ev.plain_result("未收到任何文件"))
+                    controller.stop()
+                    return
+
+                # 开始上传
+                await ev.send(ev.plain_result(f"正在上传 {len(collected_files)} 个文件..."))
+
+                attachments = []
+                results = []
+                for fpath in collected_files:
+                    ok, msg, attach = await file_ops.upload_file(self.client, sid, fpath)
+                    results.append(msg)
+                    if ok and attach:
+                        attachments.append(attach)
+
+                summary = "\n".join(results)
+                flavor = self._current_flavor(ev)
+                summary += f"\n\n已上传 {len(attachments)} 个文件到 [{flavor}] {sid[:8]}"
+                await ev.send(ev.plain_result(summary))
+                controller.stop()
+                return
+
+            # 提取文件
+            files = file_ops.extract_files_from_message(ev)
+            if files:
+                collected_files.extend(files)
+                await ev.send(ev.plain_result(
+                    f"✓ 已接收 {len(files)} 个文件（共 {len(collected_files)} 个）\n"
+                    "继续发送或输入 done"
+                ))
+                controller.keep(timeout=120, reset_timeout=True)
+            else:
+                await ev.send(ev.plain_result("未检测到文件，请重新发送"))
+                controller.keep(timeout=120, reset_timeout=True)
+
+        try:
+            await upload_waiter(event)
+        except TimeoutError:
+            yield event.plain_result("操作超时，已取消")
+        finally:
+            event.stop_event()
+
+    # ── bind ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("bind")
+    async def cmd_bind(self, event: AstrMessageEvent, action: str = "", flavor: str = ""):
+        """绑定管理: /hapi bind [status|force] [flavor]"""
+        await self._ensure_primary_session(event)
+        umo = event.unified_msg_origin
+
+        if not action:
+            bound_sids = self.binding_mgr.get_bound_sessions(umo)
+            if bound_sids:
+                lines = ["当前窗口绑定的 session:"]
+                for sid in bound_sids:
+                    s = next((s for s in self.sessions_cache if s["id"] == sid), None)
+                    if s:
+                        flv = s.get("metadata", {}).get("flavor", "unknown")
+                        lines.append(f"  {sid[:8]} [{flv}]")
+                yield event.plain_result("\n".join(lines))
+            else:
+                yield event.plain_result("当前窗口未绑定任何 session")
+            return
+
+        if action == "status":
+            yield event.plain_result(formatters.format_bind_status(
+                self.sessions_cache, self._session_owners))
+            return
+
+        if action == "force":
+            if not flavor or flavor not in ["claude", "gemini", "codex", "opencode", "all"]:
+                yield event.plain_result("用法: /hapi bind force <claude|gemini|codex|opencode|all>")
+                return
+
+            await self._refresh_sessions()
+            targets = self.binding_mgr.filter_by_flavor(self.sessions_cache, flavor)
+
+            if not targets:
+                yield event.plain_result(f"没有找到 {flavor} session")
+                return
+
+            lines = [f"将绑定以下 {len(targets)} 个 {flavor} session 到当前窗口："]
+            for i, s in enumerate(targets[:10], 1):
+                sid = s["id"]
+                current = self._session_owners.get(sid, [])
+                binding = current[0][:20] if current else "无"
+                lines.append(f"{i}. {sid[:8]} [{s.get('metadata', {}).get('flavor')}] - 当前: {binding}")
+            if len(targets) > 10:
+                lines.append(f"... 还有 {len(targets) - 10} 个")
+            lines.append("\n输入 yes 确认，no 取消 (30秒超时)")
+            yield event.plain_result("\n".join(lines))
+
+            @session_waiter(timeout=30, record_history_chains=False)
+            async def confirm_waiter(controller: SessionController, ev: AstrMessageEvent):
+                reply = ev.message_str.strip().lower()
+                if not reply:
+                    controller.keep(timeout=30, reset_timeout=True)
+                    return
+                if reply == "yes":
+                    for s in targets:
+                        await self._bind_session(umo, s["id"], s.get("metadata", {}).get("flavor", ""))
+                    await ev.send(ev.plain_result(f"已绑定 {len(targets)} 个 {flavor} session"))
+                    controller.stop()
+                elif reply == "no":
+                    await ev.send(ev.plain_result("已取消"))
+                    controller.stop()
+                else:
+                    await ev.send(ev.plain_result("请输入 yes 或 no"))
+                    controller.keep(timeout=30, reset_timeout=True)
+
+            try:
+                await confirm_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("操作超时，已取消")
+            finally:
+                event.stop_event()
+
+    # ── unbind ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("unbind")
+    async def cmd_unbind(self, event: AstrMessageEvent, action: str = "", flavor: str = ""):
+        """解除绑定: /hapi unbind [force] [flavor]"""
+        await self._ensure_primary_session(event)
+        umo = event.unified_msg_origin
+
+        if not action:
+            await self._unbind_session(umo)
+            yield event.plain_result("已解除当前窗口的所有绑定")
+            return
+
+        if action == "force":
+            if not flavor or flavor not in ["claude", "gemini", "codex", "opencode", "all"]:
+                yield event.plain_result("用法: /hapi unbind force <claude|gemini|codex|opencode|all>")
+                return
+
+            await self._refresh_sessions()
+            bound_sids = self.binding_mgr.get_bound_sessions(umo)
+            targets = [
+                sid for sid in bound_sids
+                for s in self.sessions_cache
+                if s["id"] == sid and (
+                    flavor == "all" or s.get("metadata", {}).get("flavor") == flavor
+                )
+            ]
+
+            if not targets:
+                yield event.plain_result(f"当前窗口没有绑定 {flavor} session")
+                return
+
+            for sid in targets:
+                if sid in self._session_owners and umo in self._session_owners[sid]:
+                    self._session_owners[sid].remove(umo)
+                    if not self._session_owners[sid]:
+                        del self._session_owners[sid]
+
+            yield event.plain_result(f"已解除 {len(targets)} 个 {flavor} session 的绑定")
+
+    # ── bindings ──
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @hapi.command("bindings")
+    async def cmd_bindings(self, event: AstrMessageEvent):
+        """查看所有会话的绑定状态"""
+        await self._ensure_primary_session(event)
+        if not self._session_owners:
+            yield event.plain_result("暂无会话绑定")
+            return
+
+        lines = ["会话绑定状态："]
+        for sid, umos in self._session_owners.items():
+            sess = next((s for s in self.sessions_cache if s["id"] == sid), None)
+            flavor = sess.get("metadata", {}).get("flavor", "unknown") if sess else "unknown"
+            locations = ", ".join([umo[:20] + "..." if len(umo) > 20 else umo for umo in umos])
+            lines.append(f"{sid[:8]}... [{flavor}] → {locations}")
+
+        yield event.plain_result("\n".join(lines))
+
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
@@ -1367,7 +1713,23 @@ class HapiConnectorPlugin(Star):
             event.stop_event()
             return
 
-        ok, msg = await session_ops.send_message(self.client, target_sid, text)
+        # 提取文件并上传
+        files = file_ops.extract_files_from_message(event)
+        attachments = []
+
+        if files:
+            upload_msgs = []
+            for fpath in files:
+                ok, msg, attach = await file_ops.upload_file(self.client, target_sid, fpath)
+                upload_msgs.append(msg)
+                if ok and attach:
+                    attachments.append(attach)
+
+            if upload_msgs:
+                yield event.plain_result("正在上传文件...\n" + "\n".join(upload_msgs))
+
+        # 发送消息（带附件）
+        ok, msg = await session_ops.send_message(self.client, target_sid, text, attachments)
         await self._set_user_state(event)
         yield event.plain_result(msg)
         event.stop_event()
