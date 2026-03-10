@@ -576,47 +576,307 @@ def format_file_search(files: list[dict], query: str) -> str:
     return "\n".join(lines)
 
 
-def get_help_text() -> str:
-    """返回帮助信息"""
-    return """HAPI Connector 指令帮助 (仅管理员可用)
+HELP_TOPICS: list[tuple[str, str]] = [
+    ("session", "会话管理"),
+    ("chat", "对话与消息"),
+    ("approve", "审批与回答"),
+    ("files", "文件操作"),
+    ("config", "模式与配置"),
+    ("all", "完整命令列表"),
+]
 
-── 当前 Session 操作 ──
-  /hapi s          查看当前 session 状态
-  /hapi msg [轮数] 查看最近消息 (默认 1 轮)
-  /hapi perm [模式] 查看/切换权限模式
-  /hapi model [模式] 查看/切换模型 (仅 Claude)
-  /hapi remote     切换到 remote 远程托管模式
-  /hapi output [级别] 查看/切换 SSE 推送级别 (silence/simple/summary/detail)
 
-── Session 管理 ──
-  /hapi list       列出所有 session
-  /hapi sw <序号|ID前缀>  切换当前 session
-  /hapi create     创建新 session (向导)
-  /hapi abort [序号|ID前缀] 中断 session (默认当前)
-  /hapi archive    归档当前 session
-  /hapi rename     重命名当前 session
-  /hapi delete     删除当前 session
+HELP_TOPIC_ALIASES = {
+    "": "home",
+    "home": "home",
+    "index": "home",
+    "session": "session",
+    "sessions": "session",
+    "chat": "chat",
+    "msg": "chat",
+    "message": "chat",
+    "messages": "chat",
+    "approve": "approve",
+    "approval": "approve",
+    "pending": "approve",
+    "files": "files",
+    "file": "files",
+    "config": "config",
+    "setting": "config",
+    "settings": "config",
+    "all": "all",
+    "full": "all",
+}
 
-── 消息发送 ──
-  /hapi to <序号> <内容>  发送到指定 session
-  > 消息内容              快捷发送到当前 session
-  >N 消息内容             快捷发送到第 N 个 session
 
-── 审批 ──
-  /hapi pending    查看待审批列表
-  /hapi a          全部批准（权限请求）+ 交互式回答所有问题
-  /hapi allow      批准所有权限请求（跳过 question）
-  /hapi allow <序号> 批准单个权限请求
-  /hapi answer     交互式回答所有 question 请求
-  /hapi answer <序号> 回答指定 question 请求
-  /hapi deny       全部拒绝
-  /hapi deny <序号> 拒绝单个
-  戳一戳机器人      批准所有权限请求 (仅 QQ NapCat)
+HELP_COMMANDS = [
+    {
+        "topic": "session",
+        "usage": "/hapi list",
+        "summary": "查看所有 session",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi sw <序号|ID前缀>",
+        "summary": "切换当前 session",
+        "example": "/hapi sw 2",
+        "home": True,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi create",
+        "summary": "创建新 session",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi s",
+        "summary": "查看当前 session 状态",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi archive",
+        "summary": "归档当前 session",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi rename",
+        "summary": "重命名当前 session",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi delete",
+        "summary": "删除当前 session",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi abort [序号|ID前缀]",
+        "summary": "中断 session（默认当前）",
+        "example": "/hapi abort 1",
+        "home": False,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi clean [路径前缀]",
+        "summary": "批量清理 inactive sessions",
+        "example": "/hapi clean C:/work/project",
+        "home": False,
+    },
+    {
+        "topic": "chat",
+        "usage": "> 内容",
+        "summary": "快速发送到当前 session",
+        "example": "> 帮我排查这个报错",
+        "home": True,
+    },
+    {
+        "topic": "chat",
+        "usage": ">N 内容",
+        "summary": "快速发送到第 N 个 session",
+        "example": ">2 继续上一个任务",
+        "home": True,
+    },
+    {
+        "topic": "chat",
+        "usage": "/hapi to <序号> <内容>",
+        "summary": "发送到指定 session",
+        "example": "/hapi to 2 继续上一个任务",
+        "home": False,
+    },
+    {
+        "topic": "chat",
+        "usage": "/hapi msg [轮数]",
+        "summary": "查看最近几轮消息",
+        "example": "/hapi msg 2",
+        "home": True,
+    },
+    {
+        "topic": "approve",
+        "usage": "/hapi pending",
+        "summary": "查看全部待处理请求",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "approve",
+        "usage": "/hapi a",
+        "summary": "一键处理待审批请求",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "approve",
+        "usage": "/hapi allow [序号]",
+        "summary": "批准权限请求（跳过 question）",
+        "example": "/hapi allow 2",
+        "home": False,
+    },
+    {
+        "topic": "approve",
+        "usage": "/hapi answer [序号]",
+        "summary": "回答 question 请求",
+        "example": "/hapi answer 1",
+        "home": True,
+    },
+    {
+        "topic": "approve",
+        "usage": "/hapi deny [序号]",
+        "summary": "拒绝请求",
+        "example": "/hapi deny 3",
+        "home": True,
+    },
+    {
+        "topic": "approve",
+        "usage": "戳一戳机器人",
+        "summary": "批准全部权限请求（仅 QQ NapCat）",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi files [路径]",
+        "summary": "浏览远端目录",
+        "example": "/hapi files src",
+        "home": True,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi files -l [路径]",
+        "summary": "浏览目录并显示文件大小",
+        "example": "/hapi files -l .",
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi find <关键词>",
+        "summary": "搜索远端文件",
+        "example": "/hapi find config",
+        "home": True,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi download <路径>",
+        "summary": "下载远端文件到聊天（别名: /hapi dl）",
+        "example": "/hapi dl logs/app.log",
+        "home": True,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi perm [模式]",
+        "summary": "查看或切换权限模式",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi model [模式]",
+        "summary": "查看或切换模型模式",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi output [级别]",
+        "summary": "查看或切换推送级别",
+        "example": "/hapi output summary",
+        "home": True,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi remote",
+        "summary": "切换到 remote 托管模式",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi help [主题]",
+        "summary": "查看帮助，可选主题：session/chat/approve/files/config/all",
+        "example": "/hapi help files",
+        "home": False,
+    },
+]
 
-── 文件 ──
-  /hapi files [-l] [路径]   浏览远端目录 (-l 显示文件大小)
-  /hapi find <关键词>  搜索远端文件
-  /hapi download <路径>  下载远端文件到聊天 (别名: dl)
 
-── 其他 ──
-  /hapi help       显示此帮助"""
+def _normalize_help_topic(topic: str) -> str | None:
+    key = topic.strip().lower()
+    return HELP_TOPIC_ALIASES.get(key)
+
+
+def _iter_help_commands(topic: str) -> list[dict]:
+    if topic == "all":
+        return HELP_COMMANDS
+    return [item for item in HELP_COMMANDS if item["topic"] == topic]
+
+
+def _format_help_commands(title: str, topic: str) -> str:
+    commands = _iter_help_commands(topic)
+    lines = [title, ""]
+    for item in commands:
+        lines.append(item["usage"])
+        lines.append(f"  {item['summary']}")
+        example = item.get("example")
+        if example:
+            lines.append(f"  例：{example}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _get_home_help_text() -> str:
+    sections = [
+        ("[会话]", "session"),
+        ("[对话]", "chat"),
+        ("[审批]", "approve"),
+        ("[文件]", "files"),
+        ("[配置]", "config"),
+    ]
+    lines = ["HAPI Connector 帮助", ""]
+    for title, topic in sections:
+        lines.append(title)
+        for item in HELP_COMMANDS:
+            if item["topic"] == topic and item["home"]:
+                lines.append(item["usage"])
+                lines.append(f"  {item['summary']}")
+        lines.append("")
+
+    lines.append("查看专题帮助：")
+    for topic_key, topic_label in HELP_TOPICS:
+        lines.append(f"/hapi help {topic_key}    {topic_label}")
+    return "\n".join(lines).rstrip()
+
+
+def get_help_text(topic: str = "") -> str:
+    """返回帮助信息，可按主题查看。"""
+    normalized = _normalize_help_topic(topic)
+    if normalized is None:
+        topics = ", ".join(name for name, _ in HELP_TOPICS)
+        return (
+            f"未知帮助主题: {topic}\n"
+            f"可用主题: {topics}\n"
+            "输入 /hapi help 查看首页"
+        )
+
+    if normalized == "home":
+        return _get_home_help_text()
+    if normalized == "session":
+        return _format_help_commands("HAPI 帮助 / 会话管理", "session")
+    if normalized == "chat":
+        return _format_help_commands("HAPI 帮助 / 对话与消息", "chat")
+    if normalized == "approve":
+        return _format_help_commands("HAPI 帮助 / 审批与回答", "approve")
+    if normalized == "files":
+        return _format_help_commands("HAPI 帮助 / 文件操作", "files")
+    if normalized == "config":
+        return _format_help_commands("HAPI 帮助 / 模式与配置", "config")
+    return _format_help_commands("HAPI 帮助 / 完整命令列表", "all")

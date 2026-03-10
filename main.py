@@ -299,12 +299,12 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("help")
-    async def cmd_help(self, event: AstrMessageEvent):
-        """显示帮助信息"""
+    async def cmd_help(self, event: AstrMessageEvent, topic: str = ""):
+        """显示帮助信息，可按主题查看"""
         await self._set_user_state(event)
         if w := self._conn_warning():
             yield event.plain_result(w)
-        yield event.plain_result(formatters.get_help_text())
+        yield event.plain_result(formatters.get_help_text(topic))
 
     # ── list ──
 
@@ -1269,5 +1269,4 @@ class HapiConnectorPlugin(Star):
         await self._set_user_state(event)
         yield event.plain_result(msg)
         event.stop_event()
-
 
