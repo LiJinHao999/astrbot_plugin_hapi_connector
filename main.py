@@ -290,7 +290,7 @@ class HapiConnectorPlugin(Star):
 
     # ──── 指令组 ────
 
-    @filter.command_group("hapi")
+    @filter.command_group("hapi_internal")
     def hapi(self):
         """HAPI 远程 AI 编码会话管理 (仅管理员)"""
         pass
@@ -426,9 +426,9 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("to")
-    async def cmd_to(self, event: AstrMessageEvent):
+    async def cmd_to(self, event: AstrMessageEvent, args: str = ""):
         """发消息到指定 session: /hapi to <序号> <内容>"""
-        raw = event.message_str.strip()
+        raw = (args or event.message_str).strip()
         parts = raw.split(None, 1)
         if len(parts) < 2 or not parts[0].isdigit():
             yield event.plain_result("格式: /hapi to <序号> <内容>")
@@ -708,7 +708,7 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("answer")
-    async def cmd_answer(self, event: AstrMessageEvent):
+    async def cmd_answer(self, event: AstrMessageEvent, target: str = ""):
         """交互式回答 question 请求: /hapi answer [序号]"""
         await self._set_user_state(event)
         items = self._flatten_pending()
@@ -719,7 +719,7 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("没有待回答的问题")
             return
 
-        raw = event.message_str.strip()
+        raw = (target or event.message_str).strip()
         if raw and raw.isdigit():
             n = int(raw)
             if n < 1 or n > len(q_items):
@@ -1221,26 +1221,75 @@ class HapiConnectorPlugin(Star):
     # ──── 快捷前缀处理器 ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
-    async def hapi_command_hint_handler(self, event: AstrMessageEvent):
-        """为 /hapi 未知子命令提供帮助提示"""
+    async def hapi_command_router(self, event: AstrMessageEvent):
+        """统一处理 /hapi 路由与帮助提示"""
         raw = (event.message_str or "").strip()
         if not raw.startswith("/hapi"):
             return
 
         if not self._is_admin(event):
+            yield event.plain_result("仅管理员可用")
+            event.stop_event()
             return
 
         remainder = raw[5:].strip()
         if not remainder:
-            yield event.plain_result(formatters.get_help_text())
+            async for result in self.cmd_help(event, ""):
+                yield result
             event.stop_event()
             return
 
-        subcommand = remainder.split(None, 1)[0].lower()
-        if subcommand in formatters.KNOWN_HAPI_SUBCOMMANDS:
+        parts = remainder.split(None, 1)
+        subcommand = parts[0].lower()
+        argument = parts[1] if len(parts) > 1 else ""
+        routes = {
+            "help": (self.cmd_help, True),
+            "帮助": (self.cmd_help, True),
+            "list": (self.cmd_list, False),
+            "ls": (self.cmd_list, False),
+            "sw": (self.cmd_sw, True),
+            "s": (self.cmd_status, False),
+            "status": (self.cmd_status, False),
+            "msg": (self.cmd_msg, True),
+            "messages": (self.cmd_msg, True),
+            "to": (self.cmd_to, True),
+            "perm": (self.cmd_perm, True),
+            "model": (self.cmd_model, True),
+            "remote": (self.cmd_remote, False),
+            "output": (self.cmd_output, True),
+            "out": (self.cmd_output, True),
+            "pending": (self.cmd_pending, False),
+            "approve": (self.cmd_approve, False),
+            "a": (self.cmd_approve, False),
+            "allow": (self.cmd_allow, True),
+            "answer": (self.cmd_answer, True),
+            "deny": (self.cmd_deny, True),
+            "create": (self.cmd_create, False),
+            "abort": (self.cmd_abort, True),
+            "stop": (self.cmd_abort, True),
+            "archive": (self.cmd_archive, False),
+            "rename": (self.cmd_rename, False),
+            "delete": (self.cmd_delete, False),
+            "clean": (self.cmd_clean, True),
+            "files": (self.cmd_files, True),
+            "file": (self.cmd_files, True),
+            "find": (self.cmd_find, True),
+            "download": (self.cmd_download, True),
+            "dl": (self.cmd_download, True),
+        }
+        route = routes.get(subcommand)
+        if route is None:
+            yield event.plain_result(formatters.format_unknown_command_help(subcommand))
+            event.stop_event()
             return
 
-        yield event.plain_result(formatters.format_unknown_command_help(subcommand))
+        handler, takes_arg = route
+        if takes_arg:
+            async for result in handler(event, argument):
+                yield result
+        else:
+            async for result in handler(event):
+                yield result
         event.stop_event()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
