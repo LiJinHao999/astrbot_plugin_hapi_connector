@@ -853,11 +853,19 @@ def format_unknown_command_help(command: str) -> str:
     normalized = command.strip().lower()
     lines = [
         f"未知命令: /hapi {command}",
-        "输入 /hapi help 或 /hapi 帮助 查看帮助",
+        "",
+        "你可以按功能查看帮助：",
+        "[会话] /hapi help 会话  查看、切换、创建、中断 session",
+        "[对话] /hapi help 对话  发送消息、查看最近消息",
+        "[审批] /hapi help 审批  处理权限请求和问题回答",
+        "[文件] /hapi help 文件  浏览、搜索、下载远端文件",
+        "[配置] /hapi help 配置  查看权限、模型和输出级别",
+        "",
+        "也可以直接输入 /hapi 查看总览帮助",
     ]
     matches = get_close_matches(normalized, sorted(KNOWN_HAPI_SUBCOMMANDS), n=3, cutoff=0.45)
     if matches:
-        lines.append("你可能想用：")
+        lines.extend(["", "你可能想用："])
         for item in matches:
             lines.append(f"  /hapi {item}")
     return "\n".join(lines)
