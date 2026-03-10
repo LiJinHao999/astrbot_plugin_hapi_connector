@@ -663,9 +663,11 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "clean",
     "bind",
     "unbind",
+    "bindings",
     "files", "file",
     "find",
     "download", "dl",
+    "upload",
 }
 
 
@@ -702,6 +704,13 @@ HELP_COMMANDS = [
         "topic": "push",
         "usage": "/hapi unbind",
         "summary": "解除当前窗口的所有绑定",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi bindings",
+        "summary": "查看所有 session 的绑定状态",
         "example": None,
         "home": False,
     },

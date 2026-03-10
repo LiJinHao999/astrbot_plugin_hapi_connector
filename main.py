@@ -113,6 +113,7 @@ class HapiConnectorPlugin(Star):
     async def _bind_session(self, umo: str, session_id: str, flavor: str):
         """将 session 绑定到聊天窗口（单窗口绑定）"""
         self.binding_mgr.bind(umo, session_id, flavor)
+        await self.put_kv_data("session_owners", self._session_owners)
         await self.put_kv_data(f"chat_binding_{umo}", self._chat_bindings[umo])
         known_chats = await self.get_kv_data("known_chats", [])
         if umo not in known_chats:
@@ -122,6 +123,7 @@ class HapiConnectorPlugin(Star):
     async def _unbind_session(self, umo: str):
         """解除聊天窗口的所有绑定"""
         self.binding_mgr.unbind(umo)
+        await self.put_kv_data("session_owners", self._session_owners)
         await self.put_kv_data(f"chat_binding_{umo}", None)
 
     def _get_current_session(self, event: AstrMessageEvent) -> tuple[str | None, str | None]:
@@ -154,6 +156,14 @@ class HapiConnectorPlugin(Star):
             if state:
                 self._user_states_cache[uid] = state
 
+        # 加载会话绑定关系（兼容多会话绑定）
+        stored_session_owners = await self.get_kv_data("session_owners", {})
+        if isinstance(stored_session_owners, dict):
+            for sid, umos in stored_session_owners.items():
+                if not isinstance(sid, str) or not isinstance(umos, list):
+                    continue
+                self._session_owners[sid] = [str(umo) for umo in umos]
+
         # 加载聊天绑定
         known_chats = await self.get_kv_data("known_chats", [])
         for umo in known_chats:
@@ -163,7 +173,8 @@ class HapiConnectorPlugin(Star):
                 sid = binding["session_id"]
                 if sid not in self._session_owners:
                     self._session_owners[sid] = []
-                self._session_owners[sid].append(umo)
+                if umo not in self._session_owners[sid]:
+                    self._session_owners[sid].append(umo)
 
         # 迁移旧数据：将 current_session + notify_umo 转为绑定
         for uid, state in self._user_states_cache.items():
@@ -438,6 +449,10 @@ class HapiConnectorPlugin(Star):
             "find": (self.cmd_find, True),
             "download": (self.cmd_download, True),
             "dl": (self.cmd_download, True),
+            "upload": (self.cmd_upload, True),
+            "bind": (self.cmd_bind, True),
+            "unbind": (self.cmd_unbind, True),
+            "bindings": (self.cmd_bindings, False),
         }
         route = routes.get(subcommand)
         if route is None:
@@ -1487,10 +1502,13 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("bind")
-    async def cmd_bind(self, event: AstrMessageEvent, action: str = "", flavor: str = ""):
+    async def cmd_bind(self, event: AstrMessageEvent, raw: str = ""):
         """绑定管理: /hapi bind [status|force] [flavor]"""
         await self._ensure_primary_session(event)
         umo = event.unified_msg_origin
+        parts = raw.strip().lower().split(None, 1) if raw else []
+        action = parts[0] if parts else ""
+        flavor = parts[1].strip() if len(parts) > 1 else ""
 
         if not action:
             bound_sids = self.binding_mgr.get_bound_sessions(umo)
@@ -1563,13 +1581,17 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @hapi.command("unbind")
-    async def cmd_unbind(self, event: AstrMessageEvent, action: str = "", flavor: str = ""):
+    async def cmd_unbind(self, event: AstrMessageEvent, raw: str = ""):
         """解除绑定: /hapi unbind [force] [flavor]"""
         await self._ensure_primary_session(event)
         umo = event.unified_msg_origin
+        parts = raw.strip().lower().split(None, 1) if raw else []
+        action = parts[0] if parts else ""
+        flavor = parts[1].strip() if len(parts) > 1 else ""
 
         if not action:
             await self._unbind_session(umo)
+            await self._set_user_state(event, current_session=None, current_flavor=None)
             yield event.plain_result("已解除当前窗口的所有绑定")
             return
 
@@ -1592,11 +1614,31 @@ class HapiConnectorPlugin(Star):
                 yield event.plain_result(f"当前窗口没有绑定 {flavor} session")
                 return
 
+            current_binding = self._chat_bindings.get(umo)
             for sid in targets:
                 if sid in self._session_owners and umo in self._session_owners[sid]:
                     self._session_owners[sid].remove(umo)
                     if not self._session_owners[sid]:
                         del self._session_owners[sid]
+
+            remaining = self.binding_mgr.get_bound_sessions(umo)
+            if current_binding and current_binding.get("session_id") in targets:
+                if remaining:
+                    new_sid = remaining[0]
+                    new_session = next((s for s in self.sessions_cache if s["id"] == new_sid), None)
+                    new_flavor = (
+                        new_session.get("metadata", {}).get("flavor", current_binding.get("flavor", "unknown"))
+                        if new_session else current_binding.get("flavor", "unknown")
+                    )
+                    self._chat_bindings[umo] = {"session_id": new_sid, "flavor": new_flavor}
+                    await self.put_kv_data(f"chat_binding_{umo}", self._chat_bindings[umo])
+                    await self._set_user_state(event, current_session=new_sid, current_flavor=new_flavor)
+                else:
+                    self._chat_bindings.pop(umo, None)
+                    await self.put_kv_data(f"chat_binding_{umo}", None)
+                    await self._set_user_state(event, current_session=None, current_flavor=None)
+
+            await self.put_kv_data("session_owners", self._session_owners)
 
             yield event.plain_result(f"已解除 {len(targets)} 个 {flavor} session 的绑定")
 
@@ -1607,6 +1649,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_bindings(self, event: AstrMessageEvent):
         """查看所有会话的绑定状态"""
         await self._ensure_primary_session(event)
+        await self._refresh_sessions()
         if not self._session_owners:
             yield event.plain_result("暂无会话绑定")
             return
