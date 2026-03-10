@@ -260,6 +260,9 @@ class HapiConnectorPlugin(Star):
                 async def q_waiter(controller: SessionController, ev: AstrMessageEvent,
                                    _opts=opts, _collected=collected, _state={'other': False}):
                     reply = ev.message_str.strip()
+                    if not reply:
+                        controller.keep(timeout=60, reset_timeout=True)
+                        return
                     if _state['other']:
                         _collected.append(reply)
                         controller.stop()
@@ -559,6 +562,9 @@ class HapiConnectorPlugin(Star):
             @session_waiter(timeout=30, record_history_chains=False)
             async def perm_waiter(controller: SessionController, ev: AstrMessageEvent):
                 reply = ev.message_str.strip()
+                if not reply:
+                    controller.keep(timeout=30, reset_timeout=True)
+                    return
                 target = reply
                 if reply.isdigit() and 1 <= int(reply) <= len(modes):
                     target = modes[int(reply) - 1]
@@ -615,6 +621,9 @@ class HapiConnectorPlugin(Star):
             @session_waiter(timeout=30, record_history_chains=False)
             async def model_waiter(controller: SessionController, ev: AstrMessageEvent):
                 reply = ev.message_str.strip()
+                if not reply:
+                    controller.keep(timeout=30, reset_timeout=True)
+                    return
                 target = reply
                 if reply.isdigit() and 1 <= int(reply) <= len(MODEL_MODES):
                     target = MODEL_MODES[int(reply) - 1]
@@ -674,6 +683,9 @@ class HapiConnectorPlugin(Star):
             @session_waiter(timeout=30, record_history_chains=False)
             async def output_waiter(controller: SessionController, ev: AstrMessageEvent):
                 reply = ev.message_str.strip()
+                if not reply:
+                    controller.keep(timeout=30, reset_timeout=True)
+                    return
                 t = reply
                 if reply.isdigit() and 1 <= int(reply) <= len(levels):
                     t = levels[int(reply) - 1]
@@ -886,6 +898,9 @@ class HapiConnectorPlugin(Star):
         @session_waiter(timeout=120, record_history_chains=False)
         async def create_waiter(controller: SessionController, ev: AstrMessageEvent):
             raw = ev.message_str.strip()
+            if not raw:
+                controller.keep(timeout=120, reset_timeout=True)
+                return
             r = wiz.process(raw)
 
             # 需要拉 recent_paths 再显示步骤 2
@@ -994,7 +1009,11 @@ class HapiConnectorPlugin(Star):
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def archive_waiter(controller: SessionController, ev: AstrMessageEvent):
-            if ev.message_str.strip().lower() == "y":
+            reply = ev.message_str.strip()
+            if not reply:
+                controller.keep(timeout=30, reset_timeout=True)
+                return
+            if reply.lower() == "y":
                 ok, msg = await session_ops.archive_session(self.client, sid)
                 await ev.send(ev.plain_result(msg))
                 if ok:
@@ -1028,12 +1047,12 @@ class HapiConnectorPlugin(Star):
         async def rename_waiter(controller: SessionController, ev: AstrMessageEvent):
             new_name = ev.message_str.strip()
             if not new_name:
-                await ev.send(ev.plain_result("名称不能为空，已取消"))
-            else:
-                ok, msg = await session_ops.rename_session(self.client, sid, new_name)
-                await ev.send(ev.plain_result(msg))
-                if ok:
-                    await self._refresh_sessions()
+                controller.keep(timeout=60, reset_timeout=True)
+                return
+            ok, msg = await session_ops.rename_session(self.client, sid, new_name)
+            await ev.send(ev.plain_result(msg))
+            if ok:
+                await self._refresh_sessions()
             controller.stop()
 
         try:
@@ -1070,7 +1089,11 @@ class HapiConnectorPlugin(Star):
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def delete_waiter(controller: SessionController, ev: AstrMessageEvent):
-            if ev.message_str.strip() == "delete":
+            reply = ev.message_str.strip()
+            if not reply:
+                controller.keep(timeout=30, reset_timeout=True)
+                return
+            if reply == "delete":
                 if is_active:
                     ok_arc, msg_arc = await session_ops.archive_session(self.client, sid)
                     if not ok_arc:
@@ -1130,7 +1153,11 @@ class HapiConnectorPlugin(Star):
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def clean_waiter(controller: SessionController, ev: AstrMessageEvent):
-            if ev.message_str.strip().lower() == "yes":
+            reply = ev.message_str.strip()
+            if not reply:
+                controller.keep(timeout=30, reset_timeout=True)
+                return
+            if reply.lower() == "yes":
                 success = 0
                 for s in targets:
                     ok, _ = await session_ops.delete_session(self.client, s["id"])
