@@ -577,12 +577,12 @@ def format_file_search(files: list[dict], query: str) -> str:
 
 
 HELP_TOPICS: list[tuple[str, str]] = [
-    ("session", "会话管理"),
-    ("chat", "对话与消息"),
-    ("approve", "审批与回答"),
-    ("files", "文件操作"),
-    ("config", "模式与配置"),
-    ("all", "完整命令列表"),
+    ("会话", "会话管理"),
+    ("对话", "对话与消息"),
+    ("审批", "审批与回答"),
+    ("文件", "文件操作"),
+    ("配置", "模式与配置"),
+    ("全部", "完整命令列表"),
 ]
 
 
@@ -590,22 +590,31 @@ HELP_TOPIC_ALIASES = {
     "": "home",
     "home": "home",
     "index": "home",
+    "首页": "home",
+    "总览": "home",
     "session": "session",
     "sessions": "session",
+    "会话": "session",
     "chat": "chat",
     "msg": "chat",
     "message": "chat",
     "messages": "chat",
+    "对话": "chat",
+    "消息": "chat",
     "approve": "approve",
     "approval": "approve",
     "pending": "approve",
+    "审批": "approve",
     "files": "files",
     "file": "files",
+    "文件": "files",
     "config": "config",
     "setting": "config",
     "settings": "config",
+    "配置": "config",
     "all": "all",
     "full": "all",
+    "全部": "all",
 }
 
 
@@ -640,6 +649,13 @@ HELP_COMMANDS = [
     },
     {
         "topic": "session",
+        "usage": "/hapi abort [序号|ID前缀]",
+        "summary": "中断 session（默认当前，别名: /hapi stop）",
+        "example": "/hapi abort 1",
+        "home": True,
+    },
+    {
+        "topic": "session",
         "usage": "/hapi archive",
         "summary": "归档当前 session",
         "example": None,
@@ -657,13 +673,6 @@ HELP_COMMANDS = [
         "usage": "/hapi delete",
         "summary": "删除当前 session",
         "example": None,
-        "home": False,
-    },
-    {
-        "topic": "session",
-        "usage": "/hapi abort [序号|ID前缀]",
-        "summary": "中断 session（默认当前）",
-        "example": "/hapi abort 1",
         "home": False,
     },
     {
@@ -802,8 +811,8 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi help [主题]",
-        "summary": "查看帮助，可选主题：session/chat/approve/files/config/all",
-        "example": "/hapi help files",
+        "summary": "查看帮助，可选主题：会话/对话/审批/文件/配置/全部",
+        "example": "/hapi help 文件",
         "home": False,
     },
 ]
@@ -857,13 +866,13 @@ def _get_home_help_text() -> str:
 
 
 def get_help_text(topic: str = "") -> str:
-    """返回帮助信息，可按主题查看。"""
+    """??????????????"""
     normalized = _normalize_help_topic(topic)
     if normalized is None:
         topics = ", ".join(name for name, _ in HELP_TOPICS)
         return (
             f"未知帮助主题: {topic}\n"
-            f"可用主题: {topics}\n"
+            f"可用主题: {topics}（也支持 session/chat/approve/files/config/all）\n"
             "输入 /hapi help 查看首页"
         )
 
