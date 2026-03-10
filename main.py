@@ -383,22 +383,12 @@ class HapiConnectorPlugin(Star):
 
     # ──── 指令组 ────
 
-    @filter.command_group("hapi_internal")
-    def hapi(self):
-        """HAPI 远程 AI 编码会话管理 (仅管理员)"""
-        pass
-
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("hapi")
-    async def cmd_hapi_router(self, event: AstrMessageEvent, *handler_args, **handler_kwargs):
+    async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
         """统一处理 /hapi 路由与帮助提示"""
         full_text = (event.message_str or "").strip()
-        raw_value = handler_kwargs.get("raw", "")
-        if not raw_value and handler_args:
-            first_arg = handler_args[0]
-            if isinstance(first_arg, str):
-                raw_value = first_arg
-        raw_text = (raw_value or "").strip()
+        raw_text = (raw or "").strip()
         if full_text and raw_text and len(full_text) > len(raw_text):
             source_text = full_text
         else:
@@ -475,7 +465,6 @@ class HapiConnectorPlugin(Star):
     # ── help ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("help", alias={"帮助"})
     async def cmd_help(self, event: AstrMessageEvent, topic: str = ""):
         """显示帮助信息，可按主题查看"""
         await self._set_user_state(event)
@@ -486,7 +475,6 @@ class HapiConnectorPlugin(Star):
     # ── list ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("list", alias={"ls"})
     async def cmd_list(self, event: AstrMessageEvent, scope: str = ""):
         """列出 session: /hapi list [all]"""
         await self._ensure_primary_session(event)
@@ -526,7 +514,6 @@ class HapiConnectorPlugin(Star):
     # ── sw ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("sw")
     async def cmd_sw(self, event: AstrMessageEvent, target: str = ""):
         """切换当前 session: /hapi sw <序号或ID前缀>"""
         await self._ensure_primary_session(event)
@@ -576,7 +563,6 @@ class HapiConnectorPlugin(Star):
     # ── s (status) ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("s", alias={"status"})
     async def cmd_status(self, event: AstrMessageEvent):
         """查看当前 session 状态"""
         await self._ensure_primary_session(event)
@@ -595,7 +581,6 @@ class HapiConnectorPlugin(Star):
     # ── msg ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("msg", alias={"messages"})
     async def cmd_msg(self, event: AstrMessageEvent, rounds: str = ""):
         """查看最近消息（按轮次）: /hapi msg [轮数]"""
         await self._set_user_state(event)
@@ -625,7 +610,6 @@ class HapiConnectorPlugin(Star):
     # ── to ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("to")
     async def cmd_to(self, event: AstrMessageEvent, args: str = ""):
         """发消息到指定 session: /hapi to <序号> <内容>"""
         raw = (args or event.message_str).strip()
@@ -650,7 +634,6 @@ class HapiConnectorPlugin(Star):
     # ── perm ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("perm")
     async def cmd_perm(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换权限模式: /hapi perm [模式名]"""
         await self._set_user_state(event)
@@ -707,7 +690,6 @@ class HapiConnectorPlugin(Star):
     # ── model ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("model")
     async def cmd_model(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换模型: /hapi model [模式名]"""
         await self._set_user_state(event)
@@ -766,7 +748,6 @@ class HapiConnectorPlugin(Star):
     # ── remote ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("remote")
     async def cmd_remote(self, event: AstrMessageEvent):
         """切换当前 session 到 remote 远程托管模式"""
         await self._set_user_state(event)
@@ -787,7 +768,6 @@ class HapiConnectorPlugin(Star):
     }
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("output", alias={"out"})
     async def cmd_output(self, event: AstrMessageEvent, level: str = ""):
         """查看/切换 SSE 推送级别: /hapi output [级别]"""
         await self._set_user_state(event)
@@ -846,7 +826,6 @@ class HapiConnectorPlugin(Star):
     # ── pending (查看待审批列表) ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("pending")
     async def cmd_pending(self, event: AstrMessageEvent):
         """查看待审批请求列表: /hapi pending"""
         await self._set_user_state(event)
@@ -857,7 +836,6 @@ class HapiConnectorPlugin(Star):
     # ── approve ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("approve", alias={"a"})
     async def cmd_approve(self, event: AstrMessageEvent):
         """批准所有权限请求，再交互式回答 question: /hapi a"""
         await self._set_user_state(event)
@@ -883,7 +861,6 @@ class HapiConnectorPlugin(Star):
     # ── allow ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("allow")
     async def cmd_allow(self, event: AstrMessageEvent, target: str = ""):
         """批准权限请求（跳过 question）: /hapi allow [序号]"""
         await self._set_user_state(event)
@@ -916,7 +893,6 @@ class HapiConnectorPlugin(Star):
     # ── answer ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("answer")
     async def cmd_answer(self, event: AstrMessageEvent, target: str = ""):
         """交互式回答 question 请求: /hapi answer [序号]"""
         await self._set_user_state(event)
@@ -942,7 +918,6 @@ class HapiConnectorPlugin(Star):
     # ── deny ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("deny")
     async def cmd_deny(self, event: AstrMessageEvent, target: str = ""):
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
         await self._set_user_state(event)
@@ -982,7 +957,6 @@ class HapiConnectorPlugin(Star):
     # ── create ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("create")
     async def cmd_create(self, event: AstrMessageEvent):
         """创建新 session (5 步向导)"""
         await self._ensure_primary_session(event)
@@ -1082,7 +1056,6 @@ class HapiConnectorPlugin(Star):
     # ── abort ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("abort", alias={"stop"})
     async def cmd_abort(self, event: AstrMessageEvent, target: str = ""):
         """中断 session: /hapi abort [序号|ID前缀]"""
         await self._set_user_state(event)
@@ -1122,7 +1095,6 @@ class HapiConnectorPlugin(Star):
     # ── archive ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("archive")
     async def cmd_archive(self, event: AstrMessageEvent):
         """归档当前 session"""
         await self._set_user_state(event)
@@ -1158,7 +1130,6 @@ class HapiConnectorPlugin(Star):
     # ── rename ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("rename")
     async def cmd_rename(self, event: AstrMessageEvent):
         """重命名当前 session"""
         await self._set_user_state(event)
@@ -1191,7 +1162,6 @@ class HapiConnectorPlugin(Star):
     # ── delete ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("delete")
     async def cmd_delete(self, event: AstrMessageEvent):
         """删除当前 session"""
         await self._set_user_state(event)
@@ -1245,7 +1215,6 @@ class HapiConnectorPlugin(Star):
     # ── clean ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("clean")
     async def cmd_clean(self, event: AstrMessageEvent, path: str = ""):
         """清理 inactive sessions: /hapi clean [路径]"""
         await self._set_user_state(event)
@@ -1306,7 +1275,6 @@ class HapiConnectorPlugin(Star):
     # ── files ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("files", alias={"file"})
     async def cmd_files(self, event: AstrMessageEvent, path: str = "."):
         """浏览远端目录: /hapi files [-l] [路径]"""
         await self._set_user_state(event)
@@ -1332,7 +1300,6 @@ class HapiConnectorPlugin(Star):
     # ── find ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("find")
     async def cmd_find(self, event: AstrMessageEvent, query: str = ""):
         """搜索远端文件: /hapi find <关键词>"""
         await self._set_user_state(event)
@@ -1356,7 +1323,6 @@ class HapiConnectorPlugin(Star):
     # ── download ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("download", alias={"dl"})
     async def cmd_download(self, event: AstrMessageEvent, path: str = ""):
         """下载远端文件到聊天: /hapi download <路径>"""
         await self._set_user_state(event)
@@ -1401,7 +1367,6 @@ class HapiConnectorPlugin(Star):
                 pass
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("upload")
     async def cmd_upload(self, event: AstrMessageEvent, action: str = ""):
         """上传文件到当前 session: /hapi upload [cancel]"""
         await self._ensure_primary_session(event)
@@ -1506,7 +1471,6 @@ class HapiConnectorPlugin(Star):
     # ── bind ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("bind")
     async def cmd_bind(self, event: AstrMessageEvent, raw: str = ""):
         """绑定管理: /hapi bind [status|force] [flavor]"""
         await self._ensure_primary_session(event)
@@ -1585,7 +1549,6 @@ class HapiConnectorPlugin(Star):
     # ── unbind ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("unbind")
     async def cmd_unbind(self, event: AstrMessageEvent, raw: str = ""):
         """解除绑定: /hapi unbind [force] [flavor]"""
         await self._ensure_primary_session(event)
@@ -1650,7 +1613,6 @@ class HapiConnectorPlugin(Star):
     # ── bindings ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("bindings")
     async def cmd_bindings(self, event: AstrMessageEvent):
         """查看所有会话的绑定状态"""
         await self._ensure_primary_session(event)
@@ -1671,7 +1633,7 @@ class HapiConnectorPlugin(Star):
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
-    async def poke_approve_handler(self, event: AstrMessageEvent, *handler_args, **handler_kwargs):
+    async def poke_approve_handler(self, event: AstrMessageEvent):
         """戳一戳机器人 → 自动批准所有待审批请求 (仅 QQ NapCat)"""
         if not self._poke_approve:
             return
@@ -1717,7 +1679,7 @@ class HapiConnectorPlugin(Star):
     # ──── 快捷前缀处理器 ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
-    async def quick_prefix_handler(self, event: AstrMessageEvent, *handler_args, **handler_kwargs):
+    async def quick_prefix_handler(self, event: AstrMessageEvent):
         """快捷前缀: > 消息 或 >N 消息 (仅管理员)"""
         prefix = self._quick_prefix
         raw = event.message_str
