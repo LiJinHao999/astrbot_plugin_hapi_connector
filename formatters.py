@@ -284,10 +284,7 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
             parts.append("<<当前")
         lines.append(" | ".join(parts))
 
-    lines.append(f"\n用 /hapi sw <序号>或<🏷️session id> 切换")
-    return "\n".join(lines)
-
-    lines.append(f"\n用 /hapi sw <序号>或<🏷️session id> 切换")
+    lines.append(f"\n💡 切换会话：/hapi sw <序号或ID前缀>")
     return "\n".join(lines)
 
 
@@ -456,7 +453,7 @@ def format_question_notification(req: dict, label: str, total: int) -> str:
         for i, opt in enumerate(q.get("options", []), 1):
             desc = f" — {opt['description']}" if opt.get("description") else ""
             lines.append(f"    [{i}] {opt['label']}{desc}")
-    lines += ["", f"当前共 {total} 个待审批", "  /hapi answer        交互式回答"]
+    lines += ["", f"当前共 {total} 个待审批", "💡 使用此命令交互式审批：/hapi answer"]
     return "\n".join(lines)
 
 
@@ -494,8 +491,10 @@ def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]
         lines.append(f"\n[{i}] {label}")
         lines.append(f"    🛠️ {detail}")
 
-    lines.append("\n/hapi a 全部批准 | /hapi a <序号> 批准单个")
-    lines.append("/hapi deny 全部拒绝 | /hapi deny <序号> 拒绝单个")
+    lines.append("\n💡 批准全部：/hapi a")
+    lines.append("💡 批准单个：/hapi a <序号>")
+    lines.append("💡 拒绝全部：/hapi deny")
+    lines.append("💡 拒绝单个：/hapi deny <序号>")
     return "\n".join(lines)
 
 
@@ -505,7 +504,7 @@ def format_permission_modes(modes: list[str], current: str) -> str:
     for i, m in enumerate(modes, 1):
         tag = " <--" if m == current else ""
         lines.append(f"  [{i}] {m}{tag}")
-    lines.append("\n回复序号切换，或直接输入模式名")
+    lines.append("\n回复序号或模式名切换")
     return "\n".join(lines)
 
 
@@ -515,7 +514,7 @@ def format_model_modes(modes: list[str], current: str) -> str:
     for i, m in enumerate(modes, 1):
         tag = " <--" if m == current else ""
         lines.append(f"  [{i}] {m}{tag}")
-    lines.append("\n回复序号切换，或直接输入模式名")
+    lines.append("\n回复序号或模式名切换")
     return "\n".join(lines)
 
 
@@ -706,7 +705,7 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi clean [路径前缀]",
-        "summary": "批量清理 inactive sessions",
+        "summary": "批量清理已归档 sessions",
         "example": "/hapi clean C:/work/project",
         "home": False,
     },
@@ -877,14 +876,14 @@ def format_unknown_command_help(command: str) -> str:
     lines = [
         f"未知命令: /hapi {command}",
         "",
-        "你可以按功能查看相关帮助：",
-        "会话管理： /hapi help 会话",
-        "向远程发送消息： /hapi help 对话",
-        "审批权限请求： /hapi help 审批",
-        "文件上传/下载： /hapi help 文件",
-        "基础配置管理： /hapi help 配置",
+        "💡 按功能查看帮助：",
+        "  /hapi help 会话    会话管理",
+        "  /hapi help 对话    发送消息到远程",
+        "  /hapi help 审批    审批权限请求",
+        "  /hapi help 文件    文件操作",
+        "  /hapi help 配置    配置管理",
         "",
-        "查看常用命令帮助： /hapi help",
+        "💡 查看常用命令：/hapi help",
     ]
     matches = get_close_matches(normalized, sorted(KNOWN_HAPI_SUBCOMMANDS), n=3, cutoff=0.45)
     if matches:
@@ -909,28 +908,47 @@ def _iter_help_commands(topic: str) -> list[dict]:
     return [item for item in HELP_COMMANDS if item["topic"] == topic]
 
 
+def _append_help_item(lines: list[str], item: dict) -> None:
+    lines.append(item["usage"])
+    lines.append(f"  {item['summary']}")
+    example = item.get("example")
+    if example:
+        lines.append(f"  例：{example}")
+    lines.append("")
+
+
 def _format_help_commands(title: str, topic: str) -> str:
-    commands = _iter_help_commands(topic)
     lines = [title, ""]
+    if topic == "all":
+        sections = [
+            ("💬 会话管理", "session"),
+            ("📨 对话", "chat"),
+            ("✅ 权限审批", "approve"),
+            ("📁 文件管理", "files"),
+            ("⚙️ 配置管理", "config"),
+        ]
+        for section_title, section_topic in sections:
+            lines.append(section_title)
+            for item in HELP_COMMANDS:
+                if item["topic"] == section_topic:
+                    _append_help_item(lines, item)
+        return "\n".join(lines).rstrip()
+
+    commands = _iter_help_commands(topic)
     for item in commands:
-        lines.append(item["usage"])
-        lines.append(f"  {item['summary']}")
-        example = item.get("example")
-        if example:
-            lines.append(f"  例：{example}")
-        lines.append("")
+        _append_help_item(lines, item)
     return "\n".join(lines).rstrip()
 
 
 def _get_home_help_text() -> str:
     sections = [
-        ("[会话管理]", "session"),
-        ("[对话]", "chat"),
-        ("[权限审批]", "approve"),
-        ("[文件管理]", "files"),
-        ("[配置管理]", "config"),
+        ("💬 会话管理", "session"),
+        ("📨 对话", "chat"),
+        ("✅ 权限审批", "approve"),
+        ("📁 文件管理", "files"),
+        ("⚙️ 配置管理", "config"),
     ]
-    lines = ["HAPI Connector 帮助", ""]
+    lines = ["HAPI Connector 常用命令帮助", ""]
     for title, topic in sections:
         lines.append(title)
         for item in HELP_COMMANDS:
@@ -952,8 +970,8 @@ def get_help_text(topic: str = "") -> str:
         topics = ", ".join(name for name, _ in HELP_TOPICS)
         return (
             f"未知帮助主题: {topic}\n"
-            f"可用主题: {topics}（也支持 session/chat/approve/files/config/all）\n"
-            "输入 /hapi help 查看首页"
+            f"可用主题: {topics}\n"
+            "💡 查看常用命令：/hapi help"
         )
 
     if normalized == "home":
