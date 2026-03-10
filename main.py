@@ -299,7 +299,15 @@ class HapiConnectorPlugin(Star):
     @filter.command("hapi")
     async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
         """统一处理 /hapi 路由与帮助提示"""
-        remainder = (raw or event.message_str or "").strip()
+        raw_text = (raw or event.message_str or "").strip()
+        if raw_text == "hapi":
+            remainder = ""
+        elif raw_text.startswith("hapi "):
+            remainder = raw_text[4:].strip()
+        elif raw_text.startswith("/hapi"):
+            remainder = raw_text[5:].strip()
+        else:
+            remainder = raw_text
         if not remainder:
             async for result in self.cmd_help(event, ""):
                 yield result
