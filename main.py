@@ -298,7 +298,7 @@ class HapiConnectorPlugin(Star):
     # ── help ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @hapi.command("help")
+    @hapi.command("help", alias={"帮助"})
     async def cmd_help(self, event: AstrMessageEvent, topic: str = ""):
         """显示帮助信息，可按主题查看"""
         await self._set_user_state(event)
@@ -1219,6 +1219,29 @@ class HapiConnectorPlugin(Star):
             return False
 
     # ──── 快捷前缀处理器 ────
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
+    async def hapi_command_hint_handler(self, event: AstrMessageEvent):
+        """为 /hapi 未知子命令提供帮助提示"""
+        raw = (event.message_str or "").strip()
+        if not raw.startswith("/hapi"):
+            return
+
+        if not self._is_admin(event):
+            return
+
+        remainder = raw[5:].strip()
+        if not remainder:
+            yield event.plain_result(formatters.get_help_text())
+            event.stop_event()
+            return
+
+        subcommand = remainder.split(None, 1)[0].lower()
+        if subcommand in formatters.KNOWN_HAPI_SUBCOMMANDS:
+            return
+
+        yield event.plain_result(formatters.format_unknown_command_help(subcommand))
+        event.stop_event()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def quick_prefix_handler(self, event: AstrMessageEvent):

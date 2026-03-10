@@ -618,6 +618,34 @@ HELP_TOPIC_ALIASES = {
 }
 
 
+KNOWN_HAPI_SUBCOMMANDS = {
+    "help", "帮助",
+    "list", "ls",
+    "sw",
+    "s", "status",
+    "msg", "messages",
+    "to",
+    "perm",
+    "model",
+    "remote",
+    "output", "out",
+    "pending",
+    "approve", "a",
+    "allow",
+    "answer",
+    "deny",
+    "create",
+    "abort", "stop",
+    "archive",
+    "rename",
+    "delete",
+    "clean",
+    "files", "file",
+    "find",
+    "download", "dl",
+}
+
+
 HELP_COMMANDS = [
     {
         "topic": "session",
@@ -816,6 +844,23 @@ HELP_COMMANDS = [
         "home": False,
     },
 ]
+
+
+def format_unknown_command_help(command: str) -> str:
+    """格式化 /hapi 未知子命令提示。"""
+    from difflib import get_close_matches
+
+    normalized = command.strip().lower()
+    lines = [
+        f"未知命令: /hapi {command}",
+        "输入 /hapi help 或 /hapi 帮助 查看帮助",
+    ]
+    matches = get_close_matches(normalized, sorted(KNOWN_HAPI_SUBCOMMANDS), n=3, cutoff=0.45)
+    if matches:
+        lines.append("你可能想用：")
+        for item in matches:
+            lines.append(f"  /hapi {item}")
+    return "\n".join(lines)
 
 
 def _normalize_help_topic(topic: str) -> str | None:
