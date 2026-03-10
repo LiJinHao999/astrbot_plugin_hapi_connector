@@ -666,14 +666,14 @@ HELP_COMMANDS = [
         "usage": "/hapi create",
         "summary": "创建新 session",
         "example": None,
-        "home": False,
+        "home": True,
     },
     {
         "topic": "session",
         "usage": "/hapi s",
         "summary": "查看当前 session 状态",
         "example": None,
-        "home": True,
+        "home": False,
     },
     {
         "topic": "session",
@@ -846,6 +846,29 @@ HELP_COMMANDS = [
 ]
 
 
+def _get_command_summary(command: str) -> str | None:
+    canonical = {
+        "帮助": "help",
+        "ls": "list",
+        "status": "s",
+        "messages": "msg",
+        "out": "output",
+        "approve": "a",
+        "stop": "abort",
+        "file": "files",
+        "dl": "download",
+    }.get(command, command)
+
+    for item in HELP_COMMANDS:
+        usage = item.get("usage", "")
+        if not usage.startswith("/hapi "):
+            continue
+        command_name = usage.split()[1]
+        if command_name == canonical:
+            return item.get("summary")
+    return None
+
+
 def format_unknown_command_help(command: str) -> str:
     """格式化 /hapi 未知子命令提示。"""
     from difflib import get_close_matches
@@ -854,20 +877,24 @@ def format_unknown_command_help(command: str) -> str:
     lines = [
         f"未知命令: /hapi {command}",
         "",
-        "你可以按功能查看帮助：",
-        "[会话] /hapi help 会话  查看、切换、创建、中断 session",
-        "[对话] /hapi help 对话  发送消息、查看最近消息",
-        "[审批] /hapi help 审批  处理权限请求和问题回答",
-        "[文件] /hapi help 文件  浏览、搜索、下载远端文件",
-        "[配置] /hapi help 配置  查看权限、模型和输出级别",
+        "你可以按功能查看相关帮助：",
+        "会话管理： /hapi help 会话",
+        "向远程发送消息： /hapi help 对话",
+        "审批权限请求： /hapi help 审批",
+        "文件上传/下载： /hapi help 文件",
+        "基础配置管理： /hapi help 配置",
         "",
-        "也可以直接输入 /hapi 查看总览帮助",
+        "查看常用命令帮助： /hapi help",
     ]
     matches = get_close_matches(normalized, sorted(KNOWN_HAPI_SUBCOMMANDS), n=3, cutoff=0.45)
     if matches:
         lines.extend(["", "你可能想用："])
         for item in matches:
-            lines.append(f"  /hapi {item}")
+            summary = _get_command_summary(item)
+            if summary:
+                lines.append(f"  /hapi {item}  {summary}")
+            else:
+                lines.append(f"  /hapi {item}")
     return "\n".join(lines)
 
 
@@ -897,11 +924,11 @@ def _format_help_commands(title: str, topic: str) -> str:
 
 def _get_home_help_text() -> str:
     sections = [
-        ("[会话]", "session"),
+        ("[会话管理]", "session"),
         ("[对话]", "chat"),
-        ("[审批]", "approve"),
-        ("[文件]", "files"),
-        ("[配置]", "config"),
+        ("[权限审批]", "approve"),
+        ("[文件管理]", "files"),
+        ("[配置管理]", "config"),
     ]
     lines = ["HAPI Connector 帮助", ""]
     for title, topic in sections:
@@ -919,7 +946,7 @@ def _get_home_help_text() -> str:
 
 
 def get_help_text(topic: str = "") -> str:
-    """??????????????"""
+    """未知命令时触发"""
     normalized = _normalize_help_topic(topic)
     if normalized is None:
         topics = ", ".join(name for name, _ in HELP_TOPICS)
