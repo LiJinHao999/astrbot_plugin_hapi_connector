@@ -295,6 +295,67 @@ class HapiConnectorPlugin(Star):
         """HAPI 远程 AI 编码会话管理 (仅管理员)"""
         pass
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("hapi")
+    async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
+        """统一处理 /hapi 路由与帮助提示"""
+        remainder = (raw or event.message_str or "").strip()
+        if not remainder:
+            async for result in self.cmd_help(event, ""):
+                yield result
+            return
+
+        parts = remainder.split(None, 1)
+        subcommand = parts[0].lower()
+        argument = parts[1] if len(parts) > 1 else ""
+        routes = {
+            "help": (self.cmd_help, True),
+            "帮助": (self.cmd_help, True),
+            "list": (self.cmd_list, False),
+            "ls": (self.cmd_list, False),
+            "sw": (self.cmd_sw, True),
+            "s": (self.cmd_status, False),
+            "status": (self.cmd_status, False),
+            "msg": (self.cmd_msg, True),
+            "messages": (self.cmd_msg, True),
+            "to": (self.cmd_to, True),
+            "perm": (self.cmd_perm, True),
+            "model": (self.cmd_model, True),
+            "remote": (self.cmd_remote, False),
+            "output": (self.cmd_output, True),
+            "out": (self.cmd_output, True),
+            "pending": (self.cmd_pending, False),
+            "approve": (self.cmd_approve, False),
+            "a": (self.cmd_approve, False),
+            "allow": (self.cmd_allow, True),
+            "answer": (self.cmd_answer, True),
+            "deny": (self.cmd_deny, True),
+            "create": (self.cmd_create, False),
+            "abort": (self.cmd_abort, True),
+            "stop": (self.cmd_abort, True),
+            "archive": (self.cmd_archive, False),
+            "rename": (self.cmd_rename, False),
+            "delete": (self.cmd_delete, False),
+            "clean": (self.cmd_clean, True),
+            "files": (self.cmd_files, True),
+            "file": (self.cmd_files, True),
+            "find": (self.cmd_find, True),
+            "download": (self.cmd_download, True),
+            "dl": (self.cmd_download, True),
+        }
+        route = routes.get(subcommand)
+        if route is None:
+            yield event.plain_result(formatters.format_unknown_command_help(subcommand))
+            return
+
+        handler, takes_arg = route
+        if takes_arg:
+            async for result in handler(event, argument):
+                yield result
+        else:
+            async for result in handler(event):
+                yield result
+
     # ── help ──
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -1219,78 +1280,6 @@ class HapiConnectorPlugin(Star):
             return False
 
     # ──── 快捷前缀处理器 ────
-
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
-    async def hapi_command_router(self, event: AstrMessageEvent):
-        """统一处理 /hapi 路由与帮助提示"""
-        raw = (event.message_str or "").strip()
-        if not raw.startswith("/hapi"):
-            return
-
-        if not self._is_admin(event):
-            yield event.plain_result("仅管理员可用")
-            event.stop_event()
-            return
-
-        remainder = raw[5:].strip()
-        if not remainder:
-            async for result in self.cmd_help(event, ""):
-                yield result
-            event.stop_event()
-            return
-
-        parts = remainder.split(None, 1)
-        subcommand = parts[0].lower()
-        argument = parts[1] if len(parts) > 1 else ""
-        routes = {
-            "help": (self.cmd_help, True),
-            "帮助": (self.cmd_help, True),
-            "list": (self.cmd_list, False),
-            "ls": (self.cmd_list, False),
-            "sw": (self.cmd_sw, True),
-            "s": (self.cmd_status, False),
-            "status": (self.cmd_status, False),
-            "msg": (self.cmd_msg, True),
-            "messages": (self.cmd_msg, True),
-            "to": (self.cmd_to, True),
-            "perm": (self.cmd_perm, True),
-            "model": (self.cmd_model, True),
-            "remote": (self.cmd_remote, False),
-            "output": (self.cmd_output, True),
-            "out": (self.cmd_output, True),
-            "pending": (self.cmd_pending, False),
-            "approve": (self.cmd_approve, False),
-            "a": (self.cmd_approve, False),
-            "allow": (self.cmd_allow, True),
-            "answer": (self.cmd_answer, True),
-            "deny": (self.cmd_deny, True),
-            "create": (self.cmd_create, False),
-            "abort": (self.cmd_abort, True),
-            "stop": (self.cmd_abort, True),
-            "archive": (self.cmd_archive, False),
-            "rename": (self.cmd_rename, False),
-            "delete": (self.cmd_delete, False),
-            "clean": (self.cmd_clean, True),
-            "files": (self.cmd_files, True),
-            "file": (self.cmd_files, True),
-            "find": (self.cmd_find, True),
-            "download": (self.cmd_download, True),
-            "dl": (self.cmd_download, True),
-        }
-        route = routes.get(subcommand)
-        if route is None:
-            yield event.plain_result(formatters.format_unknown_command_help(subcommand))
-            event.stop_event()
-            return
-
-        handler, takes_arg = route
-        if takes_arg:
-            async for result in handler(event, argument):
-                yield result
-        else:
-            async for result in handler(event):
-                yield result
-        event.stop_event()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def quick_prefix_handler(self, event: AstrMessageEvent):
