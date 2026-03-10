@@ -390,10 +390,15 @@ class HapiConnectorPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("hapi")
-    async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
+    async def cmd_hapi_router(self, event: AstrMessageEvent, *handler_args, **handler_kwargs):
         """统一处理 /hapi 路由与帮助提示"""
         full_text = (event.message_str or "").strip()
-        raw_text = (raw or "").strip()
+        raw_value = handler_kwargs.get("raw", "")
+        if not raw_value and handler_args:
+            first_arg = handler_args[0]
+            if isinstance(first_arg, str):
+                raw_value = first_arg
+        raw_text = (raw_value or "").strip()
         if full_text and raw_text and len(full_text) > len(raw_text):
             source_text = full_text
         else:
@@ -1666,7 +1671,7 @@ class HapiConnectorPlugin(Star):
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
-    async def poke_approve_handler(self, event: AstrMessageEvent):
+    async def poke_approve_handler(self, event: AstrMessageEvent, *handler_args, **handler_kwargs):
         """戳一戳机器人 → 自动批准所有待审批请求 (仅 QQ NapCat)"""
         if not self._poke_approve:
             return
@@ -1712,7 +1717,7 @@ class HapiConnectorPlugin(Star):
     # ──── 快捷前缀处理器 ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
-    async def quick_prefix_handler(self, event: AstrMessageEvent):
+    async def quick_prefix_handler(self, event: AstrMessageEvent, *handler_args, **handler_kwargs):
         """快捷前缀: > 消息 或 >N 消息 (仅管理员)"""
         prefix = self._quick_prefix
         raw = event.message_str
