@@ -464,7 +464,6 @@ class HapiConnectorPlugin(Star):
 
     # ── help ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_help(self, event: AstrMessageEvent, topic: str = ""):
         """显示帮助信息，可按主题查看"""
         await self._set_user_state(event)
@@ -474,7 +473,6 @@ class HapiConnectorPlugin(Star):
 
     # ── list ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_list(self, event: AstrMessageEvent, scope: str = ""):
         """列出 session: /hapi list [all]"""
         await self._ensure_primary_session(event)
@@ -513,7 +511,6 @@ class HapiConnectorPlugin(Star):
 
     # ── sw ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_sw(self, event: AstrMessageEvent, target: str = ""):
         """切换当前 session: /hapi sw <序号或ID前缀>"""
         await self._ensure_primary_session(event)
@@ -562,7 +559,6 @@ class HapiConnectorPlugin(Star):
 
     # ── s (status) ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_status(self, event: AstrMessageEvent):
         """查看当前 session 状态"""
         await self._ensure_primary_session(event)
@@ -580,7 +576,6 @@ class HapiConnectorPlugin(Star):
 
     # ── msg ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_msg(self, event: AstrMessageEvent, rounds: str = ""):
         """查看最近消息（按轮次）: /hapi msg [轮数]"""
         await self._set_user_state(event)
@@ -609,7 +604,6 @@ class HapiConnectorPlugin(Star):
 
     # ── to ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_to(self, event: AstrMessageEvent, args: str = ""):
         """发消息到指定 session: /hapi to <序号> <内容>"""
         raw = (args or event.message_str).strip()
@@ -633,7 +627,6 @@ class HapiConnectorPlugin(Star):
 
     # ── perm ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_perm(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换权限模式: /hapi perm [模式名]"""
         await self._set_user_state(event)
@@ -689,7 +682,6 @@ class HapiConnectorPlugin(Star):
 
     # ── model ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_model(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换模型: /hapi model [模式名]"""
         await self._set_user_state(event)
@@ -747,7 +739,6 @@ class HapiConnectorPlugin(Star):
 
     # ── remote ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_remote(self, event: AstrMessageEvent):
         """切换当前 session 到 remote 远程托管模式"""
         await self._set_user_state(event)
@@ -767,7 +758,6 @@ class HapiConnectorPlugin(Star):
         "detail": "实时推送所有新消息（信息量较大）",
     }
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_output(self, event: AstrMessageEvent, level: str = ""):
         """查看/切换 SSE 推送级别: /hapi output [级别]"""
         await self._set_user_state(event)
@@ -825,7 +815,6 @@ class HapiConnectorPlugin(Star):
 
     # ── pending (查看待审批列表) ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_pending(self, event: AstrMessageEvent):
         """查看待审批请求列表: /hapi pending"""
         await self._set_user_state(event)
@@ -835,7 +824,6 @@ class HapiConnectorPlugin(Star):
 
     # ── approve ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_approve(self, event: AstrMessageEvent):
         """批准所有权限请求，再交互式回答 question: /hapi a"""
         await self._set_user_state(event)
@@ -860,7 +848,6 @@ class HapiConnectorPlugin(Star):
 
     # ── allow ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_allow(self, event: AstrMessageEvent, target: str = ""):
         """批准权限请求（跳过 question）: /hapi allow [序号]"""
         await self._set_user_state(event)
@@ -892,7 +879,6 @@ class HapiConnectorPlugin(Star):
 
     # ── answer ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_answer(self, event: AstrMessageEvent, target: str = ""):
         """交互式回答 question 请求: /hapi answer [序号]"""
         await self._set_user_state(event)
@@ -917,7 +903,6 @@ class HapiConnectorPlugin(Star):
 
     # ── deny ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_deny(self, event: AstrMessageEvent, target: str = ""):
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
         await self._set_user_state(event)
@@ -956,7 +941,6 @@ class HapiConnectorPlugin(Star):
 
     # ── create ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_create(self, event: AstrMessageEvent):
         """创建新 session (5 步向导)"""
         await self._ensure_primary_session(event)
@@ -1055,7 +1039,6 @@ class HapiConnectorPlugin(Star):
 
     # ── abort ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_abort(self, event: AstrMessageEvent, target: str = ""):
         """中断 session: /hapi abort [序号|ID前缀]"""
         await self._set_user_state(event)
@@ -1094,7 +1077,6 @@ class HapiConnectorPlugin(Star):
 
     # ── archive ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_archive(self, event: AstrMessageEvent):
         """归档当前 session"""
         await self._set_user_state(event)
@@ -1129,7 +1111,6 @@ class HapiConnectorPlugin(Star):
 
     # ── rename ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_rename(self, event: AstrMessageEvent):
         """重命名当前 session"""
         await self._set_user_state(event)
@@ -1161,7 +1142,6 @@ class HapiConnectorPlugin(Star):
 
     # ── delete ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_delete(self, event: AstrMessageEvent):
         """删除当前 session"""
         await self._set_user_state(event)
@@ -1214,7 +1194,6 @@ class HapiConnectorPlugin(Star):
 
     # ── clean ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_clean(self, event: AstrMessageEvent, path: str = ""):
         """清理 inactive sessions: /hapi clean [路径]"""
         await self._set_user_state(event)
@@ -1274,7 +1253,6 @@ class HapiConnectorPlugin(Star):
 
     # ── files ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_files(self, event: AstrMessageEvent, path: str = "."):
         """浏览远端目录: /hapi files [-l] [路径]"""
         await self._set_user_state(event)
@@ -1299,7 +1277,6 @@ class HapiConnectorPlugin(Star):
 
     # ── find ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_find(self, event: AstrMessageEvent, query: str = ""):
         """搜索远端文件: /hapi find <关键词>"""
         await self._set_user_state(event)
@@ -1322,7 +1299,6 @@ class HapiConnectorPlugin(Star):
 
     # ── download ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_download(self, event: AstrMessageEvent, path: str = ""):
         """下载远端文件到聊天: /hapi download <路径>"""
         await self._set_user_state(event)
@@ -1366,7 +1342,6 @@ class HapiConnectorPlugin(Star):
             except OSError:
                 pass
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_upload(self, event: AstrMessageEvent, action: str = ""):
         """上传文件到当前 session: /hapi upload [cancel]"""
         await self._ensure_primary_session(event)
@@ -1470,7 +1445,6 @@ class HapiConnectorPlugin(Star):
 
     # ── bind ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_bind(self, event: AstrMessageEvent, raw: str = ""):
         """绑定管理: /hapi bind [status|force] [flavor]"""
         await self._ensure_primary_session(event)
@@ -1548,7 +1522,6 @@ class HapiConnectorPlugin(Star):
 
     # ── unbind ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_unbind(self, event: AstrMessageEvent, raw: str = ""):
         """解除绑定: /hapi unbind [force] [flavor]"""
         await self._ensure_primary_session(event)
@@ -1612,7 +1585,6 @@ class HapiConnectorPlugin(Star):
 
     # ── bindings ──
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def cmd_bindings(self, event: AstrMessageEvent):
         """查看所有会话的绑定状态"""
         await self._ensure_primary_session(event)
