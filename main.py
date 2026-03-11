@@ -140,26 +140,15 @@ class HapiConnectorPlugin(Star):
             await self._persist_window_state(released_umo)
 
     async def _ensure_primary_session(self, event: AstrMessageEvent):
-        """将最新活跃窗口视为该用户的默认通知窗口，必要时接管旧窗口的当前 session"""
+        """确保用户已有默认通知窗口；仅首次自动设置，不迁移现有窗口绑定"""
         sender_id = str(event.get_sender_id())
         umo = event.unified_msg_origin
         state = self._user_states_cache.get(sender_id, {})
-        previous_umo = state.get("primary_umo")
-
-        previous_session = None
-        previous_flavor = None
-        if previous_umo and previous_umo != umo and not self.binding_mgr.get_window_session(umo):
-            previous_session = self.binding_mgr.get_window_session(previous_umo)
-            previous_flavor = self.binding_mgr.get_window_flavor(previous_umo)
-
-        if previous_umo != umo:
+        if not state.get("primary_umo"):
             await self._set_user_state(event, primary_umo=umo)
             logger.info("设置用户 %s 的主会话: %s", sender_id, umo[:20] if len(umo) > 20 else umo)
         else:
             await self._set_user_state(event)
-
-        if previous_session:
-            await self._capture_window(previous_session, umo, previous_flavor or "unknown")
 
     # ──── 生命周期 ────
 
@@ -322,6 +311,55 @@ class HapiConnectorPlugin(Star):
     def _current_flavor(self, event: AstrMessageEvent) -> str | None:
         """获取当前窗口的 flavor"""
         return self.binding_mgr.get_window_flavor(event.unified_msg_origin)
+
+    def _primary_umo(self, event: AstrMessageEvent) -> str | None:
+        """获取当前用户配置的默认通知窗口"""
+        state = self._get_user_state(event)
+        primary_umo = state.get("primary_umo")
+        return str(primary_umo) if primary_umo else None
+
+    def _effective_sid(self, event: AstrMessageEvent) -> str | None:
+        """获取当前命令应作用的会话 ID；未显式绑定时回退到默认窗口的当前会话"""
+        current_sid = self._current_sid(event)
+        if current_sid:
+            return current_sid
+
+        primary_umo = self._primary_umo(event)
+        if not primary_umo or primary_umo == event.unified_msg_origin:
+            return None
+        return self.binding_mgr.get_window_session(primary_umo)
+
+    def _effective_flavor(self, event: AstrMessageEvent) -> str | None:
+        """获取当前命令应作用会话的 flavor；回退规则与 _effective_sid 一致"""
+        current_flavor = self._current_flavor(event)
+        if current_flavor:
+            return current_flavor
+
+        primary_umo = self._primary_umo(event)
+        if not primary_umo or primary_umo == event.unified_msg_origin:
+            return None
+        return self.binding_mgr.get_window_flavor(primary_umo)
+
+    def _visible_sessions_for_window(self, event: AstrMessageEvent) -> list[dict]:
+        """返回当前窗口会接收通知的 session 列表"""
+        current_umo = event.unified_msg_origin
+        primary_umo = self._primary_umo(event)
+        visible_sessions: list[dict] = []
+
+        for session in self.sessions_cache:
+            sid = session.get("id")
+            if not sid:
+                continue
+
+            owners = self.binding_mgr.get_owners(sid)
+            if current_umo in owners:
+                visible_sessions.append(session)
+                continue
+
+            if not owners and primary_umo == current_umo:
+                visible_sessions.append(session)
+
+        return visible_sessions
 
     def _conn_warning(self) -> str | None:
         """SSE 连接异常时返回警告文本，正常时返回 None"""
@@ -587,8 +625,13 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result(text)
             return
 
+        visible_sessions = self._visible_sessions_for_window(event)
+        if not visible_sessions:
+            yield event.plain_result("当前窗口没有接收任何 session 通知\n提示: 使用 /hapi list all 查看所有 session")
+            return
+
         current_sid = self._current_sid(event)
-        text = formatters.format_session_list(self.sessions_cache, current_sid)
+        text = formatters.format_session_list(visible_sessions, current_sid)
 
         # 检查 machine 列表，如果为空但 SSE 连接正常则提示
         try:
@@ -652,7 +695,7 @@ class HapiConnectorPlugin(Star):
         """查看当前 session 状态"""
         await self._ensure_primary_session(event)
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -668,7 +711,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_msg(self, event: AstrMessageEvent, rounds: str = ""):
         """查看最近消息（按轮次）: /hapi msg [轮数]"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -723,12 +766,12 @@ class HapiConnectorPlugin(Star):
     async def cmd_perm(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换权限模式: /hapi perm [模式名]"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
 
-        flavor = self._current_flavor(event) or "claude"
+        flavor = self._effective_flavor(event) or "claude"
         modes = PERMISSION_MODES.get(flavor, ["default"])
 
         if mode:
@@ -778,12 +821,12 @@ class HapiConnectorPlugin(Star):
     async def cmd_model(self, event: AstrMessageEvent, mode: str = ""):
         """查看/切换模型: /hapi model [模式名]"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
 
-        flavor = self._current_flavor(event) or "claude"
+        flavor = self._effective_flavor(event) or "claude"
         if flavor != "claude":
             yield event.plain_result("模型切换仅支持 Claude session")
             return
@@ -835,7 +878,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_remote(self, event: AstrMessageEvent):
         """切换当前 session 到 remote 远程托管模式"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1136,7 +1179,7 @@ class HapiConnectorPlugin(Star):
         await self._refresh_sessions()
 
         if not target:
-            sid = self._current_sid(event)
+            sid = self._effective_sid(event)
             if not sid:
                 yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
                 return
@@ -1171,7 +1214,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_archive(self, event: AstrMessageEvent):
         """归档当前 session"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1205,7 +1248,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_rename(self, event: AstrMessageEvent):
         """重命名当前 session"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1236,7 +1279,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_delete(self, event: AstrMessageEvent):
         """删除当前 session"""
         await self._set_user_state(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1349,7 +1392,7 @@ class HapiConnectorPlugin(Star):
         await self._set_user_state(event)
         if w := self._conn_warning():
             yield event.plain_result(w)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1373,7 +1416,7 @@ class HapiConnectorPlugin(Star):
         await self._set_user_state(event)
         if w := self._conn_warning():
             yield event.plain_result(w)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1395,7 +1438,7 @@ class HapiConnectorPlugin(Star):
         await self._set_user_state(event)
         if w := self._conn_warning():
             yield event.plain_result(w)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1436,7 +1479,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_upload(self, event: AstrMessageEvent, action: str = ""):
         """上传文件到当前 session: /hapi upload [cancel]"""
         await self._ensure_primary_session(event)
-        sid = self._current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
@@ -1518,7 +1561,7 @@ class HapiConnectorPlugin(Star):
                         attachments.append(attach)
 
                 summary = "\n".join(results)
-                flavor = self._current_flavor(ev)
+                flavor = self._effective_flavor(ev)
                 summary += f"\n\n已上传 {len(attachments)} 个文件到 [{flavor}] {sid[:8]}"
                 await ev.send(ev.plain_result(summary))
                 controller.stop()
@@ -1712,8 +1755,8 @@ class HapiConnectorPlugin(Star):
             text = rest.lstrip()
             if not text:
                 return
-            target_sid = self._current_sid(event)
-            target_flavor = self._current_flavor(event) or "claude"
+            target_sid = self._effective_sid(event)
+            target_flavor = self._effective_flavor(event) or "claude"
 
         if not target_sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
