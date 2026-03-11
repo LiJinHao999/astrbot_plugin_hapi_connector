@@ -331,18 +331,11 @@ class SSEListener:
             if not state.get("thinking", False) and not has_pending:
                 last_seq = state.get("lastSeq", 0)
                 if self.output_level == "summary":
-                    old_seq = state.get("lastSeq", 0)
-                    await self._show_summary(sid, old_seq)
-                    continue
-
-                emitted_final_output = False
-                if self.output_level == "detail":
-                    emitted_final_output = await self._show_detail(sid, last_seq)
+                    await self._show_summary(sid, last_seq)
+                elif self.output_level == "detail":
+                    await self._show_detail(sid, last_seq)
                 elif self.output_level == "simple":
-                    emitted_final_output = await self._show_simple(sid, last_seq)
-
-                if emitted_final_output:
-                    continue
+                    await self._show_simple(sid, last_seq)
 
                 async with self._lock:
                     last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
