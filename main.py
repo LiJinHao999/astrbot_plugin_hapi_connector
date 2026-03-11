@@ -484,6 +484,7 @@ class HapiConnectorPlugin(Star):
             "upload": (self.cmd_upload, True),
             "bind": (self.cmd_bind, True),
             "routes": (self.cmd_routes, False),
+            "reset": (self.cmd_reset, False),
         }
         route = routes.get(subcommand)
         if route is None:
@@ -1508,7 +1509,11 @@ class HapiConnectorPlugin(Star):
         elif arg == "status":
             # 复用 /hapi list all 的显示逻辑
             await self._refresh_sessions()
-            text = formatters.format_bind_status(self.sessions_cache, self._session_owners)
+            text = formatters.format_bind_status(
+                self.sessions_cache,
+                self._session_owners,
+                self.binding_mgr._window_states
+            )
 
             # 附加默认窗口信息
             state = self._user_states_cache.get(sender_id, {})
@@ -1553,6 +1558,28 @@ class HapiConnectorPlugin(Star):
             yield event.plain_result("暂无推送路由\n使用 /hapi bind 设置默认发送窗口")
         else:
             yield event.plain_result("\n".join(lines))
+
+    # ── reset ──
+
+    async def cmd_reset(self, event: AstrMessageEvent):
+        """重置所有状态（清空捕获关系和窗口状态，保留默认窗口）"""
+        await self._ensure_primary_session(event)
+
+        # 清空 binding_manager 的所有状态
+        self.binding_mgr.reset_all_states()
+
+        # 清空 KV 存储
+        await self.put_kv_data("session_owners", {})
+
+        # 清空所有窗口状态
+        for sid, umos in list(self._session_owners.items()):
+            for umo in umos:
+                await self.put_kv_data(f"window_state_{umo}", None)
+
+        # 刷新 session 缓存
+        await self._refresh_sessions()
+
+        yield event.plain_result("✓ 已重置所有状态\n捕获关系和窗口状态已清空，默认窗口保留")
 
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 

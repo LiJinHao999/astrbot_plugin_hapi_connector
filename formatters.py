@@ -238,8 +238,8 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]]) -> str:
-    """格式化全局绑定状态（复用 session 列表格式 + 绑定信息）"""
+def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]], window_states: dict[str, dict] = None) -> str:
+    """格式化全局绑定状态（复用 session 列表格式 + 绑定信息 + 窗口状态）"""
     if not sessions:
         return "没有任何 session"
 
@@ -247,7 +247,7 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]
 
     current_path = None
     for idx, s in enumerate(sessions, 1):
-        meta = s.get("metadata", )
+        meta = s.get("metadata", {})
         path = meta.get("path", "(无路径)")
 
         if path != current_path:
@@ -279,9 +279,13 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]
         owners = session_owners.get(sid, [])
         if owners:
             owner_str = ", ".join([o[:20] + "..." if len(o) > 20 else o for o in owners])
-            parts.append(f"📌绑定: {owner_str}")
-        else:
-            parts.append("📌无绑定")
+            parts.append(f"📌{owner_str}")
+
+        # 添加窗口状态
+        if window_states:
+            active_windows = [umo[:20] for umo, state in window_states.items() if state.get("current_session") == sid]
+            if active_windows:
+                parts.append(f"🪟{len(active_windows)}窗口")
 
         lines.append(" | ".join(parts))
 

@@ -53,3 +53,8 @@ class BindingManager:
             if state.get("current_session") == session_id:
                 return umo
         return None
+
+    def reset_all_states(self):
+        """重置所有状态（清空捕获关系和窗口状态）"""
+        self._session_owners.clear()
+        self._window_states.clear()
