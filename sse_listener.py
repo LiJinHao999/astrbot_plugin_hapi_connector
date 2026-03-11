@@ -10,7 +10,8 @@ from astrbot.api import logger
 
 from .hapi_client import AsyncHapiClient, ContentTypeError
 from .formatters import (extract_text_preview, session_label_short, format_request_detail,
-                         format_agent_line, is_question_request, format_question_notification)
+                         format_agent_line, is_question_request, format_question_notification,
+                         format_permission_notification)
 from . import session_ops
 
 
@@ -240,18 +241,7 @@ class SSEListener:
                         msg = format_question_notification(req, label, total)
                     else:
                         detail = format_request_detail(req)
-                        lines = [
-                            f"⚠ 权限请求\n{label}",
-                            f"  {detail}",
-                            "",
-                            f"当前共 {total} 个待审批，审批指令:",
-                            "  /hapi a        全部批准",
-                            "  /hapi allow <序号>  批准单个",
-                            "  /hapi deny     全部拒绝",
-                            "  /hapi deny <序号> 拒绝单个",
-                            "  /hapi pending   查看完整列表",
-                        ]
-                        msg = "\n".join(lines)
+                        msg = format_permission_notification(label, detail, total)
                     await self._push_notification(msg, sid)
 
         # 有新请求 → 启动一次性提醒倒计时（如未启动）

@@ -522,6 +522,22 @@ def format_question_notification(req: dict, label: str, total: int) -> str:
     return "\n".join(lines)
 
 
+def format_permission_notification(label: str, detail: str, total: int) -> str:
+    """格式化普通权限审批通知，复用统一的会话前缀。"""
+    lines = [
+        label,
+        f"  {detail}",
+        "",
+        f"当前共 {total} 个待审批，审批指令:",
+        "  /hapi a        全部批准",
+        "  /hapi allow <序号>  批准单个",
+        "  /hapi deny     全部拒绝",
+        "  /hapi deny <序号> 拒绝单个",
+        "  /hapi pending   查看完整列表",
+    ]
+    return "\n".join(lines)
+
+
 def format_request_detail(req: dict) -> str:
     """格式化权限请求详情（工具 + 关键参数）"""
     tool = req.get("tool", "?")

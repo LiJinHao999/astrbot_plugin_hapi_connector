@@ -4,6 +4,7 @@
 """
 
 import os
+import time
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api import AstrBotConfig, logger
@@ -102,6 +103,7 @@ class HapiConnectorPlugin(Star):
         # 管理员列表（用于 catch-all 处理器手动鉴权）
         astrbot_config = self.context.get_config()
         self._admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
+        self._recent_notifications: dict[tuple[str, str, str], float] = {}
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         """检查发送者是否为管理员"""
@@ -456,13 +458,44 @@ class HapiConnectorPlugin(Star):
             return [primary_targets[0]]
         return []
 
+    @staticmethod
+    def _notification_body_key(text: str) -> str:
+        """Normalize label variants so duplicate notifications collapse to one body."""
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[0].startswith("💬 ") and lines[1].startswith("📂 ") and lines[2].startswith("🤖 "):
+            lines = lines[3:]
+        elif lines and lines[0].startswith("🏷️ "):
+            lines = lines[1:]
+        return "\n".join(line.rstrip() for line in lines).strip() or text.strip()
+
+    def _should_skip_duplicate_notification(self, umo: str, session_id: str, text: str) -> bool:
+        """Drop short-interval duplicate notifications for the same target/session/body."""
+        now = time.monotonic()
+        dedupe_window = 2.5
+        expire_before = now - 30
+        for key, ts in list(self._recent_notifications.items()):
+            if ts < expire_before:
+                self._recent_notifications.pop(key, None)
+
+        body_key = self._notification_body_key(text)
+        cache_key = (umo, session_id or "", body_key)
+        last_sent = self._recent_notifications.get(cache_key)
+        if last_sent is not None and now - last_sent <= dedupe_window:
+            logger.info("跳过重复通知: sid=%s umo=%s", (session_id or "global")[:8], umo[:20])
+            return True
+
+        self._recent_notifications[cache_key] = now
+        return False
+
     async def _push_notification(self, text: str, session_id: str):
         """推送通知到单个目标窗口，优先走 session 当前路由。"""
-        chunks = self._split_message(text) if len(text) > 4200 else [text]
         targets = self._select_notification_targets(session_id)
 
         if targets:
             for umo in targets:
+                if self._should_skip_duplicate_notification(umo, session_id, text):
+                    continue
+                chunks = self._split_message(text) if len(text) > 4200 else [text]
                 for chunk in chunks:
                     try:
                         chain = MessageChain().message(chunk)
@@ -1770,12 +1803,27 @@ class HapiConnectorPlugin(Star):
     def _is_poke_event(self, event: AstrMessageEvent) -> bool:
         """检测是否为戳一戳机器人事件"""
         try:
-            for comp in event.message_obj.message:
+            self_id = str(event.get_self_id() or "").strip()
+            raw_message = getattr(event.message_obj, "raw_message", {}) or {}
+            if not self_id:
+                self_id = str(raw_message.get("self_id", "")).strip()
+
+            for comp in getattr(event.message_obj, "message", []) or []:
                 if isinstance(comp, Poke):
-                    bot_id = event.message_obj.raw_message.get('self_id')
-                    if comp.qq == bot_id:
+                    candidates = []
+                    target_id = comp.target_id() if hasattr(comp, "target_id") else None
+                    for value in (target_id, getattr(comp, "id", None), getattr(comp, "qq", None)):
+                        if value is None:
+                            continue
+                        text = str(value).strip()
+                        if text:
+                            candidates.append(text)
+                    if self_id and self_id in candidates:
                         return True
-            return False
+
+            subtype = str(raw_message.get("sub_type", "")).lower()
+            target_id = str(raw_message.get("target_id", "")).strip()
+            return subtype == "poke" and bool(self_id) and target_id == self_id
         except Exception:
             return False
 
