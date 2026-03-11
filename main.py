@@ -107,29 +107,12 @@ class HapiConnectorPlugin(Star):
         """检查发送者是否为管理员"""
         return str(event.get_sender_id()) in self._admin_ids
 
-    # ──── 会话绑定管理 ────
+    # ──── 会话捕获管理 ────
 
-    async def _bind_session(self, umo: str, session_id: str, flavor: str):
-        """将 session 绑定到聊天窗口（单窗口绑定）"""
-        self.binding_mgr.bind(umo, session_id, flavor)
+    async def _capture_window(self, session_id: str, umo: str):
+        """捕获当前窗口为 session 的推送目标"""
+        self._session_owners[session_id] = [umo]
         await self.put_kv_data("session_owners", self._session_owners)
-        await self.put_kv_data(f"chat_binding_{umo}", self._chat_bindings[umo])
-        known_chats = await self.get_kv_data("known_chats", [])
-        if umo not in known_chats:
-            known_chats.append(umo)
-            await self.put_kv_data("known_chats", known_chats)
-
-    async def _unbind_session(self, umo: str):
-        """解除聊天窗口的所有绑定"""
-        self.binding_mgr.unbind(umo)
-        await self.put_kv_data("session_owners", self._session_owners)
-        await self.put_kv_data(f"chat_binding_{umo}", None)
-
-    def _get_current_session(self, event: AstrMessageEvent) -> tuple[str | None, str | None]:
-        """获取当前窗口绑定的 session"""
-        umo = event.unified_msg_origin
-        binding = self._chat_bindings.get(umo, {})
-        return binding.get("session_id"), binding.get("flavor")
 
     async def _ensure_primary_session(self, event: AstrMessageEvent):
         """确保用户有主会话（首次执行命令时自动设置）"""
@@ -163,31 +146,8 @@ class HapiConnectorPlugin(Star):
                     continue
                 self._session_owners[sid] = [str(umo) for umo in umos]
 
-        # 加载聊天绑定
-        known_chats = await self.get_kv_data("known_chats", [])
-        for umo in known_chats:
-            binding = await self.get_kv_data(f"chat_binding_{umo}", None)
-            if binding and binding.get("session_id"):
-                self._chat_bindings[umo] = binding
-                sid = binding["session_id"]
-                if sid not in self._session_owners:
-                    self._session_owners[sid] = []
-                if umo not in self._session_owners[sid]:
-                    self._session_owners[sid].append(umo)
-
-        # 迁移旧数据：将 current_session + notify_umo 转为绑定
-        for uid, state in self._user_states_cache.items():
-            old_session = state.get("current_session")
-            old_umo = state.get("notify_umo")
-            if old_session and old_umo:
-                if old_umo not in self._chat_bindings:
-                    flavor = state.get("current_flavor", "unknown")
-                    await self._bind_session(old_umo, old_session, flavor)
-                    logger.info("迁移用户 %s 的会话绑定: %s → %s", uid, old_session[:8], old_umo[:20] if len(old_umo) > 20 else old_umo)
-            # 设置主会话（如果还没有）
-            if old_umo and not state.get("primary_umo"):
-                state["primary_umo"] = old_umo
-                await self.put_kv_data(f"user_state_{uid}", state)
+        # 执行数据迁移
+        await self._migrate_to_capture_model()
 
         # 加载 session 缓存
         try:
@@ -224,6 +184,41 @@ class HapiConnectorPlugin(Star):
         await self.client.close()
         logger.info("HAPI Connector 已销毁")
 
+    async def _migrate_to_capture_model(self):
+        """数据迁移：绑定模式 → 捕获+默认窗口模式"""
+        migrated = False
+
+        # 迁移用户状态
+        for uid, state in list(self._user_states_cache.items()):
+            modified = False
+
+            # notify_umo → primary_umo
+            if "notify_umo" in state and not state.get("primary_umo"):
+                state["primary_umo"] = state["notify_umo"]
+                modified = True
+                logger.info("迁移用户 %s: notify_umo → primary_umo", uid)
+
+            # 清理废弃字段
+            if "notify_umo" in state:
+                del state["notify_umo"]
+                modified = True
+
+            if modified:
+                self._user_states_cache[uid] = state
+                await self.put_kv_data(f"user_state_{uid}", state)
+                migrated = True
+
+        # 清理废弃的 chat_bindings KV 数据
+        known_chats = await self.get_kv_data("known_chats", [])
+        if known_chats:
+            for umo in known_chats:
+                await self.put_kv_data(f"chat_binding_{umo}", None)
+            logger.info("已清理 %d 个废弃的 chat_binding 数据", len(known_chats))
+            migrated = True
+
+        if migrated:
+            logger.info("数据迁移完成")
+
     # ──── 用户状态辅助 ────
 
     def _get_user_state(self, event: AstrMessageEvent) -> dict:
@@ -233,13 +228,9 @@ class HapiConnectorPlugin(Star):
     async def _set_user_state(self, event: AstrMessageEvent, **kwargs):
         sender_id = event.get_sender_id()
         state = self._user_states_cache.get(sender_id, {})
-        # 脏检查：无 kwargs 且 notify_umo 未变时跳过写入
-        new_umo = event.unified_msg_origin
-        if not kwargs and state.get("notify_umo") == new_umo:
+        if not kwargs:
             return
         state.update(kwargs)
-        # 始终更新 notify_umo
-        state["notify_umo"] = new_umo
         self._user_states_cache[sender_id] = state
 
         # 持久化
@@ -251,18 +242,16 @@ class HapiConnectorPlugin(Star):
             await self.put_kv_data("known_users", known)
 
     def _current_sid(self, event: AstrMessageEvent) -> str | None:
-        """获取当前会话 ID（优先使用窗口绑定，兜底使用用户状态）"""
-        session_id, _ = self._get_current_session(event)
-        if session_id:
-            return session_id
+        """获取当前会话 ID"""
         return self._get_user_state(event).get("current_session")
 
     def _current_flavor(self, event: AstrMessageEvent) -> str | None:
-        """获取当前 flavor（优先使用窗口绑定，兜底使用用户状态）"""
-        _, flavor = self._get_current_session(event)
-        if flavor:
-            return flavor
-        return self._get_user_state(event).get("current_flavor")
+        """获取当前 flavor（从 sessions_cache 查询）"""
+        sid = self._current_sid(event)
+        if not sid:
+            return None
+        sess = next((s for s in self.sessions_cache if s["id"] == sid), None)
+        return sess.get("metadata", {}).get("flavor") if sess else None
 
     def _conn_warning(self) -> str | None:
         """SSE 连接异常时返回警告文本，正常时返回 None"""
@@ -283,24 +272,47 @@ class HapiConnectorPlugin(Star):
             logger.warning("刷新 session 列表失败: %s", e)
 
     async def _push_notification(self, text: str, session_id: str):
-        """推送通知到绑定窗口"""
+        """推送通知到捕获窗口或默认窗口"""
         chunks = self._split_message(text) if len(text) > 4200 else [text]
-        target_umos = self._session_owners.get(session_id, [])
 
-        if target_umos:
-            for umo in target_umos:
-                for chunk in chunks:
-                    try:
-                        chain = MessageChain().message(chunk)
-                        await self.context.send_message(umo, chain)
-                    except Exception as e:
-                        logger.warning("推送消息失败 (umo=%s): %s", umo[:20], e)
-                        break
+        # 1. 优先：捕获窗口
+        capture_umos = self._session_owners.get(session_id, [])
+        if capture_umos:
+            umo = capture_umos[0]
+            for chunk in chunks:
+                try:
+                    chain = MessageChain().message(chunk)
+                    await self.context.send_message(umo, chain)
+                except Exception as e:
+                    logger.warning("推送到捕获窗口失败 (umo=%s): %s", umo[:20], e)
+                    break
+            return
+
+        # 2. 兜底：默认窗口
+        default_umo = None
+        for state in self._user_states_cache.values():
+            if state.get("current_session") == session_id:
+                default_umo = state.get("primary_umo")
+                break
+
+        if not default_umo:
+            for state in self._user_states_cache.values():
+                if state.get("primary_umo"):
+                    default_umo = state["primary_umo"]
+                    break
+
+        if default_umo:
+            for chunk in chunks:
+                try:
+                    chain = MessageChain().message(chunk)
+                    await self.context.send_message(default_umo, chain)
+                except Exception as e:
+                    logger.warning("推送到默认窗口失败 (umo=%s): %s", default_umo[:20], e)
+                    break
         else:
-            # 无绑定：记录错误日志
             sess = next((s for s in self.sessions_cache if s["id"] == session_id), None)
             flavor = sess.get("metadata", {}).get("flavor", "unknown") if sess else "unknown"
-            logger.error("Session %s [%s] 无绑定窗口，推送失败", session_id[:8], flavor)
+            logger.error("Session %s [%s] 无捕获窗口且无默认窗口，推送失败", session_id[:8], flavor)
 
     @staticmethod
     def _split_message(text: str, max_len: int = 4200) -> list[str]:
@@ -445,8 +457,7 @@ class HapiConnectorPlugin(Star):
             "dl": (self.cmd_download, True),
             "upload": (self.cmd_upload, True),
             "bind": (self.cmd_bind, True),
-            "unbind": (self.cmd_unbind, True),
-            "bindings": (self.cmd_bindings, False),
+            "routes": (self.cmd_routes, False),
         }
         route = routes.get(subcommand)
         if route is None:
@@ -549,9 +560,9 @@ class HapiConnectorPlugin(Star):
 
         sid = chosen["id"]
         flavor = chosen.get("metadata", {}).get("flavor", "claude")
-        # 双写模式：新机制 + 旧机制（兼容）
         umo = event.unified_msg_origin
-        await self._bind_session(umo, sid, flavor)
+        # 捕获当前窗口
+        await self._capture_window(sid, umo)
         await self._set_user_state(event, current_session=sid, current_flavor=flavor)
         summary = chosen.get("metadata", {}).get("summary", {}).get("text", "(无标题)")
         yield event.plain_result(f"已切换到 [{flavor}] {sid[:8]}... {summary}")
@@ -620,7 +631,10 @@ class HapiConnectorPlugin(Star):
             return
 
         target = self.sessions_cache[idx - 1]
-        ok, msg = await session_ops.send_message(self.client, target["id"], text)
+        target_sid = target["id"]
+        ok, msg = await session_ops.send_message(self.client, target_sid, text)
+        if ok:
+            await self._capture_window(target_sid, event.unified_msg_origin)
         await self._set_user_state(event)
         yield event.plain_result(msg)
 
@@ -1016,9 +1030,9 @@ class HapiConnectorPlugin(Star):
                 await self._refresh_sessions()
                 if ok and new_sid:
                     flavor = s["agent"]
-                    # 双写模式：新机制 + 旧机制（兼容）
                     umo = ev.unified_msg_origin
-                    await self._bind_session(umo, new_sid, flavor)
+                    # 捕获当前窗口
+                    await self._capture_window(new_sid, umo)
                     await self._set_user_state(ev, current_session=new_sid, current_flavor=flavor)
                     msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
                 await ev.send(ev.plain_result(msg))
@@ -1444,162 +1458,65 @@ class HapiConnectorPlugin(Star):
 
     # ── bind ──
 
-    async def cmd_bind(self, event: AstrMessageEvent, raw: str = ""):
-        """绑定管理: /hapi bind [status|force] [flavor]"""
+    async def cmd_bind(self, event: AstrMessageEvent, arg: str = ""):
+        """设置默认发送窗口: /hapi bind [status]"""
         await self._ensure_primary_session(event)
+        sender_id = event.get_sender_id()
         umo = event.unified_msg_origin
-        parts = raw.strip().lower().split(None, 1) if raw else []
-        action = parts[0] if parts else ""
-        flavor = parts[1].strip() if len(parts) > 1 else ""
 
-        if not action:
-            bound_sids = self.binding_mgr.get_bound_sessions(umo)
-            if bound_sids:
-                lines = ["当前窗口绑定的 session:"]
-                for sid in bound_sids:
-                    s = next((s for s in self.sessions_cache if s["id"] == sid), None)
-                    if s:
-                        flv = s.get("metadata", {}).get("flavor", "unknown")
-                        lines.append(f"  {sid[:8]} [{flv}]")
-                yield event.plain_result("\n".join(lines))
+        if not arg or arg == "status":
+            state = self._user_states_cache.get(sender_id, {})
+            current = state.get("primary_umo")
+
+            if not arg:
+                # 设置当前窗口为默认
+                state["primary_umo"] = umo
+                self._user_states_cache[sender_id] = state
+                await self.put_kv_data(f"user_state_{sender_id}", state)
+                yield event.plain_result("✓ 已设置当前窗口为默认发送窗口")
             else:
-                yield event.plain_result("当前窗口未绑定任何 session")
-            return
-
-        if action == "status":
-            yield event.plain_result(formatters.format_bind_status(
-                self.sessions_cache, self._session_owners))
-            return
-
-        if action == "force":
-            if not flavor or flavor not in ["claude", "gemini", "codex", "opencode", "all"]:
-                yield event.plain_result("用法: /hapi bind force <claude|gemini|codex|opencode|all>")
-                return
-
-            await self._refresh_sessions()
-            targets = self.binding_mgr.filter_by_flavor(self.sessions_cache, flavor)
-
-            if not targets:
-                yield event.plain_result(f"没有找到 {flavor} session")
-                return
-
-            lines = [f"将绑定以下 {len(targets)} 个 {flavor} session 到当前窗口："]
-            for i, s in enumerate(targets[:10], 1):
-                sid = s["id"]
-                current = self._session_owners.get(sid, [])
-                binding = current[0][:20] if current else "无"
-                lines.append(f"{i}. {sid[:8]} [{s.get('metadata', {}).get('flavor')}] - 当前: {binding}")
-            if len(targets) > 10:
-                lines.append(f"... 还有 {len(targets) - 10} 个")
-            lines.append("\n输入 yes 确认，no 取消 (30秒超时)")
-            yield event.plain_result("\n".join(lines))
-
-            @session_waiter(timeout=30, record_history_chains=False)
-            async def confirm_waiter(controller: SessionController, ev: AstrMessageEvent):
-                reply = ev.message_str.strip().lower()
-                if not reply:
-                    controller.keep(timeout=30, reset_timeout=True)
-                    return
-                if reply == "yes":
-                    for s in targets:
-                        await self._bind_session(umo, s["id"], s.get("metadata", {}).get("flavor", ""))
-                    await ev.send(ev.plain_result(f"已绑定 {len(targets)} 个 {flavor} session"))
-                    controller.stop()
-                elif reply == "no":
-                    await ev.send(ev.plain_result("已取消"))
-                    controller.stop()
+                # 查看状态
+                if current:
+                    display = current[:50] + "..." if len(current) > 50 else current
+                    is_current = "（当前窗口）" if current == umo else ""
+                    yield event.plain_result(f"默认发送窗口: {display} {is_current}")
                 else:
-                    await ev.send(ev.plain_result("请输入 yes 或 no"))
-                    controller.keep(timeout=30, reset_timeout=True)
+                    yield event.plain_result("未设置默认发送窗口\n使用 /hapi bind 设置当前窗口为默认")
+        else:
+            yield event.plain_result("用法:\n  /hapi bind        设置当前窗口为默认\n  /hapi bind status 查看默认窗口")
 
-            try:
-                await confirm_waiter(event)
-            except TimeoutError:
-                yield event.plain_result("操作超时，已取消")
-            finally:
-                event.stop_event()
+    # ── routes ──
 
-    # ── unbind ──
-
-    async def cmd_unbind(self, event: AstrMessageEvent, raw: str = ""):
-        """解除绑定: /hapi unbind [force] [flavor]"""
-        await self._ensure_primary_session(event)
-        umo = event.unified_msg_origin
-        parts = raw.strip().lower().split(None, 1) if raw else []
-        action = parts[0] if parts else ""
-        flavor = parts[1].strip() if len(parts) > 1 else ""
-
-        if not action:
-            await self._unbind_session(umo)
-            await self._set_user_state(event, current_session=None, current_flavor=None)
-            yield event.plain_result("已解除当前窗口的所有绑定")
-            return
-
-        if action == "force":
-            if not flavor or flavor not in ["claude", "gemini", "codex", "opencode", "all"]:
-                yield event.plain_result("用法: /hapi unbind force <claude|gemini|codex|opencode|all>")
-                return
-
-            await self._refresh_sessions()
-            bound_sids = self.binding_mgr.get_bound_sessions(umo)
-            targets = [
-                sid for sid in bound_sids
-                for s in self.sessions_cache
-                if s["id"] == sid and (
-                    flavor == "all" or s.get("metadata", {}).get("flavor") == flavor
-                )
-            ]
-
-            if not targets:
-                yield event.plain_result(f"当前窗口没有绑定 {flavor} session")
-                return
-
-            current_binding = self._chat_bindings.get(umo)
-            for sid in targets:
-                if sid in self._session_owners and umo in self._session_owners[sid]:
-                    self._session_owners[sid].remove(umo)
-                    if not self._session_owners[sid]:
-                        del self._session_owners[sid]
-
-            remaining = self.binding_mgr.get_bound_sessions(umo)
-            if current_binding and current_binding.get("session_id") in targets:
-                if remaining:
-                    new_sid = remaining[0]
-                    new_session = next((s for s in self.sessions_cache if s["id"] == new_sid), None)
-                    new_flavor = (
-                        new_session.get("metadata", {}).get("flavor", current_binding.get("flavor", "unknown"))
-                        if new_session else current_binding.get("flavor", "unknown")
-                    )
-                    self._chat_bindings[umo] = {"session_id": new_sid, "flavor": new_flavor}
-                    await self.put_kv_data(f"chat_binding_{umo}", self._chat_bindings[umo])
-                    await self._set_user_state(event, current_session=new_sid, current_flavor=new_flavor)
-                else:
-                    self._chat_bindings.pop(umo, None)
-                    await self.put_kv_data(f"chat_binding_{umo}", None)
-                    await self._set_user_state(event, current_session=None, current_flavor=None)
-
-            await self.put_kv_data("session_owners", self._session_owners)
-
-            yield event.plain_result(f"已解除 {len(targets)} 个 {flavor} session 的绑定")
-
-    # ── bindings ──
-
-    async def cmd_bindings(self, event: AstrMessageEvent):
-        """查看所有会话的绑定状态"""
+    async def cmd_routes(self, event: AstrMessageEvent):
+        """查看会话推送路由"""
         await self._ensure_primary_session(event)
         await self._refresh_sessions()
-        if not self._session_owners:
-            yield event.plain_result("暂无会话绑定")
-            return
 
-        lines = ["会话绑定状态："]
+        lines = ["会话推送路由："]
+        has_routes = False
+
         for sid, umos in self._session_owners.items():
-            sess = next((s for s in self.sessions_cache if s["id"] == sid), None)
-            flavor = sess.get("metadata", {}).get("flavor", "unknown") if sess else "unknown"
-            locations = ", ".join([umo[:20] + "..." if len(umo) > 20 else umo for umo in umos])
-            lines.append(f"{sid[:8]}... [{flavor}] → {locations}")
+            s = next((s for s in self.sessions_cache if s["id"] == sid), None)
+            if s and umos:
+                flavor = s.get("metadata", {}).get("flavor", "?")
+                summary = s.get("metadata", {}).get("summary", {}).get("text", "")[:20]
+                umo_display = umos[0][:40] + "..." if len(umos[0]) > 40 else umos[0]
+                lines.append(f"  [{flavor}] {sid[:8]} {summary}\n    → {umo_display}")
+                has_routes = True
 
-        yield event.plain_result("\n".join(lines))
+        sender_id = event.get_sender_id()
+        state = self._user_states_cache.get(sender_id, {})
+        primary = state.get("primary_umo")
+
+        if primary:
+            display = primary[:40] + "..." if len(primary) > 40 else primary
+            lines.append(f"\n默认发送窗口: {display}")
+            has_routes = True
+
+        if not has_routes:
+            yield event.plain_result("暂无推送路由\n使用 /hapi bind 设置默认发送窗口")
+        else:
+            yield event.plain_result("\n".join(lines))
 
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 
@@ -1711,6 +1628,8 @@ class HapiConnectorPlugin(Star):
 
         # 发送消息（带附件）
         ok, msg = await session_ops.send_message(self.client, target_sid, text, attachments)
+        if ok:
+            await self._capture_window(target_sid, event.unified_msg_origin)
         await self._set_user_state(event)
         yield event.plain_result(msg)
         event.stop_event()
