@@ -582,8 +582,15 @@ class HapiConnectorPlugin(Star):
             lines = lines[1:]
         return "\n".join(line.rstrip() for line in lines).strip() or text.strip()
 
+    @staticmethod
+    def _is_request_notification(text: str) -> bool:
+        return "待审批" in text and ("/hapi a" in text or "/hapi answer" in text)
+
     def _should_skip_duplicate_notification(self, umo: str, session_id: str, text: str) -> bool:
         """Drop short-interval duplicate notifications for the same target/session/body."""
+        if self._is_request_notification(text):
+            return False
+
         now = time.monotonic()
         dedupe_window = 2.5
         expire_before = now - 30

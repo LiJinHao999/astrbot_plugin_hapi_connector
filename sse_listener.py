@@ -53,6 +53,10 @@ class SSEListener:
         self._compaction_completed_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已发送“任务完成”通知时的 lastSeq，防止状态抖动重复提醒
         self._completion_notified_seqs: dict[str, int] = {}
+        # {session_id: [text, ...]}，短暂排队权限类通知，先补普通消息再发送
+        self._queued_request_notifications: dict[str, list[str]] = {}
+        self._request_notify_sids: set[str] = set()
+        self._request_notify_task: asyncio.Task | None = None
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00",
@@ -72,6 +76,9 @@ class SSEListener:
         self._completion_task: asyncio.Task | None = None
         self._compact_check_sids: set[str] = set()
         self._compact_check_task: asyncio.Task | None = None
+        self._queued_request_notifications = {}
+        self._request_notify_sids = set()
+        self._request_notify_task = None
         if self._task and not self._task.done():
             logger.info("SSE 监听已在运行，跳过重复启动")
             return
@@ -82,7 +89,8 @@ class SSEListener:
         for task in (self._task, self._remind_task,
                      getattr(self, '_debounce_task', None),
                      getattr(self, '_completion_task', None),
-                     getattr(self, '_compact_check_task', None)):
+                     getattr(self, '_compact_check_task', None),
+                     getattr(self, '_request_notify_task', None)):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -91,6 +99,9 @@ class SSEListener:
                     pass
         self._task = None
         self._remind_task = None
+        self._request_notify_task = None
+        self._queued_request_notifications = {}
+        self._request_notify_sids.clear()
 
     def wake_up(self):
         """唤醒休眠的监听器（重置失败计数并重启任务）"""
@@ -211,20 +222,24 @@ class SSEListener:
             }
 
         # 处理权限请求
-        new_ids: set = set()
+        new_requests: list[tuple[str, dict]] = []
         if agent_state:
             requests_data = agent_state.get("requests") or {}
             async with self._lock:
                 old_reqs = self.pending.get(sid, {})
-                new_ids = set(requests_data.keys()) - set(old_reqs.keys())
+                new_requests = [
+                    (rid, req)
+                    for rid, req in requests_data.items()
+                    if rid not in old_reqs
+                ]
                 if requests_data:
                     self.pending[sid] = requests_data
                 elif sid in self.pending:
                     del self.pending[sid]
 
             # 有新的权限请求 -> 推送提醒（或忙时自动批准）
-            for rid in new_ids:
-                req = requests_data[rid]
+            queued_notifications: list[str] = []
+            for rid, req in new_requests:
                 label = session_label_short(sid, self.sessions_cache)
                 async with self._lock:
                     total = sum(len(r) for r in self.pending.values())
@@ -235,17 +250,19 @@ class SSEListener:
                     tool = req.get("tool", "?")
                     result_mark = "✓" if ok else "✗"
                     notify_msg = f"[忙时托管审批] 已自动批准\n{label}\n  {result_mark} {tool}"
-                    await self._push_notification(notify_msg, sid)
+                    queued_notifications.append(notify_msg)
                 else:
                     if is_question_request(req):
                         msg = format_question_notification(req, label, total)
                     else:
                         detail = format_request_detail(req)
                         msg = format_permission_notification(label, detail, total)
-                    await self._push_notification(msg, sid)
+                    queued_notifications.append(msg)
+
+            self._queue_request_notifications(sid, queued_notifications)
 
         # 有新请求 → 启动一次性提醒倒计时（如未启动）
-        if new_ids and self._remind_enabled:
+        if new_requests and self._remind_enabled:
             if self._remind_task is None or self._remind_task.done():
                 self._remind_task = asyncio.create_task(self._remind_once())
 
@@ -258,11 +275,13 @@ class SSEListener:
         # === 输出级别处理 ===
 
         # detail/simple 模式：防抖，合并短时间内的事件一次性拉取
+        requests_flush_messages_first = bool(new_requests) and self.output_level in ("detail", "simple")
         if self.output_level in ("detail", "simple") and old_seq >= 0:
             if is_active or is_thinking:
-                self._debounce_sids.add(sid)
-                if self._debounce_task is None or self._debounce_task.done():
-                    self._debounce_task = asyncio.create_task(self._debounced_fetch())
+                if not requests_flush_messages_first:
+                    self._debounce_sids.add(sid)
+                    if self._debounce_task is None or self._debounce_task.done():
+                        self._debounce_task = asyncio.create_task(self._debounced_fetch())
 
         # 完成边沿只看 thinking -> idle；部分 Codex SSE 不会携带 active。
         if old_thinking and not is_thinking:
@@ -319,31 +338,69 @@ class SSEListener:
     def _mark_messages_notified(self, sid: str, latest_visible_seq: int):
         self._message_notified_seqs[sid] = latest_visible_seq
 
+    def _queue_request_notifications(self, sid: str, texts: list[str]):
+        if not texts:
+            return
+        self._queued_request_notifications.setdefault(sid, []).extend(texts)
+        self._request_notify_sids.add(sid)
+        if self._request_notify_task is None or self._request_notify_task.done():
+            self._request_notify_task = asyncio.create_task(self._debounced_request_notifications())
+
+    async def _flush_request_notifications(self, sid: str):
+        queued = self._queued_request_notifications.pop(sid, [])
+        if not queued:
+            return
+
+        if self.output_level in ("detail", "simple"):
+            async with self._lock:
+                old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
+            if old_seq >= 0:
+                if self.output_level == "detail":
+                    await self._show_detail(sid, old_seq)
+                else:
+                    await self._show_simple(sid, old_seq)
+
+        for text in queued:
+            await self._push_notification(text, sid)
+
+    async def _debounced_request_notifications(self):
+        while True:
+            await asyncio.sleep(0.5)
+            sids = list(self._request_notify_sids)
+            self._request_notify_sids.clear()
+            for sid in sids:
+                await self._flush_request_notifications(sid)
+            if not self._request_notify_sids:
+                break
+
     async def _debounced_completion(self):
         """防抖：等待状态稳定后再推送任务完成通知（避免 Codex 频繁切换 thinking 导致重复推送）"""
-        await asyncio.sleep(1.5)
-        sids = list(self._completion_sids)
-        self._completion_sids.clear()
-        for sid in sids:
-            async with self._lock:
-                state = self.session_states.get(sid, {})
-                has_pending = len(self.pending.get(sid, {})) > 0
-            if not state.get("thinking", False) and not has_pending:
-                last_seq = state.get("lastSeq", 0)
-                if self.output_level == "summary":
-                    await self._show_summary(sid, last_seq)
-                elif self.output_level == "detail":
-                    await self._show_detail(sid, last_seq)
-                elif self.output_level == "simple":
-                    await self._show_simple(sid, last_seq)
-
+        while True:
+            await asyncio.sleep(1.5)
+            sids = list(self._completion_sids)
+            self._completion_sids.clear()
+            for sid in sids:
                 async with self._lock:
-                    last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
-                if last_seq <= self._completion_notified_seqs.get(sid, -1):
-                    continue
-                label = session_label_short(sid, self.sessions_cache)
-                self._completion_notified_seqs[sid] = last_seq
-                await self._push_notification(f"✅ 会话已完成，等待新的输入\n{label}", sid)
+                    state = self.session_states.get(sid, {})
+                    has_pending = len(self.pending.get(sid, {})) > 0
+                if not state.get("thinking", False) and not has_pending:
+                    last_seq = state.get("lastSeq", 0)
+                    if self.output_level == "summary":
+                        await self._show_summary(sid, last_seq)
+                    elif self.output_level == "detail":
+                        await self._show_detail(sid, last_seq)
+                    elif self.output_level == "simple":
+                        await self._show_simple(sid, last_seq)
+
+                    async with self._lock:
+                        last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
+                    if last_seq <= self._completion_notified_seqs.get(sid, -1):
+                        continue
+                    label = session_label_short(sid, self.sessions_cache)
+                    self._completion_notified_seqs[sid] = last_seq
+                    await self._push_notification(f"✅ 会话已完成，等待新的输入\n{label}", sid)
+            if not self._completion_sids:
+                break
 
     async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
         """检测新消息中是否含 Prompt is too long 或 Compaction completed，触发对应流程"""
@@ -420,17 +477,20 @@ class SSEListener:
 
     async def _debounced_fetch(self):
         """等一小段时间再拉取，合并密集的 SSE 事件"""
-        await asyncio.sleep(0.5)
-        sids = list(self._debounce_sids)
-        self._debounce_sids.clear()
-        for sid in sids:
-            async with self._lock:
-                old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
-            if old_seq >= 0:
-                if self.output_level == "detail":
-                    await self._show_detail(sid, old_seq)
-                elif self.output_level == "simple":
-                    await self._show_simple(sid, old_seq)
+        while True:
+            await asyncio.sleep(0.5)
+            sids = list(self._debounce_sids)
+            self._debounce_sids.clear()
+            for sid in sids:
+                async with self._lock:
+                    old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
+                if old_seq >= 0:
+                    if self.output_level == "detail":
+                        await self._show_detail(sid, old_seq)
+                    elif self.output_level == "simple":
+                        await self._show_simple(sid, old_seq)
+            if not self._debounce_sids:
+                break
 
     async def _show_detail(self, sid: str, old_seq: int) -> bool:
         """detail 模式：获取并显示所有新消息（使用统一格式）"""

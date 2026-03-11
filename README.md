@@ -81,7 +81,7 @@ hapi codex    # Open Codex
 ## 🧠 怎么工作的？
 
 1. 插件启动后连接 HAPI 服务，建立 SSE 长连接监听所有事件
-2. AI 有新消息、权限请求、任务完成时，自动推送到你的聊天窗口
+2. AI 有新消息、权限请求、任务完成时，按当前窗口绑定规则自动推送到对应聊天窗口
 3. 你发指令 → 插件调用 HAPI REST API → 操作对应的 AI 会话
 4. 快捷前缀（默认 `>`）让你不用打 `/hapi to` 长串命令也能快速发消息，同时和astrbot原生对话区分开
 
@@ -132,7 +132,8 @@ hapi codex    # Open Codex
 
 | 指令 | 说明 |
 |------|------|
-| `/hapi list` | 列出所有会话（别名 `ls`） |
+| `/hapi list` | 查看当前聊天窗口可接收通知的 session（别名 `ls`） |
+| `/hapi list all` | 查看全部 session 和全局绑定状态 |
 | `/hapi sw <序号或ID前缀>` | 切换当前会话 |
 | `/hapi s` | 查看当前会话状态（别名 `status`） |
 | `/hapi msg [轮数]` | 查看最近消息，默认 1 轮（别名 `messages`） |
@@ -147,7 +148,7 @@ hapi codex    # Open Codex
 
 > 快捷前缀可在配置中修改，默认为 `>`
 
-### 🛠️ 会话管理
+### 🛠️ 远程 session 管理
 
 | 指令 | 说明 |
 |------|------|
@@ -157,6 +158,7 @@ hapi codex    # Open Codex
 | `/hapi archive` | 归档当前会话 |
 | `/hapi rename` | 重命名当前会话 |
 | `/hapi delete` | 删除当前会话 |
+| `/hapi clean [路径前缀]` | 批量清理 inactive session |
 
 ### ✅ 权限审批
 
@@ -170,14 +172,24 @@ hapi codex    # Open Codex
 | `/hapi deny <序号>` | 拒绝单个请求 |
 | 戳一戳机器人 | 批准所有普通权限请求 + 交互式回答 question（仅 QQ NapCat，需开启 `poke_approve`） |
 
-### 🔧 模式切换
+### 📁 文件操作
+
+| 指令 | 说明 |
+|------|------|
+| `/hapi files [路径]` | 浏览当前 session 的远端目录 |
+| `/hapi files -l [路径]` | 浏览目录并显示文件大小 |
+| `/hapi find <关键词>` | 搜索当前 session 的远端文件 |
+| `/hapi download <路径>` | 下载远端文件到当前聊天（别名 `dl`） |
+| `/hapi upload [cancel]` | 上传文件到当前 session，支持交互上传和取消 |
+
+### 🔧 模式与帮助
 
 | 指令 | 说明 |
 |------|------|
 | `/hapi perm [模式]` | 查看/切换权限模式（不带参数则交互选择） |
 | `/hapi model [模式]` | 查看/切换模型（仅 Claude，不带参数则交互选择） |
 | `/hapi output [级别]` | 查看/切换 SSE 推送级别（别名 `out`） |
-| `/hapi help` | 显示帮助信息 |
+| `/hapi help [主题]` | 显示帮助信息，主题可选：会话 / 对话 / 审批 / 通知 / 文件 / 配置 |
 
 ---
 
@@ -202,12 +214,36 @@ hapi codex    # Open Codex
 | OpenCode | `default` / `yolo` |
 
 ---
+---
+
+## 🔔 通知路由特性
+
+- **按聊天窗口隔离**：私聊、群聊、不同群之间互不影响，每个窗口只接收属于自己的会话通知与审批请求
+- **支持默认通知窗口**：`/hapi bind` 把当前聊天窗口设为默认通知窗口
+- **支持模型级默认窗口**：`/hapi bind claude|codex|gemini` 可以分别给不同类型的vibe coding 远程 session 指定默认通知窗口
+- **会话绑定优先级最高**：某个 session 一旦被当前聊天窗口接管，后续通知优先回到该窗口
+- **查看范围明确**：`/hapi list` 只展示当前窗口可见的 session，`/hapi list all` 和 `/hapi bind status` 用来查看全局状态
+
+
+### 🔔 通知推送管理
+
+| 指令 | 说明 |
+|------|------|
+| `/hapi bind` | 设置当前聊天窗口为默认通知窗口 |
+| `/hapi bind claude` | 设置当前聊天窗口为 Claude 的默认通知窗口 |
+| `/hapi bind codex` | 设置当前聊天窗口为 Codex 的默认通知窗口 |
+| `/hapi bind gemini` | 设置当前聊天窗口为 Gemini 的默认通知窗口 |
+| `/hapi bind status` | 查看默认窗口、模型默认窗口和 session 绑定状态 |
+| `/hapi bind reset` | 清除 session 绑定和窗口状态，保留默认通知窗口配置 |
+| `/hapi routes` | 查看当前生效的会话推送路由 |
+
 
 ## 📁 插件结构
 
 ```
 astrbot_plugin_hapi_connector/
 ├── main.py              # 插件入口：指令组、前缀处理、生命周期
+├── binding_manager.py   # 聊天窗口通知推送与 session 绑定管理
 ├── hapi_client.py       # 异步 HAPI HTTP 客户端 + JWT 管理
 ├── cf_access.py         # Cloudflare Zero Trust Access 认证
 ├── sse_listener.py      # 后台 SSE 监听 + 消息推送
@@ -227,10 +263,10 @@ astrbot_plugin_hapi_connector/
 
 - ✅ 优化输出格式，提升交互可读性
 - ✅ 完善部署文档与使用教程
-- [ ] 支持文件上传与下载逻辑 - 预计将在1.5.0版本实现
+- ✅ 支持文件上传与下载逻辑
+- ✅ 支持多用户独立会话状态，通知相互隔离
 - [ ] 支持将 Markdown 文字、AI编辑等影响观感长上下文渲染为图片（依赖库独立，可选下载）
 - [ ] 通过 AstrBot 自然语言触发指令，让聊天 LLM 感知当前编码任务
-- [ ] 支持多用户独立会话状态
 
 ---
 
@@ -247,4 +283,3 @@ astrbot_plugin_hapi_connector/
 - 🐛 提交 Issue 报告问题
 - 💡 提出新功能建议
 - 🔧 提交 Pull Request 改进代码
-
