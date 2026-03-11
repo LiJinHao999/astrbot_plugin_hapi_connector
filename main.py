@@ -82,7 +82,7 @@ class HapiConnectorPlugin(Star):
         # SSE 监听器
         self.sse_listener = SSEListener(self.client, self.sessions_cache, self._push_notification)
 
-        # 用户状态缓存: {sender_id: {"current_session": ..., "current_flavor": ..., "notify_umo": ..., "primary_umo": ...}}
+        # 用户状态缓存: {sender_id: {"primary_umo": ...}}
         self._user_states_cache: dict[str, dict] = {}
 
         # 绑定管理器
@@ -146,6 +146,17 @@ class HapiConnectorPlugin(Star):
                     continue
                 self._session_owners[sid] = [str(umo) for umo in umos]
 
+        # 加载窗口状态
+        for sid, umos in self._session_owners.items():
+            for umo in umos:
+                window_state = await self.get_kv_data(f"window_state_{umo}", None)
+                if window_state:
+                    self.binding_mgr.set_window_state(
+                        umo,
+                        window_state.get("current_session", ""),
+                        window_state.get("current_flavor", "")
+                    )
+
         # 执行数据迁移
         await self._migrate_to_capture_model()
 
@@ -203,6 +214,30 @@ class HapiConnectorPlugin(Star):
                 del state["notify_umo"]
                 modified = True
 
+            # 迁移 current_session 到窗口状态
+            old_session = state.get("current_session")
+            old_flavor = state.get("current_flavor")
+            if old_session:
+                # 查找该 session 的捕获窗口
+                for sid, umos in self._session_owners.items():
+                    if sid == old_session and umos:
+                        umo = umos[0]
+                        self.binding_mgr.set_window_state(umo, old_session, old_flavor or "unknown")
+                        await self.put_kv_data(f"window_state_{umo}", {
+                            "current_session": old_session,
+                            "current_flavor": old_flavor or "unknown"
+                        })
+                        logger.info("迁移用户 %s: current_session → window_state[%s]", uid, umo[:20])
+                        break
+
+            # 清理用户状态中的窗口级别字段
+            if "current_session" in state:
+                del state["current_session"]
+                modified = True
+            if "current_flavor" in state:
+                del state["current_flavor"]
+                modified = True
+
             if modified:
                 self._user_states_cache[uid] = state
                 await self.put_kv_data(f"user_state_{uid}", state)
@@ -242,16 +277,12 @@ class HapiConnectorPlugin(Star):
             await self.put_kv_data("known_users", known)
 
     def _current_sid(self, event: AstrMessageEvent) -> str | None:
-        """获取当前会话 ID"""
-        return self._get_user_state(event).get("current_session")
+        """获取当前窗口的会话 ID"""
+        return self.binding_mgr.get_window_session(event.unified_msg_origin)
 
     def _current_flavor(self, event: AstrMessageEvent) -> str | None:
-        """获取当前 flavor（从 sessions_cache 查询）"""
-        sid = self._current_sid(event)
-        if not sid:
-            return None
-        sess = next((s for s in self.sessions_cache if s["id"] == sid), None)
-        return sess.get("metadata", {}).get("flavor") if sess else None
+        """获取当前窗口的 flavor"""
+        return self.binding_mgr.get_window_flavor(event.unified_msg_origin)
 
     def _conn_warning(self) -> str | None:
         """SSE 连接异常时返回警告文本，正常时返回 None"""
@@ -289,12 +320,7 @@ class HapiConnectorPlugin(Star):
             return
 
         # 2. 兜底：默认窗口
-        default_umo = None
-        for state in self._user_states_cache.values():
-            if state.get("current_session") == session_id:
-                default_umo = state.get("primary_umo")
-                break
-
+        default_umo = self.binding_mgr.find_window_by_session(session_id)
         if not default_umo:
             for state in self._user_states_cache.values():
                 if state.get("primary_umo"):
@@ -563,7 +589,9 @@ class HapiConnectorPlugin(Star):
         umo = event.unified_msg_origin
         # 捕获当前窗口
         await self._capture_window(sid, umo)
-        await self._set_user_state(event, current_session=sid, current_flavor=flavor)
+        # 更新窗口状态
+        self.binding_mgr.set_window_state(umo, sid, flavor)
+        await self.put_kv_data(f"window_state_{umo}", {"current_session": sid, "current_flavor": flavor})
         summary = chosen.get("metadata", {}).get("summary", {}).get("text", "(无标题)")
         yield event.plain_result(f"已切换到 [{flavor}] {sid[:8]}... {summary}")
 
@@ -1033,7 +1061,9 @@ class HapiConnectorPlugin(Star):
                     umo = ev.unified_msg_origin
                     # 捕获当前窗口
                     await self._capture_window(new_sid, umo)
-                    await self._set_user_state(ev, current_session=new_sid, current_flavor=flavor)
+                    # 更新窗口状态
+                    self.binding_mgr.set_window_state(umo, new_sid, flavor)
+                    await self.put_kv_data(f"window_state_{umo}", {"current_session": new_sid, "current_flavor": flavor})
                     msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
                 await ev.send(ev.plain_result(msg))
                 controller.stop()
@@ -1192,7 +1222,11 @@ class HapiConnectorPlugin(Star):
                 ok, msg = await session_ops.delete_session(self.client, sid)
                 await ev.send(ev.plain_result(msg))
                 if ok:
-                    await self._set_user_state(ev, current_session=None, current_flavor=None)
+                    # 清理该 session 的窗口状态
+                    umo = ev.unified_msg_origin
+                    if self.binding_mgr.get_window_session(umo) == sid:
+                        self.binding_mgr.clear_window_state(umo)
+                        await self.put_kv_data(f"window_state_{umo}", None)
                     await self._refresh_sessions()
             else:
                 await ev.send(ev.plain_result("已取消"))
