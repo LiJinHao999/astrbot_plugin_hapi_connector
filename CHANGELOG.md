@@ -17,7 +17,7 @@
 在某个对话窗口使用 `sw` / `create` 命令后，将会自动把对应 session 的通知路由到当前会话。
 
 点击跳转github查看详细图文说明：
-https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/blob/main/docs/session-isolation.md
+https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/blob/master/docs/session-isolation.md
 
 
 
