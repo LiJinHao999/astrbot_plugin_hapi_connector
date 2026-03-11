@@ -25,6 +25,9 @@ from . import approval_ops
 from .create_wizard import CreateWizard
 from .formatters import is_compact_request
 
+
+NOTIFICATION_ROUTE_FLAVORS = ("claude", "codex", "gemini")
+
 # ── AstrBot v4.18.3 pydantic v1 的 __setattr__ 会拦截 File 的 property setter，
 # ── 导致设置 file 属性时写入错误字段,文件传输会直接报错。此处的补丁在 bug 存在时自动生效，官方修复后自动跳过。
 try:
@@ -320,6 +323,70 @@ class HapiConnectorPlugin(Star):
         primary_umo = state.get("primary_umo")
         return str(primary_umo) if primary_umo else None
 
+    @staticmethod
+    def _normalized_flavor_primary_umos(state: dict) -> dict[str, str]:
+        """Normalize persisted flavor -> default window mappings."""
+        raw = state.get("flavor_primary_umos", {})
+        if not isinstance(raw, dict):
+            return {}
+
+        normalized: dict[str, str] = {}
+        for flavor, umo in raw.items():
+            flavor_key = str(flavor).strip().lower()
+            target_umo = str(umo).strip() if umo is not None else ""
+            if flavor_key in NOTIFICATION_ROUTE_FLAVORS and target_umo:
+                normalized[flavor_key] = target_umo
+        return normalized
+
+    def _flavor_primary_umos(self, event: AstrMessageEvent) -> dict[str, str]:
+        """Get current user's flavor-specific default notification windows."""
+        return self._normalized_flavor_primary_umos(self._get_user_state(event))
+
+    def _flavor_primary_umo(self, event: AstrMessageEvent, flavor: str | None) -> str | None:
+        """Get current user's flavor-specific default notification window."""
+        if not flavor:
+            return None
+        return self._flavor_primary_umos(event).get(str(flavor).strip().lower())
+
+    def _get_flavor_primary_windows(self, flavor: str | None) -> list[str]:
+        """Return all configured default windows for the given flavor across users."""
+        if not flavor:
+            return []
+
+        flavor_key = str(flavor).strip().lower()
+        targets: list[str] = []
+        seen: set[str] = set()
+        for state in self._user_states_cache.values():
+            target_umo = self._normalized_flavor_primary_umos(state).get(flavor_key)
+            if not target_umo or target_umo in seen:
+                continue
+            seen.add(target_umo)
+            targets.append(target_umo)
+        return targets
+
+    @staticmethod
+    def _format_umo_for_display(umo: str | None, max_len: int = 40) -> str:
+        if not umo:
+            return ""
+        return umo[:max_len] + "..." if len(umo) > max_len else umo
+
+    def _user_route_summary_lines(self, event: AstrMessageEvent) -> list[str]:
+        """Format current user's default notification routing summary."""
+        state = self._get_user_state(event)
+        lines: list[str] = []
+
+        primary = state.get("primary_umo")
+        if primary:
+            lines.append(f"默认发送窗口: {self._format_umo_for_display(str(primary))}")
+
+        flavor_routes = self._normalized_flavor_primary_umos(state)
+        if flavor_routes:
+            lines.append("Flavor 默认窗口:")
+            for flavor in sorted(flavor_routes):
+                lines.append(f"  {flavor}: {self._format_umo_for_display(flavor_routes[flavor])}")
+
+        return lines
+
     def _effective_sid(self, event: AstrMessageEvent) -> str | None:
         """获取当前命令应作用的会话 ID；未显式绑定时回退到默认窗口的当前会话"""
         current_sid = self._current_sid(event)
@@ -346,6 +413,7 @@ class HapiConnectorPlugin(Star):
         """返回当前窗口会接收通知的 session 列表"""
         current_umo = event.unified_msg_origin
         primary_umo = self._primary_umo(event)
+        flavor_umos = self._flavor_primary_umos(event)
         visible_sessions: list[dict] = []
 
         for session in self.sessions_cache:
@@ -356,6 +424,16 @@ class HapiConnectorPlugin(Star):
             owners = self.binding_mgr.get_owners(sid)
             if current_umo in owners:
                 visible_sessions.append(session)
+                continue
+
+            if owners:
+                continue
+
+            flavor = str(session.get("metadata", {}).get("flavor", "")).strip().lower()
+            flavor_umo = flavor_umos.get(flavor)
+            if flavor_umo:
+                if flavor_umo == current_umo:
+                    visible_sessions.append(session)
                 continue
 
             if not owners and primary_umo == current_umo:
@@ -421,13 +499,9 @@ class HapiConnectorPlugin(Star):
             self._session_owners,
             self.binding_mgr._window_states,
         )
-
-        sender_id = str(event.get_sender_id())
-        state = self._user_states_cache.get(sender_id, {})
-        primary = state.get("primary_umo")
-        if primary:
-            display = primary[:40] + "..." if len(primary) > 40 else primary
-            text += f"\n\n默认发送窗口: {display}"
+        route_lines = self._user_route_summary_lines(event)
+        if route_lines:
+            text += "\n\n" + "\n".join(route_lines)
         return text
 
     def _get_primary_windows(self) -> list[str]:
@@ -452,6 +526,12 @@ class HapiConnectorPlugin(Star):
             bound_umo = self.binding_mgr.find_window_by_session(session_id)
             if bound_umo:
                 return [bound_umo]
+
+            session = next((s for s in self.sessions_cache if s.get("id") == session_id), None)
+            flavor = session.get("metadata", {}).get("flavor") if session else None
+            flavor_targets = self._get_flavor_primary_windows(str(flavor).strip().lower() if flavor else None)
+            if flavor_targets:
+                return [flavor_targets[0]]
 
         primary_targets = self._get_primary_windows()
         if primary_targets:
@@ -1685,7 +1765,7 @@ class HapiConnectorPlugin(Star):
     # ── bind ──
 
     async def cmd_bind(self, event: AstrMessageEvent, arg: str = ""):
-        """设置默认发送窗口: /hapi bind [status|reset]"""
+        """设置默认发送窗口: /hapi bind [claude|codex|gemini|status|reset]"""
         await self._ensure_primary_session(event)
         sender_id = str(event.get_sender_id())
         umo = event.unified_msg_origin
@@ -1698,6 +1778,14 @@ class HapiConnectorPlugin(Star):
             self._user_states_cache[sender_id] = state
             await self.put_kv_data(f"user_state_{sender_id}", state)
             yield event.plain_result("✓ 已设置当前窗口为默认发送窗口")
+        elif action in NOTIFICATION_ROUTE_FLAVORS:
+            state = dict(self._user_states_cache.get(sender_id, {}))
+            flavor_routes = self._normalized_flavor_primary_umos(state)
+            flavor_routes[action] = umo
+            state["flavor_primary_umos"] = flavor_routes
+            self._user_states_cache[sender_id] = state
+            await self.put_kv_data(f"user_state_{sender_id}", state)
+            yield event.plain_result(f"✓ 已设置当前窗口为 {action} 默认发送窗口")
         elif action == "status":
             text = await self._format_bind_status_text(event)
             yield event.plain_result(text)
@@ -1707,9 +1795,12 @@ class HapiConnectorPlugin(Star):
         else:
             yield event.plain_result(
                 "用法:\n"
-                "  /hapi bind        设置当前窗口为默认\n"
-                "  /hapi bind status 查看推送路由\n"
-                "  /hapi bind reset  重置窗口路由"
+                "  /hapi bind              设置当前窗口为默认\n"
+                "  /hapi bind claude       设置当前窗口为 claude 默认\n"
+                "  /hapi bind codex        设置当前窗口为 codex 默认\n"
+                "  /hapi bind gemini       设置当前窗口为 gemini 默认\n"
+                "  /hapi bind status       查看推送路由\n"
+                "  /hapi bind reset        重置窗口路由"
             )
 
     # ── routes ──
@@ -1736,8 +1827,16 @@ class HapiConnectorPlugin(Star):
         primary = state.get("primary_umo")
 
         if primary:
-            display = primary[:40] + "..." if len(primary) > 40 else primary
+            display = self._format_umo_for_display(str(primary))
             lines.append(f"\n默认发送窗口: {display}")
+            has_routes = True
+
+        flavor_routes = self._normalized_flavor_primary_umos(state)
+        if flavor_routes:
+            lines.append("\nFlavor 默认窗口:")
+            for flavor in sorted(flavor_routes):
+                display = self._format_umo_for_display(flavor_routes[flavor])
+                lines.append(f"  {flavor} -> {display}")
             has_routes = True
 
         if not has_routes:
@@ -1748,7 +1847,7 @@ class HapiConnectorPlugin(Star):
     # ── reset ──
 
     async def cmd_reset(self, event: AstrMessageEvent):
-        """重置所有状态（/hapi bind reset；清空捕获关系和窗口状态，保留默认窗口）"""
+        """重置所有状态（/hapi bind reset；清空捕获关系和窗口状态，保留默认窗口和 flavor 默认路由）"""
         await self._ensure_primary_session(event)
 
         umos_to_clear = set(self.binding_mgr._window_states.keys())
@@ -1763,7 +1862,7 @@ class HapiConnectorPlugin(Star):
 
         await self._refresh_sessions()
 
-        yield event.plain_result("✓ 已重置所有状态\n捕获关系和窗口状态已清空，默认窗口保留")
+        yield event.plain_result("✓ 已重置所有状态\n捕获关系和窗口状态已清空，默认窗口和 flavor 默认路由已保留")
 
     # ──── 戳一戳全部审批 (仅 QQ NapCat) ────
 

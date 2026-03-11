@@ -752,15 +752,15 @@ HELP_COMMANDS = [
     },
     {
         "topic": "push",
-        "usage": "/hapi bind",
-        "summary": "将当前窗口设为默认通知窗口",
+        "usage": "/hapi bind [claude|codex|gemini]",
+        "summary": "将当前窗口设为默认通知窗口，或设为指定 flavor 的默认窗口",
         "example": None,
         "home": True,
     },
     {
         "topic": "push",
         "usage": "/hapi bind status",
-        "summary": "查看默认通知窗口和 session 绑定状态",
+        "summary": "查看默认通知窗口、flavor 默认窗口和 session 绑定状态",
         "example": None,
         "home": False,
     },
@@ -774,7 +774,7 @@ HELP_COMMANDS = [
     {
         "topic": "push",
         "usage": "/hapi bind reset",
-        "summary": "清空会话路由和窗口状态，保留默认通知窗口",
+        "summary": "清空会话路由和窗口状态，保留默认通知窗口和 flavor 默认窗口",
         "example": None,
         "home": False,
     },

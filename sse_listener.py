@@ -264,8 +264,8 @@ class SSEListener:
                 if self._debounce_task is None or self._debounce_task.done():
                     self._debounce_task = asyncio.create_task(self._debounced_fetch())
 
-        # 所有模式都提醒：等待输入（防抖，避免 Codex 频繁切换 thinking 状态导致重复推送）
-        if is_active and old_thinking and not is_thinking:
+        # 完成边沿只看 thinking -> idle；部分 Codex SSE 不会携带 active。
+        if old_thinking and not is_thinking:
             async with self._lock:
                 pending_count = len(self.pending.get(sid, {}))
             if pending_count == 0:
