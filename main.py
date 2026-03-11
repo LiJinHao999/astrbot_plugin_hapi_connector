@@ -504,6 +504,40 @@ class HapiConnectorPlugin(Star):
             text += "\n\n" + "\n".join(route_lines)
         return text
 
+    @staticmethod
+    def _missing_machine_hint_text() -> str:
+        return (
+            "⚠️ HAPI Connector 服务没有获取到远端 machine，但 SSE 连接正常。\n"
+            "请检查：\n"
+            "1. 您的 HAPI Hub / HAPI Runner 是否正常运行。若长期拿不到 machine，可在服务端终端执行 hapi daemon start，或重启全部 hapi 相关服务。\n"
+            "2. 当前 token 是否设置了 namespace，且与用户目录下 .hapi 配置中的 namespace 保持一致。\n"
+            "这通常不是插件本身的问题，更像是后端服务或 namespace 配置异常。"
+        )
+
+    async def _machine_status_hint(self) -> str | None:
+        try:
+            machines = await session_ops.fetch_machines(self.client)
+        except Exception as e:
+            logger.error(f"检查 machine 列表失败: {e}")
+            return None
+
+        if machines or self.sse_listener.conn_error is not None:
+            return None
+        return self._missing_machine_hint_text()
+
+    def _format_no_visible_sessions_text(self, event: AstrMessageEvent) -> str:
+        lines = [
+            "当前窗口没有接收任何 session 通知。",
+            "如果希望在此聊天窗口接收默认通知，可使用 /hapi bind。",
+            "如需按模型隔离默认通知，可使用 /hapi bind claude|codex|gemini。",
+            "也可以使用 /hapi list all 查看所有 session 和全局绑定状态。",
+        ]
+
+        route_lines = self._user_route_summary_lines(event)
+        if route_lines:
+            lines.extend(["", *route_lines])
+        return "\n".join(lines)
+
     def _get_primary_windows(self) -> list[str]:
         """返回所有用户当前生效的默认通知窗口（去重后）"""
         targets: list[str] = []
@@ -805,22 +839,26 @@ class HapiConnectorPlugin(Star):
             return
 
         await self._refresh_sessions()
+        machine_hint = await self._machine_status_hint()
 
         visible_sessions = self._visible_sessions_for_window(event)
         if not visible_sessions:
-            yield event.plain_result("当前窗口没有接收任何 session 通知\n提示: 使用 /hapi list all 查看所有 session")
+            text = self._format_no_visible_sessions_text(event)
+            if machine_hint:
+                text += "\n\n" + machine_hint
+            yield event.plain_result(text)
             return
 
-        current_sid = self._current_sid(event)
-        text = formatters.format_session_list(visible_sessions, current_sid, self.sessions_cache)
+        current_sid = self._effective_sid(event)
+        text = formatters.format_session_list(
+            visible_sessions,
+            current_sid,
+            self.sessions_cache,
+            header_current_sid=current_sid,
+        )
 
-        # 检查 machine 列表，如果为空但 SSE 连接正常则提示
-        try:
-            machines = await session_ops.fetch_machines(self.client)
-            if not machines and self.sse_listener.conn_error is None:
-                text += "\n\n⚠️ HAPI Connector 服务没有获取到远端 machine，但 SSE 连接正常。\n请检查：\n1. 在您的机器上，HAPI Hub/HAPI Runner 服务是否在正常运行。如果在调整后始终没有获取到 machine，尝试在服务器终端运行 hapi daemon start，或尝试关闭所有hapi相关服务并重启\n2. 检查是否为 token 设置了 namespace，且是否与用户路径内 .hapi 路径内的配置文件中 token 的 namespace 保持一致。\n这通常不是插件的问题，请检查hapi后端服务启动情况。"
-        except Exception as e:
-            logger.error(f"检查 machine 列表失败: {e}")
+        if machine_hint:
+            text += "\n\n" + machine_hint
 
         yield event.plain_result(text)
 
@@ -832,8 +870,12 @@ class HapiConnectorPlugin(Star):
 
         if not target:
             await self._refresh_sessions()
-            current_sid = self._current_sid(event)
-            text = formatters.format_session_list(self.sessions_cache, current_sid)
+            current_sid = self._effective_sid(event)
+            text = formatters.format_session_list(
+                self.sessions_cache,
+                current_sid,
+                header_current_sid=current_sid,
+            )
             yield event.plain_result(text + "\n\n请使用 /hapi sw <序号或ID前缀> 切换")
             return
 

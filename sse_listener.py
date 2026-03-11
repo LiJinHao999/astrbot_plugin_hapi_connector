@@ -333,12 +333,24 @@ class SSEListener:
                 if self.output_level == "summary":
                     old_seq = state.get("lastSeq", 0)
                     await self._show_summary(sid, old_seq)
-                else:
-                    if last_seq <= self._completion_notified_seqs.get(sid, -1):
-                        continue
-                    label = session_label_short(sid, self.sessions_cache)
-                    self._completion_notified_seqs[sid] = last_seq
-                    await self._push_notification(f"✅ 任务已完成，等待新的输入\n{label}", sid)
+                    continue
+
+                emitted_final_output = False
+                if self.output_level == "detail":
+                    emitted_final_output = await self._show_detail(sid, last_seq)
+                elif self.output_level == "simple":
+                    emitted_final_output = await self._show_simple(sid, last_seq)
+
+                if emitted_final_output:
+                    continue
+
+                async with self._lock:
+                    last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
+                if last_seq <= self._completion_notified_seqs.get(sid, -1):
+                    continue
+                label = session_label_short(sid, self.sessions_cache)
+                self._completion_notified_seqs[sid] = last_seq
+                await self._push_notification(f"✅ 会话已完成，等待新的输入\n{label}", sid)
 
     async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
         """检测新消息中是否含 Prompt is too long 或 Compaction completed，触发对应流程"""
@@ -427,12 +439,12 @@ class SSEListener:
                 elif self.output_level == "simple":
                     await self._show_simple(sid, old_seq)
 
-    async def _show_detail(self, sid: str, old_seq: int):
+    async def _show_detail(self, sid: str, old_seq: int) -> bool:
         """detail 模式：获取并显示所有新消息（使用统一格式）"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=20)
             if not messages:
-                return
+                return False
 
             # 找出新消息（seq > old_seq），过滤掉用户消息
             new_msgs = [
@@ -458,11 +470,11 @@ class SSEListener:
             await self._check_and_handle_compact(sid, messages, old_seq)
 
             if not visible_msgs:
-                return
+                return False
 
             latest_visible_seq = max(msg.get("seq", 0) for msg, _ in visible_msgs)
             if self._already_notified_messages(sid, latest_visible_seq):
-                return
+                return False
 
             label = session_label_short(sid, self.sessions_cache)
 
@@ -478,16 +490,18 @@ class SSEListener:
 
             self._mark_messages_notified(sid, latest_visible_seq)
             await self._push_notification(output, sid)
+            return True
 
         except Exception as e:
             logger.warning("detail 模式获取消息异常: %s", e)
+            return False
 
-    async def _show_simple(self, sid: str, old_seq: int):
+    async def _show_simple(self, sid: str, old_seq: int) -> bool:
         """simple 模式：获取并显示新的 agent 纯文本消息"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=50)
             if not messages:
-                return
+                return False
 
             # 筛选: seq > old_seq、agent 角色、有文本内容、不以 [ 开头（排除工具调用/返回等）
             agent_texts = []
@@ -512,11 +526,11 @@ class SSEListener:
             await self._check_and_handle_compact(sid, messages, old_seq)
 
             if not agent_texts:
-                return
+                return False
 
             latest_visible_seq = max(msg.get("seq", 0) for msg, _ in agent_texts)
             if self._already_notified_messages(sid, latest_visible_seq):
-                return
+                return False
 
             label = session_label_short(sid, self.sessions_cache)
 
@@ -532,16 +546,18 @@ class SSEListener:
 
             self._mark_messages_notified(sid, latest_visible_seq)
             await self._push_notification(output, sid)
+            return True
 
         except Exception as e:
             logger.warning("simple 模式获取消息异常: %s", e)
+            return False
 
-    async def _show_summary(self, sid: str, old_seq: int):
+    async def _show_summary(self, sid: str, old_seq: int) -> bool:
         """summary 模式：获取并显示最近 N 条新 agent 消息（过滤工具调用）"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=50)
             if not messages:
-                return
+                return False
 
             agent_texts = []
             for msg in messages:
@@ -563,12 +579,12 @@ class SSEListener:
             await self._check_and_handle_compact(sid, messages, old_seq)
 
             if not agent_texts:
-                return
+                return False
 
             agent_texts = agent_texts[-self._summary_msg_count:]
             latest_visible_seq = max(msg.get("seq", 0) for msg, _ in agent_texts)
             if self._already_notified_messages(sid, latest_visible_seq):
-                return
+                return False
 
             label = session_label_short(sid, self.sessions_cache)
 
@@ -584,9 +600,11 @@ class SSEListener:
 
             self._mark_messages_notified(sid, latest_visible_seq)
             await self._push_notification(output, sid)
+            return True
 
         except Exception as e:
             logger.warning("summary 模式获取消息异常: %s", e)
+            return False
 
     async def _remind_once(self):
         """倒计时结束后，若仍有待审批请求则发一次提醒"""

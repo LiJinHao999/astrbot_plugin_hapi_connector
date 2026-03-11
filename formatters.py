@@ -296,12 +296,18 @@ def format_session_list(
     sessions: list[dict],
     current_sid: str | None = None,
     all_sessions: list[dict] | None = None,
+    header_current_sid: str | None = None,
 ) -> str:
     """格式化 session 列表；可选沿用全局 session 列表编号。"""
     if not sessions:
         return "没有任何 session"
 
-    lines = [f"共 {len(sessions)} 个 Session:"]
+    lines: list[str] = []
+    if header_current_sid:
+        lines.append(f"当前会话 ID: {header_current_sid}")
+        lines.append("")
+
+    lines.append(f"共 {len(sessions)} 个 Session:")
     index_by_sid: dict[str, int] = {}
     if all_sessions:
         for idx, session in enumerate(all_sessions, 1):
@@ -762,7 +768,7 @@ HELP_COMMANDS = [
         "usage": "/hapi bind status",
         "summary": "查看默认通知窗口、flavor 默认窗口和 session 绑定状态",
         "example": None,
-        "home": False,
+        "home": True,
     },
     {
         "topic": "push",
@@ -776,7 +782,7 @@ HELP_COMMANDS = [
         "usage": "/hapi bind reset",
         "summary": "清空会话路由和窗口状态，保留默认通知窗口和 flavor 默认窗口",
         "example": None,
-        "home": False,
+        "home": True,
     },
     {
         "topic": "session",
