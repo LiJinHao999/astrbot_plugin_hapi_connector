@@ -257,17 +257,17 @@ class HapiConnectorPlugin(Star):
             old_session = state.get("current_session")
             old_flavor = state.get("current_flavor")
             if old_session:
-                # 查找该 session 的捕获窗口
+                target_umo = state.get("primary_umo")
                 for sid, umos in self._session_owners.items():
                     if sid == old_session and umos:
-                        umo = umos[0]
-                        self.binding_mgr.set_window_state(umo, old_session, old_flavor or "unknown")
-                        await self.put_kv_data(f"window_state_{umo}", {
-                            "current_session": old_session,
-                            "current_flavor": old_flavor or "unknown"
-                        })
-                        logger.info("迁移用户 %s: current_session → window_state[%s]", uid, umo[:20])
+                        target_umo = umos[0]
                         break
+
+                if target_umo:
+                    self.binding_mgr.bind_window(old_session, target_umo, old_flavor or "unknown")
+                    await self._persist_session_owners()
+                    await self._persist_window_state(target_umo)
+                    logger.info("迁移用户 %s: current_session → window_state[%s]", uid, target_umo[:20])
 
             # 清理用户状态中的窗口级别字段
             if "current_session" in state:
@@ -497,6 +497,7 @@ class HapiConnectorPlugin(Star):
         else:
             remainder = source_text
         if not remainder:
+            await self._ensure_primary_session(event)
             async for result in self.cmd_help(event, ""):
                 yield result
             return

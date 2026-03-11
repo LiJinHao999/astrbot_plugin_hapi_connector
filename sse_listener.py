@@ -50,6 +50,8 @@ class SSEListener:
         self._message_notified_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已处理的压缩完成消息序号，防止重复发「继续」
         self._compaction_completed_seqs: dict[str, int] = {}
+        # {session_id: seq}，记录已发送“任务完成”通知时的 lastSeq，防止状态抖动重复提醒
+        self._completion_notified_seqs: dict[str, int] = {}
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00",
@@ -337,11 +339,15 @@ class SSEListener:
                 state = self.session_states.get(sid, {})
                 has_pending = len(self.pending.get(sid, {})) > 0
             if not state.get("thinking", False) and not has_pending:
+                last_seq = state.get("lastSeq", 0)
                 if self.output_level == "summary":
                     old_seq = state.get("lastSeq", 0)
                     await self._show_summary(sid, old_seq)
                 else:
+                    if last_seq <= self._completion_notified_seqs.get(sid, -1):
+                        continue
                     label = session_label_short(sid, self.sessions_cache)
+                    self._completion_notified_seqs[sid] = last_seq
                     await self._push_notification(f"✅ 任务已完成，等待新的输入\n{label}", sid)
 
     async def _check_and_handle_compact(self, sid: str, messages: list[dict], old_seq: int):
