@@ -1385,6 +1385,16 @@ class HapiConnectorPlugin(Star):
         async def upload_waiter(controller: SessionController, ev: AstrMessageEvent):
             nonlocal collected_files
 
+            files = file_ops.extract_files_from_message(ev)
+            if files:
+                collected_files.extend(files)
+                await ev.send(ev.plain_result(
+                    f"✓ 已接收 {len(files)} 个文件（共 {len(collected_files)} 个）\n"
+                    "继续发送或输入 done"
+                ))
+                controller.keep(timeout=120, reset_timeout=True)
+                return
+
             text = ev.message_str.strip().lower()
 
             # 忽略空消息
@@ -1423,18 +1433,8 @@ class HapiConnectorPlugin(Star):
                 controller.stop()
                 return
 
-            # 提取文件
-            files = file_ops.extract_files_from_message(ev)
-            if files:
-                collected_files.extend(files)
-                await ev.send(ev.plain_result(
-                    f"✓ 已接收 {len(files)} 个文件（共 {len(collected_files)} 个）\n"
-                    "继续发送或输入 done"
-                ))
-                controller.keep(timeout=120, reset_timeout=True)
-            else:
-                await ev.send(ev.plain_result("未检测到文件，请重新发送"))
-                controller.keep(timeout=120, reset_timeout=True)
+            await ev.send(ev.plain_result("未检测到文件，请重新发送"))
+            controller.keep(timeout=120, reset_timeout=True)
 
         try:
             await upload_waiter(event)

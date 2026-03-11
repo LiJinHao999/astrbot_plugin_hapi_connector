@@ -239,18 +239,52 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
 
 
 def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]]) -> str:
-    """格式化全局绑定状态"""
-    lines = ["=== 全局绑定状态 ===\n"]
-    for sess in sessions:
-        sid = sess["id"]
-        flavor = sess.get("metadata", {}).get("flavor", "unknown")
-        state = sess.get("state", "unknown")
+    """格式化全局绑定状态（复用 session 列表格式 + 绑定信息）"""
+    if not sessions:
+        return "没有任何 session"
+
+    lines = [f"=== 全局绑定状态 ===\n共 {len(sessions)} 个 Session:"]
+
+    current_path = None
+    for idx, s in enumerate(sessions, 1):
+        meta = s.get("metadata", )
+        path = meta.get("path", "(无路径)")
+
+        if path != current_path:
+            count = sum(1 for x in sessions if x.get("metadata", {}).get("path", "(无路径)") == path)
+            lines.append(f"\n📁 {path} ({count})")
+            current_path = path
+
+        sid = s.get("id", "?")
+        sid_short = sid[:8]
+        summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
+        flavor = meta.get("flavor", "?")
+        model = s.get("modelMode", "default")
+        pending = s.get("pendingRequestsCount", 0)
+
+        if s.get("thinking"):
+            status = "💭思考中"
+        elif s.get("active"):
+            status = "🟢运行中"
+        else:
+            status = "⚪已关闭"
+
+        lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
+
+        parts = [status, f"🤖{flavor}:{model}"]
+        if pending:
+            parts.append(f"⚠️ {pending}待审批")
+
+        # 添加绑定信息
         owners = session_owners.get(sid, [])
         if owners:
             owner_str = ", ".join([o[:20] + "..." if len(o) > 20 else o for o in owners])
-            lines.append(f"{sid[:8]} [{flavor}] ({state}) → {owner_str}")
+            parts.append(f"📌绑定: {owner_str}")
         else:
-            lines.append(f"{sid[:8]} [{flavor}] ({state}) → 无绑定")
+            parts.append("📌无绑定")
+
+        lines.append(" | ".join(parts))
+
     return "\n".join(lines)
 
 
