@@ -6,31 +6,18 @@
 
 2. 支持多窗口（多会话）推送机制，现在可以借助群聊、私聊、不同管理员账户的对话窗口区分通知消息
 
-### 多会话更新管理机制改进简要介绍
+### 多会话更新管理机制改进介绍
 
 这是一次兼容性更新，如果你没有这类需求，可以忽略这些，照常使用插件。相关的配置，插件将会自动迁移和兼容
 
-简单来说：你可以把bot再拉进一个群聊，群聊内管理的远程 coding session 的通知推送与审批与你和 bot 的私聊相互独立，以便你区分多用户同时使用插件的场景、给任务分类
+**在不同 AstrBot 会话中（比如 QQ 的私聊、群聊）， session 会话的管理将会互相独立**
 
-<p align="center">
-   <img width="430" height="238" alt="Image" src="https://github.com/user-attachments/assets/e6f2afb2-055d-439b-8959-705296d105cd" />
-</p>
-<p align="center"><em>可多窗口推送通知，会话独立</em></p>
+根据 AstrBot 的对话窗口 id 进行区分，每个对话窗口只会看到和管理属于自己的 session。
 
-**在不同astrbot会话中（比如QQ的私聊、群聊）管理的不同session会话将会互相独立**
+在某个对话窗口使用 `sw` / `create` 命令后，将会自动把对应 session 的通知路由到当前会话。
 
-根据astrbot的窗口id进行区分，如图，可见和可管理的session不同
-
-| 未绑定 session 的窗口 | 私聊窗口 | 群聊窗口 |
-| --- | --- | --- |
-| <img src="https://github.com/user-attachments/assets/b9c3fe24-4dfb-433e-993b-a0b2cb3cb271" width="100%" /> |  <img src="https://github.com/user-attachments/assets/4322eb91-ba0a-4d12-80d1-4961a6199e74" width="100%" /> | <img src="https://github.com/user-attachments/assets/f19319ed-0482-49fb-9976-c36a2b83209e" width="100%" /> |
-
-在某个窗口使用sw/create命令后，将会自动将对应 session 的通知路由到当前会话
-
-- 使用 hapi bind 命令设置主要推送窗口（有通知时默认发往此窗口，其它通知根据绑定逻辑路由）
-- 使用 hapi bind reset 命令清除所有绑定路由关系 
-
-不同对话窗口之间的通知、权限审批、所操作的窗口互相独立
+点击跳转github查看详细图文说明：
+https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/blob/main/docs/session-isolation.md
 
 
 
