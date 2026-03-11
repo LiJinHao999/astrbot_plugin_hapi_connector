@@ -94,7 +94,7 @@ class HapiConnectorPlugin(Star):
         self._quick_prefix = self.config.get("quick_prefix", ">")
 
         # 戳一戳审批开关
-        self._poke_approve = self.config.get("poke_approve", False)
+        self._poke_approve = self.config.get("poke_approve", True)
 
         # summary 模式消息条数
         self._summary_msg_count = self.config.get("summary_msg_count", 5)
@@ -391,34 +391,29 @@ class HapiConnectorPlugin(Star):
             targets.append(primary_umo)
         return targets
 
-    async def _push_notification(self, text: str, session_id: str):
-        """推送通知到 session 当前窗口；无会话路由时回落到默认窗口"""
-        chunks = self._split_message(text) if len(text) > 4200 else [text]
-        targets: list[str] = []
-
+    def _select_notification_targets(self, session_id: str) -> list[str]:
+        """根据 session 选择最终通知窗口；同一通知只投递到一个窗口。"""
         if session_id:
-            targets.extend(self.binding_mgr.get_owners(session_id))
-            if not targets:
-                default_umo = self.binding_mgr.find_window_by_session(session_id)
-                if default_umo:
-                    targets.append(default_umo)
-            if not targets:
-                primary_targets = self._get_primary_windows()
-                if len(primary_targets) == 1:
-                    targets.extend(primary_targets)
-        else:
-            targets.extend(self._get_primary_windows())
+            owners = self.binding_mgr.get_owners(session_id)
+            if owners:
+                return [owners[-1]]
 
-        deduped_targets: list[str] = []
-        seen_targets: set[str] = set()
-        for target in targets:
-            if target in seen_targets:
-                continue
-            seen_targets.add(target)
-            deduped_targets.append(target)
+            bound_umo = self.binding_mgr.find_window_by_session(session_id)
+            if bound_umo:
+                return [bound_umo]
 
-        if deduped_targets:
-            for umo in deduped_targets:
+        primary_targets = self._get_primary_windows()
+        if primary_targets:
+            return [primary_targets[0]]
+        return []
+
+    async def _push_notification(self, text: str, session_id: str):
+        """推送通知到单个目标窗口，优先走 session 当前路由。"""
+        chunks = self._split_message(text) if len(text) > 4200 else [text]
+        targets = self._select_notification_targets(session_id)
+
+        if targets:
+            for umo in targets:
                 for chunk in chunks:
                     try:
                         chain = MessageChain().message(chunk)
@@ -452,15 +447,50 @@ class HapiConnectorPlugin(Star):
 
     # ──── 审批快捷操作（内部复用） ────
 
-    def _flatten_pending(self) -> list[tuple[str, str, dict]]:
-        return approval_ops.flatten_pending(self.sse_listener.get_all_pending())
+    def _visible_session_ids_for_window(self, event: AstrMessageEvent) -> set[str]:
+        """返回当前窗口可见的 session ID 集合。"""
+        return {
+            session.get("id")
+            for session in self._visible_sessions_for_window(event)
+            if session.get("id")
+        }
+
+    def _pending_for_event(self, event: AstrMessageEvent) -> dict[str, dict]:
+        """返回当前窗口可见范围内的待审批请求。"""
+        visible_sids = self._visible_session_ids_for_window(event)
+        pending = self.sse_listener.get_all_pending()
+        return {
+            sid: reqs
+            for sid, reqs in pending.items()
+            if sid in visible_sids
+        }
+
+    def _flatten_pending(self, event: AstrMessageEvent | None = None) -> list[tuple[str, str, dict]]:
+        pending = self.sse_listener.get_all_pending() if event is None else self._pending_for_event(event)
+        return approval_ops.flatten_pending(pending)
 
     def _remove_pending_entry(self, sid: str, rid: str):
         approval_ops.remove_pending_entry(self.sse_listener.pending, sid, rid)
 
-    async def _approve_all_pending(self) -> str | None:
-        return await approval_ops.approve_all(
-            self.client, self.sse_listener.pending)
+    async def _approve_pending_items(self, items: list[tuple[str, str, dict]]) -> str | None:
+        """批准给定列表中的所有非 question 请求。"""
+        regular = [(sid, rid, req) for sid, rid, req in items
+                   if not formatters.is_question_request(req)]
+        if not regular:
+            return None
+
+        results = []
+        for sid, rid, req in regular:
+            if is_compact_request(req):
+                ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                self._remove_pending_entry(sid, rid)
+                results.append(f"{'✓' if ok else '✗'} /compact")
+            else:
+                ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                tool = req.get("tool", "?")
+                results.append(f"{'✓' if ok else '✗'} {tool}")
+
+        return f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
 
     async def _answer_questions_interactive(self, event: AstrMessageEvent,
                                              q_items: list) -> bool:
@@ -954,8 +984,8 @@ class HapiConnectorPlugin(Star):
     async def cmd_pending(self, event: AstrMessageEvent):
         """查看待审批请求列表: /hapi pending"""
         await self._set_user_state(event)
-        all_pending = self.sse_listener.get_all_pending()
-        text = formatters.format_pending_requests(all_pending, self.sessions_cache)
+        pending = self._pending_for_event(event)
+        text = formatters.format_pending_requests(pending, self.sessions_cache)
         yield event.plain_result(text)
 
     # ── approve ──
@@ -963,7 +993,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_approve(self, event: AstrMessageEvent):
         """批准所有权限请求，再交互式回答 question: /hapi a"""
         await self._set_user_state(event)
-        items = self._flatten_pending()
+        items = self._flatten_pending(event)
         if not items:
             yield event.plain_result("没有待审批的请求")
             return
@@ -974,7 +1004,9 @@ class HapiConnectorPlugin(Star):
                      if formatters.is_question_request(req)]
 
         if regular:
-            yield event.plain_result(await self._approve_all_pending())
+            result = await self._approve_pending_items(regular)
+            if result:
+                yield event.plain_result(result)
 
         if questions:
             yield event.plain_result(f"还有 {len(questions)} 个问题需要回答:")
@@ -987,7 +1019,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_allow(self, event: AstrMessageEvent, target: str = ""):
         """批准权限请求（跳过 question）: /hapi allow [序号]"""
         await self._set_user_state(event)
-        items = self._flatten_pending()
+        items = self._flatten_pending(event)
         regular = [(sid, rid, req) for sid, rid, req in items
                    if not formatters.is_question_request(req)]
 
@@ -1011,14 +1043,16 @@ class HapiConnectorPlugin(Star):
                 tool = req.get("tool", "?")
                 yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: {tool}")
         else:
-            yield event.plain_result(await self._approve_all_pending())
+            result = await self._approve_pending_items(regular)
+            if result:
+                yield event.plain_result(result)
 
     # ── answer ──
 
     async def cmd_answer(self, event: AstrMessageEvent, target: str = ""):
         """交互式回答 question 请求: /hapi answer [序号]"""
         await self._set_user_state(event)
-        items = self._flatten_pending()
+        items = self._flatten_pending(event)
         q_items = [(sid, rid, req) for sid, rid, req in items
                    if formatters.is_question_request(req)]
 
@@ -1042,7 +1076,7 @@ class HapiConnectorPlugin(Star):
     async def cmd_deny(self, event: AstrMessageEvent, target: str = ""):
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
         await self._set_user_state(event)
-        items = self._flatten_pending()
+        items = self._flatten_pending(event)
         if not items:
             yield event.plain_result("没有待审批的请求")
             return
@@ -1680,7 +1714,7 @@ class HapiConnectorPlugin(Star):
             return
 
         await self._set_user_state(event)
-        items = self._flatten_pending()
+        items = self._flatten_pending(event)
         if not items:
             return  # 无待审批，静默
 
@@ -1690,8 +1724,9 @@ class HapiConnectorPlugin(Star):
                      if formatters.is_question_request(req)]
 
         if regular:
-            result = await self._approve_all_pending()
-            yield event.plain_result(f"[戳一戳审批] {result}")
+            result = await self._approve_pending_items(regular)
+            if result:
+                yield event.plain_result(f"[戳一戳审批] {result}")
 
         if questions:
             yield event.plain_result(f"[戳一戳审批] 还有 {len(questions)} 个问题需要回答:")

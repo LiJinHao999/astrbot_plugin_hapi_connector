@@ -607,13 +607,23 @@ class SSEListener:
         async with self._lock:
             if not self.pending:
                 return
-            total = sum(len(r) for r in self.pending.values())
-        lines = [
-            f"⏰ 提醒：仍有 {total} 个待审批请求，请及时处理以避免会话缓存失效",
-            "  /hapi a        全部批准",
-            "  /hapi pending  查看列表",
-        ]
-        await self._push_notification("\n".join(lines), "")
+            pending_snapshot = copy.deepcopy(self.pending)
+
+        total = sum(len(r) for r in pending_snapshot.values())
+        for sid, reqs in pending_snapshot.items():
+            count = len(reqs)
+            if count == 0:
+                continue
+            label = session_label_short(sid, self.sessions_cache)
+            lines = [
+                f"⏰ 提醒：该会话仍有 {count} 个待审批请求",
+                label,
+                "",
+                f"当前全局共 {total} 个待审批请求，请及时处理以避免会话缓存失效",
+                "  /hapi a        全部批准",
+                "  /hapi pending  查看列表",
+            ]
+            await self._push_notification("\n".join(lines), sid)
 
     def _in_auto_approve_window(self) -> bool:
         """判断当前本地时间是否在忙时托管审批时间窗口内"""

@@ -549,7 +549,7 @@ def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]
     if not items:
         return "没有待审批的请求"
 
-    lines = [f"全局待审批 ({len(items)} 个):"]
+    lines = [f"当前窗口待审批 ({len(items)} 个):"]
     for i, (sid, rid, req) in enumerate(items, 1):
         label = session_label_short(sid, sessions_cache)
         detail = format_request_detail(req)
@@ -850,7 +850,7 @@ HELP_COMMANDS = [
     {
         "topic": "approve",
         "usage": "/hapi pending",
-        "summary": "查看全部待处理请求",
+        "summary": "查看当前窗口可见的待处理请求",
         "example": None,
         "home": True,
     },
