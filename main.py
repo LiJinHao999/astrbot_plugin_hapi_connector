@@ -631,7 +631,7 @@ class HapiConnectorPlugin(Star):
             return
 
         current_sid = self._current_sid(event)
-        text = formatters.format_session_list(visible_sessions, current_sid)
+        text = formatters.format_session_list(visible_sessions, current_sid, self.sessions_cache)
 
         # 检查 machine 列表，如果为空但 SSE 连接正常则提示
         try:

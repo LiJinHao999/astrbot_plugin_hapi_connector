@@ -292,16 +292,26 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]
     return "\n".join(lines)
 
 
-def format_session_list(sessions: list[dict], current_sid: str | None = None) -> str:
-    """格式化 session 列表（按原始顺序编号，path 作为视觉分组）"""
+def format_session_list(
+    sessions: list[dict],
+    current_sid: str | None = None,
+    all_sessions: list[dict] | None = None,
+) -> str:
+    """格式化 session 列表；可选沿用全局 session 列表编号。"""
     if not sessions:
         return "没有任何 session"
 
     lines = [f"共 {len(sessions)} 个 Session:"]
+    index_by_sid: dict[str, int] = {}
+    if all_sessions:
+        for idx, session in enumerate(all_sessions, 1):
+            sid = session.get("id")
+            if sid and sid not in index_by_sid:
+                index_by_sid[sid] = idx
 
     # 按 path 分组但保持原始顺序
     current_path = None
-    for idx, s in enumerate(sessions, 1):
+    for local_idx, s in enumerate(sessions, 1):
         meta = s.get("metadata", )
         path = meta.get("path", "(无路径)")
 
@@ -314,6 +324,7 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
 
         sid = s.get("id", "?")
         sid_short = sid[:8]
+        display_idx = index_by_sid.get(sid, local_idx)
         summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
         flavor = meta.get("flavor", "?")
         model = s.get("modelMode", "default")
@@ -328,7 +339,7 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
             status = "⚪已关闭"
 
         # 第一行：[序号|🏷️sid] 标题
-        lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
+        lines.append(f"[{display_idx} | 🏷️{sid_short}] {summary}")
 
         # 第二行：状态 | 模型 | 待审批 | 当前
         parts = [status, f"🤖{flavor}:{model}"]
@@ -700,8 +711,8 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "delete",
     "clean",
     "bind",
-    "unbind",
-    "bindings",
+    "routes",
+    "reset",
     "files", "file",
     "find",
     "download", "dl",
@@ -713,42 +724,42 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi list",
-        "summary": "查看当前窗口绑定的 session",
+        "summary": "查看当前窗口会接收通知的 session",
         "example": None,
         "home": True,
     },
     {
         "topic": "session",
         "usage": "/hapi list all",
-        "summary": "查看所有 session 及绑定状态",
+        "summary": "查看所有 session 和全局绑定状态",
         "example": None,
         "home": False,
     },
     {
         "topic": "push",
         "usage": "/hapi bind",
-        "summary": "查看当前窗口绑定状态",
+        "summary": "将当前窗口设为默认通知窗口",
         "example": None,
         "home": True,
     },
     {
         "topic": "push",
-        "usage": "/hapi bind force <flavor>",
-        "summary": "将所有指定 flavor 的 session 绑定到当前窗口",
-        "example": "/hapi bind force claude",
-        "home": True,
-    },
-    {
-        "topic": "push",
-        "usage": "/hapi unbind",
-        "summary": "解除当前窗口的所有绑定",
+        "usage": "/hapi bind status",
+        "summary": "查看默认通知窗口和 session 绑定状态",
         "example": None,
         "home": False,
     },
     {
         "topic": "push",
-        "usage": "/hapi bindings",
-        "summary": "查看所有 session 的绑定状态",
+        "usage": "/hapi routes",
+        "summary": "查看当前生效的会话推送路由",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi reset",
+        "summary": "清空会话路由和窗口状态，保留默认通知窗口",
         "example": None,
         "home": False,
     },
@@ -769,7 +780,7 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi s",
-        "summary": "查看当前 session 状态",
+        "summary": "查看当前 session 状态（未绑定时回退默认窗口）",
         "example": None,
         "home": False,
     },
@@ -804,7 +815,7 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi clean [路径前缀]",
-        "summary": "批量清理已归档 sessions",
+        "summary": "批量清理 inactive sessions",
         "example": "/hapi clean C:/work/project",
         "home": False,
     },
@@ -832,7 +843,7 @@ HELP_COMMANDS = [
     {
         "topic": "chat",
         "usage": "/hapi msg [轮数]",
-        "summary": "查看最近几轮消息",
+        "summary": "查看最近几轮消息（未绑定时回退默认窗口）",
         "example": "/hapi msg 2",
         "home": True,
     },
@@ -846,14 +857,14 @@ HELP_COMMANDS = [
     {
         "topic": "approve",
         "usage": "/hapi a",
-        "summary": "一键处理待审批请求",
+        "summary": "批准全部非 question 请求，并继续回答 question",
         "example": None,
         "home": True,
     },
     {
         "topic": "approve",
         "usage": "/hapi allow [序号]",
-        "summary": "批准权限请求（跳过 question）",
+        "summary": "批准全部或单个非 question 请求",
         "example": "/hapi allow 2",
         "home": False,
     },
@@ -916,14 +927,14 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi perm [模式]",
-        "summary": "查看或切换权限模式",
+        "summary": "查看或切换权限模式（未绑定时回退默认窗口）",
         "example": None,
         "home": True,
     },
     {
         "topic": "config",
         "usage": "/hapi model [模式]",
-        "summary": "查看或切换模型模式",
+        "summary": "查看或切换模型模式（仅 Claude）",
         "example": None,
         "home": True,
     },
@@ -937,14 +948,14 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi remote",
-        "summary": "切换到 remote 托管模式",
+        "summary": "切换当前 session 到 remote 托管模式",
         "example": None,
         "home": True,
     },
     {
         "topic": "config",
         "usage": "/hapi help [主题]",
-        "summary": "查看帮助，可选主题：会话/对话/审批/文件/配置/全部",
+        "summary": "查看帮助，可选主题：会话/对话/审批/通知/文件/配置/全部",
         "example": "/hapi help 文件",
         "home": False,
     },
@@ -984,8 +995,9 @@ def format_unknown_command_help(command: str) -> str:
         "",
         "💡 按功能查看帮助：",
         "  /hapi help 会话    会话管理",
-        "  /hapi help 对话    发送消息到远程",
+        "  /hapi help 对话    对话与消息",
         "  /hapi help 审批    审批权限请求",
+        "  /hapi help 通知    通知与路由",
         "  /hapi help 文件    文件操作",
         "  /hapi help 配置    配置管理",
         "",
