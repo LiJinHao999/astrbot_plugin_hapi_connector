@@ -238,16 +238,86 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def format_session_list(sessions: list[dict], current_sid: str | None = None) -> str:
-    """格式化 session 列表（按原始顺序编号，path 作为视觉分组）"""
+def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]], window_states: dict[str, dict] = None) -> str:
+    """格式化全局绑定状态（复用 session 列表格式 + 绑定信息 + 窗口状态）"""
     if not sessions:
         return "没有任何 session"
 
-    lines = [f"共 {len(sessions)} 个 Session:"]
+    lines = [f"=== 全局绑定状态 ===\n共 {len(sessions)} 个 Session:"]
+
+    current_path = None
+    for idx, s in enumerate(sessions, 1):
+        meta = s.get("metadata", {})
+        path = meta.get("path", "(无路径)")
+
+        if path != current_path:
+            count = sum(1 for x in sessions if x.get("metadata", {}).get("path", "(无路径)") == path)
+            lines.append(f"\n📁 {path} ({count})")
+            current_path = path
+
+        sid = s.get("id", "?")
+        sid_short = sid[:8]
+        summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
+        flavor = meta.get("flavor", "?")
+        model = s.get("modelMode", "default")
+        pending = s.get("pendingRequestsCount", 0)
+
+        if s.get("thinking"):
+            status = "💭思考中"
+        elif s.get("active"):
+            status = "🟢运行中"
+        else:
+            status = "⚪已关闭"
+
+        lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
+
+        parts = [status, f"🤖{flavor}:{model}"]
+        if pending:
+            parts.append(f"⚠️ {pending}待审批")
+
+        # 添加绑定信息
+        owners = session_owners.get(sid, [])
+        if owners:
+            owner_str = ", ".join([o[:20] + "..." if len(o) > 20 else o for o in owners])
+            parts.append(f"📌{owner_str}")
+
+        # 添加窗口状态
+        if window_states:
+            active_windows = [umo[:20] for umo, state in window_states.items() if state.get("current_session") == sid]
+            if active_windows:
+                parts.append(f"🪟{len(active_windows)}窗口")
+
+        lines.append(" | ".join(parts))
+
+    return "\n".join(lines)
+
+
+def format_session_list(
+    sessions: list[dict],
+    current_sid: str | None = None,
+    all_sessions: list[dict] | None = None,
+    header_current_window: str | None = None,
+) -> str:
+    """格式化 session 列表；可选沿用全局 session 列表编号。"""
+    if not sessions:
+        return "没有任何 session"
+
+    lines: list[str] = []
+    if header_current_window:
+        lines.append(f"当前窗口 ID: {header_current_window}")
+        lines.append("")
+
+    lines.append(f"共 {len(sessions)} 个 Session:")
+    index_by_sid: dict[str, int] = {}
+    if all_sessions:
+        for idx, session in enumerate(all_sessions, 1):
+            sid = session.get("id")
+            if sid and sid not in index_by_sid:
+                index_by_sid[sid] = idx
 
     # 按 path 分组但保持原始顺序
     current_path = None
-    for idx, s in enumerate(sessions, 1):
+    for local_idx, s in enumerate(sessions, 1):
         meta = s.get("metadata", )
         path = meta.get("path", "(无路径)")
 
@@ -260,6 +330,7 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
 
         sid = s.get("id", "?")
         sid_short = sid[:8]
+        display_idx = index_by_sid.get(sid, local_idx)
         summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
         flavor = meta.get("flavor", "?")
         model = s.get("modelMode", "default")
@@ -274,7 +345,7 @@ def format_session_list(sessions: list[dict], current_sid: str | None = None) ->
             status = "⚪已关闭"
 
         # 第一行：[序号|🏷️sid] 标题
-        lines.append(f"[{idx} | 🏷️{sid_short}] {summary}")
+        lines.append(f"[{display_idx} | 🏷️{sid_short}] {summary}")
 
         # 第二行：状态 | 模型 | 待审批 | 当前
         parts = [status, f"🤖{flavor}:{model}"]
@@ -457,6 +528,22 @@ def format_question_notification(req: dict, label: str, total: int) -> str:
     return "\n".join(lines)
 
 
+def format_permission_notification(label: str, detail: str, total: int) -> str:
+    """格式化普通权限审批通知，复用统一的会话前缀。"""
+    lines = [
+        label,
+        f"  {detail}",
+        "",
+        f"当前共 {total} 个待审批，审批指令:",
+        "  /hapi a        全部批准",
+        "  /hapi allow <序号>  批准单个",
+        "  /hapi deny     全部拒绝",
+        "  /hapi deny <序号> 拒绝单个",
+        "  /hapi pending   查看完整列表",
+    ]
+    return "\n".join(lines)
+
+
 def format_request_detail(req: dict) -> str:
     """格式化权限请求详情（工具 + 关键参数）"""
     tool = req.get("tool", "?")
@@ -484,7 +571,7 @@ def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]
     if not items:
         return "没有待审批的请求"
 
-    lines = [f"全局待审批 ({len(items)} 个):"]
+    lines = [f"当前窗口待审批 ({len(items)} 个):"]
     for i, (sid, rid, req) in enumerate(items, 1):
         label = session_label_short(sid, sessions_cache)
         detail = format_request_detail(req)
@@ -554,6 +641,7 @@ def format_directory(entries: list[dict], path: str = ".",
     lines.append("💡 /hapi files <文件夹> — 查看子目录")
     lines.append("💡 /hapi find <关键词> — 搜索文件")
     lines.append("💡 /hapi dl <路径> — 下载文件")
+    lines.append("💡 /hapi upload — 上传文件")
     return "\n".join(lines)
 
 
@@ -576,9 +664,10 @@ def format_file_search(files: list[dict], query: str) -> str:
 
 
 HELP_TOPICS: list[tuple[str, str]] = [
-    ("会话", "会话管理"),
+    ("会话", "Session 管理"),
     ("对话", "对话与消息"),
     ("审批", "审批与回答"),
+    ("通知", "多会话通知管理"),
     ("文件", "文件操作"),
     ("配置", "模式与配置"),
     ("全部", "完整命令列表"),
@@ -604,6 +693,10 @@ HELP_TOPIC_ALIASES = {
     "approval": "approve",
     "pending": "approve",
     "审批": "approve",
+    "push": "push",
+    "notification": "push",
+    "通知": "push",
+    "绑定": "push",
     "files": "files",
     "file": "files",
     "文件": "files",
@@ -639,17 +732,55 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "rename",
     "delete",
     "clean",
+    "bind",
+    "routes",
     "files", "file",
     "find",
     "download", "dl",
+    "upload",
 }
 
 
 HELP_COMMANDS = [
     {
         "topic": "session",
-        "usage": "/hapi list",
-        "summary": "查看所有 session",
+        "usage": "/hapi list [all]",
+        "summary": "查看当前窗口会接收通知的 session",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi list all",
+        "summary": "查看所有 session 和全局绑定状态",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi bind [claude|codex|gemini]",
+        "summary": "设置当前聊天为默认通知窗口；带 claude/codex/gemini 时只对对应模型生效",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi bind status",
+        "summary": "查看默认通知窗口、flavor 默认窗口和 session 绑定状态",
+        "example": None,
+        "home": True,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi routes",
+        "summary": "查看当前生效的会话推送路由",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "push",
+        "usage": "/hapi bind reset",
+        "summary": "清空会话路由和窗口状态，保留默认通知窗口和 flavor 默认窗口",
         "example": None,
         "home": True,
     },
@@ -670,7 +801,7 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi s",
-        "summary": "查看当前 session 状态",
+        "summary": "查看当前 session 状态（未绑定时回退默认窗口）",
         "example": None,
         "home": False,
     },
@@ -705,7 +836,7 @@ HELP_COMMANDS = [
     {
         "topic": "session",
         "usage": "/hapi clean [路径前缀]",
-        "summary": "批量清理已归档 sessions",
+        "summary": "批量清理 inactive sessions",
         "example": "/hapi clean C:/work/project",
         "home": False,
     },
@@ -733,28 +864,28 @@ HELP_COMMANDS = [
     {
         "topic": "chat",
         "usage": "/hapi msg [轮数]",
-        "summary": "查看最近几轮消息",
+        "summary": "查看最近几轮消息（未绑定时回退默认窗口）",
         "example": "/hapi msg 2",
         "home": True,
     },
     {
         "topic": "approve",
         "usage": "/hapi pending",
-        "summary": "查看全部待处理请求",
+        "summary": "查看当前窗口可见的待处理请求",
         "example": None,
         "home": True,
     },
     {
         "topic": "approve",
         "usage": "/hapi a",
-        "summary": "一键处理待审批请求",
+        "summary": "批准全部非 question 请求，并继续回答 question",
         "example": None,
         "home": True,
     },
     {
         "topic": "approve",
         "usage": "/hapi allow [序号]",
-        "summary": "批准权限请求（跳过 question）",
+        "summary": "批准全部或单个非 question 请求",
         "example": "/hapi allow 2",
         "home": False,
     },
@@ -808,16 +939,23 @@ HELP_COMMANDS = [
         "home": True,
     },
     {
+        "topic": "files",
+        "usage": "/hapi upload [cancel]",
+        "summary": "上传文件到当前 session，支持快捷前缀附件",
+        "example": "/hapi upload\n> 分析这张图 [附带图片]",
+        "home": True,
+    },
+    {
         "topic": "config",
         "usage": "/hapi perm [模式]",
-        "summary": "查看或切换权限模式",
+        "summary": "查看或切换权限模式（未绑定时回退默认窗口）",
         "example": None,
         "home": True,
     },
     {
         "topic": "config",
         "usage": "/hapi model [模式]",
-        "summary": "查看或切换模型模式",
+        "summary": "查看或切换模型模式（仅 Claude）",
         "example": None,
         "home": True,
     },
@@ -831,14 +969,14 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi remote",
-        "summary": "切换到 remote 托管模式",
+        "summary": "切换当前 session 到 remote 托管模式",
         "example": None,
         "home": True,
     },
     {
         "topic": "config",
         "usage": "/hapi help [主题]",
-        "summary": "查看帮助，可选主题：会话/对话/审批/文件/配置/全部",
+        "summary": "查看帮助，可选主题：会话/对话/审批/通知/文件/配置/全部",
         "example": "/hapi help 文件",
         "home": False,
     },
@@ -873,13 +1011,16 @@ def format_unknown_command_help(command: str) -> str:
     from difflib import get_close_matches
 
     normalized = command.strip().lower()
+    if normalized == "reset":
+        return "命令已调整为: /hapi bind reset"
     lines = [
         f"未知命令: /hapi {command}",
         "",
         "💡 按功能查看帮助：",
         "  /hapi help 会话    会话管理",
-        "  /hapi help 对话    发送消息到远程",
+        "  /hapi help 对话    对话与消息",
         "  /hapi help 审批    审批权限请求",
+        "  /hapi help 通知    通知与路由",
         "  /hapi help 文件    文件操作",
         "  /hapi help 配置    配置管理",
         "",
@@ -921,9 +1062,10 @@ def _format_help_commands(title: str, topic: str) -> str:
     lines = [title, ""]
     if topic == "all":
         sections = [
-            ("💬 会话管理", "session"),
+            ("💬 Session 管理", "session"),
             ("📨 对话", "chat"),
             ("✅ 权限审批", "approve"),
+            ("🔔 多会话通知管理", "push"),
             ("📁 文件管理", "files"),
             ("⚙️ 配置管理", "config"),
         ]
@@ -934,6 +1076,21 @@ def _format_help_commands(title: str, topic: str) -> str:
                     _append_help_item(lines, item)
         return "\n".join(lines).rstrip()
 
+    if topic == "push":
+        lines.extend([
+            "通知发送规则：",
+            "  1. 某个 session 如果已经绑定到聊天窗口，通知只发到那个窗口。",
+            "  2. 没有绑定时，如果配置了模型默认窗口，例如 /hapi bind codex，就发到那个窗口。",
+            "  3. 还没有时，发到 /hapi bind 设置的默认窗口。",
+            "",
+            "相关命令：",
+            "  /hapi bind               设置默认通知窗口",
+            "  /hapi bind codex         设置 Codex 默认通知窗口",
+            "  /hapi bind status        查看当前通知配置",
+            "  /hapi bind reset         清除 session 绑定和窗口状态，不清除默认窗口配置",
+            "",
+        ])
+
     commands = _iter_help_commands(topic)
     for item in commands:
         _append_help_item(lines, item)
@@ -942,9 +1099,10 @@ def _format_help_commands(title: str, topic: str) -> str:
 
 def _get_home_help_text() -> str:
     sections = [
-        ("💬 会话管理", "session"),
+        ("💬 Session 管理", "session"),
         ("📨 对话", "chat"),
         ("✅ 权限审批", "approve"),
+        ("🔔 多会话通知管理", "push"),
         ("📁 文件管理", "files"),
         ("⚙️ 配置管理", "config"),
     ]
@@ -977,11 +1135,13 @@ def get_help_text(topic: str = "") -> str:
     if normalized == "home":
         return _get_home_help_text()
     if normalized == "session":
-        return _format_help_commands("HAPI 帮助 / 会话管理", "session")
+        return _format_help_commands("HAPI 帮助 / Session 管理", "session")
     if normalized == "chat":
         return _format_help_commands("HAPI 帮助 / 对话与消息", "chat")
     if normalized == "approve":
         return _format_help_commands("HAPI 帮助 / 审批与回答", "approve")
+    if normalized == "push":
+        return _format_help_commands("HAPI 帮助 / 多会话通知管理", "push")
     if normalized == "files":
         return _format_help_commands("HAPI 帮助 / 文件操作", "files")
     if normalized == "config":

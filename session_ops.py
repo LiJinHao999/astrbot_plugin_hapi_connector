@@ -42,6 +42,25 @@ async def send_message(client: AsyncHapiClient, sid: str, text: str) -> tuple[bo
         return False, f"发送失败: {resp.status} {body[:200]}"
 
 
+async def send_message(client: AsyncHapiClient, sid: str, text: str,
+                       attachments: list[dict] | None = None) -> tuple[bool, str]:
+    """Send a message to a session, optionally with uploaded attachments."""
+    payload = {"text": text}
+    if attachments:
+        payload["attachments"] = attachments
+
+    resp = await client.post(f"/api/sessions/{sid}/messages", json=payload)
+    if resp.ok:
+        resp.release()
+        if attachments:
+            return True, f"sent -> [{sid[:8]}] ({len(attachments)} attachments)"
+        return True, f"sent -> [{sid[:8]}]"
+
+    body = await resp.text()
+    resp.release()
+    return False, f"send failed: {resp.status} {body[:200]}"
+
+
 async def set_permission_mode(client: AsyncHapiClient, sid: str, mode: str) -> tuple[bool, str]:
     """设置权限模式"""
     resp = await client.post(f"/api/sessions/{sid}/permission-mode", json={"mode": mode})
@@ -235,4 +254,3 @@ async def read_file(client: AsyncHapiClient, sid: str,
     if not content:
         return False, "文件内容为空或不存在"
     return True, content
-
