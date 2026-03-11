@@ -8,21 +8,22 @@
 
 ### 多会话更新管理机制改进简要介绍
 
-这是一次兼容性更新，如果你没有这类需求，可以照常使用插件
-相关配置插件将会自动迁移和兼容
+这是一次兼容性更新，如果你没有这类需求，可以忽略这些，照常使用插件。相关的配置，插件将会自动迁移和兼容
 
 简单来说：你可以把bot再拉进一个群聊，群聊内管理的远程 coding session 的通知推送与审批与你和 bot 的私聊相互独立，以便你区分多用户同时使用插件的场景、给任务分类
 
-<img width="430" height="238" alt="Image" src="docs/pics/隔离示例-群组列表.png" />
+<p align="center">
+   <img width="430" height="238" alt="Image" src="https://github.com/user-attachments/assets/e6f2afb2-055d-439b-8959-705296d105cd" />
+</p>
+<p align="center"><em>可多窗口推送通知，会话独立</em></p>
 
 **在不同astrbot会话中（比如QQ的私聊、群聊）管理的不同session会话将会互相独立**
 
 根据astrbot的窗口id进行区分，如图，可见和可管理的session不同
-<p align="center">
-  <img src="docs/pics/隔离示例-不存在session.png" width="30%" />
-  <img src="docs/pics/隔离示例-私聊.png" width="30%" />
-  <img src="docs/pics/隔离示例-群聊.png" width="30%" />
-</p>
+
+| 未绑定 session 的窗口 | 私聊窗口 | 群聊窗口 |
+| --- | --- | --- |
+| <img src="https://github.com/user-attachments/assets/b9c3fe24-4dfb-433e-993b-a0b2cb3cb271" width="100%" /> |  <img src="https://github.com/user-attachments/assets/4322eb91-ba0a-4d12-80d1-4961a6199e74" width="100%" /> | <img src="https://github.com/user-attachments/assets/f19319ed-0482-49fb-9976-c36a2b83209e" width="100%" /> |
 
 在某个窗口使用sw/create命令后，将会自动将对应 session 的通知路由到当前会话
 
