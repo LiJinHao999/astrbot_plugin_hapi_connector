@@ -296,15 +296,15 @@ def format_session_list(
     sessions: list[dict],
     current_sid: str | None = None,
     all_sessions: list[dict] | None = None,
-    header_current_sid: str | None = None,
+    header_current_window: str | None = None,
 ) -> str:
     """格式化 session 列表；可选沿用全局 session 列表编号。"""
     if not sessions:
         return "没有任何 session"
 
     lines: list[str] = []
-    if header_current_sid:
-        lines.append(f"当前会话 ID: {header_current_sid}")
+    if header_current_window:
+        lines.append(f"当前窗口 ID: {header_current_window}")
         lines.append("")
 
     lines.append(f"共 {len(sessions)} 个 Session:")
@@ -759,7 +759,7 @@ HELP_COMMANDS = [
     {
         "topic": "push",
         "usage": "/hapi bind [claude|codex|gemini]",
-        "summary": "将当前窗口设为默认通知窗口，或设为指定 flavor 的默认窗口",
+        "summary": "设置当前聊天为默认通知窗口；带 claude/codex/gemini 时只对对应模型生效",
         "example": None,
         "home": True,
     },
@@ -1075,6 +1075,21 @@ def _format_help_commands(title: str, topic: str) -> str:
                 if item["topic"] == section_topic:
                     _append_help_item(lines, item)
         return "\n".join(lines).rstrip()
+
+    if topic == "push":
+        lines.extend([
+            "通知发送规则：",
+            "  1. 某个 session 如果已经绑定到聊天窗口，通知只发到那个窗口。",
+            "  2. 没有绑定时，如果配置了模型默认窗口，例如 /hapi bind codex，就发到那个窗口。",
+            "  3. 还没有时，发到 /hapi bind 设置的默认窗口。",
+            "",
+            "相关命令：",
+            "  /hapi bind               设置默认通知窗口",
+            "  /hapi bind codex         设置 Codex 默认通知窗口",
+            "  /hapi bind status        查看当前通知配置",
+            "  /hapi bind reset         清除 session 绑定和窗口状态，不清除默认窗口配置",
+            "",
+        ])
 
     commands = _iter_help_commands(topic)
     for item in commands:

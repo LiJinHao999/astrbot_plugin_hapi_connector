@@ -43,9 +43,9 @@ except Exception:
     Comp.File.__setattr__ = _patched_file_setattr
 
 
-@register("astrbot_plugin_hapi_connector_test", "LiJinHao999",
+@register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.6.0-test")
+          "1.6.0")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -854,7 +854,7 @@ class HapiConnectorPlugin(Star):
             visible_sessions,
             current_sid,
             self.sessions_cache,
-            header_current_sid=current_sid,
+            header_current_window=event.unified_msg_origin,
         )
 
         if machine_hint:
@@ -874,7 +874,7 @@ class HapiConnectorPlugin(Star):
             text = formatters.format_session_list(
                 self.sessions_cache,
                 current_sid,
-                header_current_sid=current_sid,
+                header_current_window=event.unified_msg_origin,
             )
             yield event.plain_result(text + "\n\n请使用 /hapi sw <序号或ID前缀> 切换")
             return
