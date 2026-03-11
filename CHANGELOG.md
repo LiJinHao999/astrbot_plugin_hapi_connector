@@ -1,13 +1,13 @@
 # 更新日志
 
-## v1.6.0-test — 通知绑定机制改进
+## v1.6.0-test — 通知管理机制改进
 
 1. 新增 `/hapi bind force <flavor>` 命令，支持按 flavor 批量绑定 session 到当前窗口
 2. 新增 `/hapi unbind force <flavor>` 命令，支持按 flavor 批量解除绑定
 3. 修改 `/hapi list` 默认只显示当前窗口绑定的 session，`/hapi list all` 显示全局
 4. 优化推送逻辑：无绑定的 session 推送失败时记录错误日志
 5. 重构绑定管理逻辑，新增 `binding_manager.py` 模块，代码结构更清晰
-6. 帮助文档新增"通知"主题，bind/unbind 命令归类到通知绑定管理
+6. 帮助文档新增"通知"主题，bind/unbind 命令归类到通知管理
 
 ## v1.5.1 — 命令体验优化
 

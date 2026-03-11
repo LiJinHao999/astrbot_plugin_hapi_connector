@@ -39,7 +39,7 @@ except Exception:
     Comp.File.__setattr__ = _patched_file_setattr
 
 
-@register("astrbot_plugin_hapi_connector", "LiJinHao999",
+@register("astrbot_plugin_hapi_connector_test", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
           "1.6.0-test")
 class HapiConnectorPlugin(Star):

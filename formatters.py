@@ -596,7 +596,7 @@ HELP_TOPICS: list[tuple[str, str]] = [
     ("会话", "Session 管理"),
     ("对话", "对话与消息"),
     ("审批", "审批与回答"),
-    ("通知", "通知绑定管理"),
+    ("通知", "通知管理"),
     ("文件", "文件操作"),
     ("配置", "模式与配置"),
     ("全部", "完整命令列表"),
@@ -992,7 +992,7 @@ def _format_help_commands(title: str, topic: str) -> str:
             ("💬 Session 管理", "session"),
             ("📨 对话", "chat"),
             ("✅ 权限审批", "approve"),
-            ("🔔 通知绑定", "push"),
+            ("🔔 通知管理", "push"),
             ("📁 文件管理", "files"),
             ("⚙️ 配置管理", "config"),
         ]
@@ -1014,7 +1014,7 @@ def _get_home_help_text() -> str:
         ("💬 Session 管理", "session"),
         ("📨 对话", "chat"),
         ("✅ 权限审批", "approve"),
-        ("🔔 通知绑定", "push"),
+        ("🔔 通知管理", "push"),
         ("📁 文件管理", "files"),
         ("⚙️ 配置管理", "config"),
     ]
@@ -1053,7 +1053,7 @@ def get_help_text(topic: str = "") -> str:
     if normalized == "approve":
         return _format_help_commands("HAPI 帮助 / 审批与回答", "approve")
     if normalized == "push":
-        return _format_help_commands("HAPI 帮助 / 通知绑定管理", "push")
+        return _format_help_commands("HAPI 帮助 / 通知管理", "push")
     if normalized == "files":
         return _format_help_commands("HAPI 帮助 / 文件操作", "files")
     if normalized == "config":
