@@ -372,12 +372,61 @@ class HapiConnectorPlugin(Star):
             return f"⚠ SSE 连接已连续失败 {n} 次，正在后台重连...\n"
         return None
 
+    @staticmethod
+    def _strip_hapi_prefix(text: str) -> str:
+        """Strip a leading /hapi command prefix and return the remainder."""
+        normalized = (text or "").strip()
+        lowered = normalized.lower()
+        if lowered == "/hapi":
+            return ""
+        if lowered.startswith("/hapi "):
+            return normalized[6:].strip()
+        if lowered == "hapi":
+            return ""
+        if lowered.startswith("hapi "):
+            return normalized[5:].strip()
+        return normalized
+
+    def _extract_hapi_remainder(self, event: AstrMessageEvent, raw: str = "") -> str:
+        """Choose the most complete /hapi remainder from raw and message text."""
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        for source in ((raw or "").strip(), (event.message_str or "").strip()):
+            remainder = self._strip_hapi_prefix(source)
+            if remainder in seen:
+                continue
+            seen.add(remainder)
+            candidates.append(remainder)
+
+        if not candidates:
+            return ""
+
+        return max(candidates, key=lambda item: (len(item.split()), len(item)))
+
     async def _refresh_sessions(self):
         """刷新 session 缓存"""
         try:
             self.sessions_cache[:] = await session_ops.fetch_sessions(self.client)
         except Exception as e:
             logger.warning("刷新 session 列表失败: %s", e)
+
+    async def _format_bind_status_text(self, event: AstrMessageEvent) -> str:
+        """生成绑定状态总览；供 /hapi list all 和 /hapi bind status 复用。"""
+        await self._refresh_sessions()
+        text = formatters.format_bind_status(
+            self.sessions_cache,
+            self._session_owners,
+            self.binding_mgr._window_states,
+        )
+
+        sender_id = str(event.get_sender_id())
+        state = self._user_states_cache.get(sender_id, {})
+        primary = state.get("primary_umo")
+        if primary:
+            display = primary[:40] + "..." if len(primary) > 40 else primary
+            text += f"\n\n默认发送窗口: {display}"
+        return text
 
     def _get_primary_windows(self) -> list[str]:
         """返回所有用户当前生效的默认通知窗口（去重后）"""
@@ -549,21 +598,7 @@ class HapiConnectorPlugin(Star):
     @filter.command("hapi")
     async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
         """统一处理 /hapi 路由与帮助提示"""
-        full_text = (event.message_str or "").strip()
-        raw_text = (raw or "").strip()
-        if full_text and raw_text and len(full_text) > len(raw_text):
-            source_text = full_text
-        else:
-            source_text = full_text or raw_text
-
-        if source_text == "hapi":
-            remainder = ""
-        elif source_text.startswith("hapi "):
-            remainder = source_text[4:].strip()
-        elif source_text.startswith("/hapi"):
-            remainder = source_text[5:].strip()
-        else:
-            remainder = source_text
+        remainder = self._extract_hapi_remainder(event, raw)
         if not remainder:
             await self._ensure_primary_session(event)
             async for result in self.cmd_help(event, ""):
@@ -576,8 +611,8 @@ class HapiConnectorPlugin(Star):
         routes = {
             "help": (self.cmd_help, True),
             "帮助": (self.cmd_help, True),
-            "list": (self.cmd_list, False),
-            "ls": (self.cmd_list, False),
+            "list": (self.cmd_list, True),
+            "ls": (self.cmd_list, True),
             "sw": (self.cmd_sw, True),
             "s": (self.cmd_status, False),
             "status": (self.cmd_status, False),
@@ -610,7 +645,6 @@ class HapiConnectorPlugin(Star):
             "upload": (self.cmd_upload, True),
             "bind": (self.cmd_bind, True),
             "routes": (self.cmd_routes, False),
-            "reset": (self.cmd_reset, False),
         }
         route = routes.get(subcommand)
         if route is None:
@@ -643,17 +677,21 @@ class HapiConnectorPlugin(Star):
         await self._set_user_state(event)
         if w := self._conn_warning():
             yield event.plain_result(w)
-        await self._refresh_sessions()
 
-        # /hapi list all - 显示所有 + 绑定状态
-        if scope == "all":
-            text = formatters.format_bind_status(
-                self.sessions_cache,
-                self._session_owners,
-                self.binding_mgr._window_states,
-            )
+        normalized_scope = (scope or "").strip().lower()
+        if not normalized_scope:
+            remainder = self._extract_hapi_remainder(event).lower()
+            parts = remainder.split(None, 1)
+            if parts and parts[0] in ("list", "ls"):
+                normalized_scope = parts[1].strip() if len(parts) > 1 else ""
+
+        scope_head = normalized_scope.split(None, 1)[0] if normalized_scope else ""
+        if scope_head == "all":
+            text = await self._format_bind_status_text(event)
             yield event.plain_result(text)
             return
+
+        await self._refresh_sessions()
 
         visible_sessions = self._visible_sessions_for_window(event)
         if not visible_sessions:
@@ -1614,37 +1652,32 @@ class HapiConnectorPlugin(Star):
     # ── bind ──
 
     async def cmd_bind(self, event: AstrMessageEvent, arg: str = ""):
-        """设置默认发送窗口: /hapi bind [status]"""
+        """设置默认发送窗口: /hapi bind [status|reset]"""
         await self._ensure_primary_session(event)
         sender_id = str(event.get_sender_id())
         umo = event.unified_msg_origin
+        action = (arg or "").strip().lower()
 
-        if not arg:
+        if not action:
             # 设置当前窗口为默认
             state = self._user_states_cache.get(sender_id, {})
             state["primary_umo"] = umo
             self._user_states_cache[sender_id] = state
             await self.put_kv_data(f"user_state_{sender_id}", state)
             yield event.plain_result("✓ 已设置当前窗口为默认发送窗口")
-        elif arg == "status":
-            # 复用 /hapi list all 的显示逻辑
-            await self._refresh_sessions()
-            text = formatters.format_bind_status(
-                self.sessions_cache,
-                self._session_owners,
-                self.binding_mgr._window_states
-            )
-
-            # 附加默认窗口信息
-            state = self._user_states_cache.get(sender_id, {})
-            primary = state.get("primary_umo")
-            if primary:
-                display = primary[:40] + "..." if len(primary) > 40 else primary
-                text += f"\n\n默认发送窗口: {display}"
-
+        elif action == "status":
+            text = await self._format_bind_status_text(event)
             yield event.plain_result(text)
+        elif action == "reset":
+            async for result in self.cmd_reset(event):
+                yield result
         else:
-            yield event.plain_result("用法:\n  /hapi bind        设置当前窗口为默认\n  /hapi bind status 查看推送路由")
+            yield event.plain_result(
+                "用法:\n"
+                "  /hapi bind        设置当前窗口为默认\n"
+                "  /hapi bind status 查看推送路由\n"
+                "  /hapi bind reset  重置窗口路由"
+            )
 
     # ── routes ──
 
@@ -1682,7 +1715,7 @@ class HapiConnectorPlugin(Star):
     # ── reset ──
 
     async def cmd_reset(self, event: AstrMessageEvent):
-        """重置所有状态（清空捕获关系和窗口状态，保留默认窗口）"""
+        """重置所有状态（/hapi bind reset；清空捕获关系和窗口状态，保留默认窗口）"""
         await self._ensure_primary_session(event)
 
         umos_to_clear = set(self.binding_mgr._window_states.keys())

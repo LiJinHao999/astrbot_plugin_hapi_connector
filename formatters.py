@@ -645,7 +645,7 @@ HELP_TOPICS: list[tuple[str, str]] = [
     ("会话", "Session 管理"),
     ("对话", "对话与消息"),
     ("审批", "审批与回答"),
-    ("通知", "通知管理"),
+    ("通知", "多会话通知管理"),
     ("文件", "文件操作"),
     ("配置", "模式与配置"),
     ("全部", "完整命令列表"),
@@ -712,7 +712,6 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "clean",
     "bind",
     "routes",
-    "reset",
     "files", "file",
     "find",
     "download", "dl",
@@ -723,7 +722,7 @@ KNOWN_HAPI_SUBCOMMANDS = {
 HELP_COMMANDS = [
     {
         "topic": "session",
-        "usage": "/hapi list",
+        "usage": "/hapi list [all]",
         "summary": "查看当前窗口会接收通知的 session",
         "example": None,
         "home": True,
@@ -758,7 +757,7 @@ HELP_COMMANDS = [
     },
     {
         "topic": "push",
-        "usage": "/hapi reset",
+        "usage": "/hapi bind reset",
         "summary": "清空会话路由和窗口状态，保留默认通知窗口",
         "example": None,
         "home": False,
@@ -990,6 +989,8 @@ def format_unknown_command_help(command: str) -> str:
     from difflib import get_close_matches
 
     normalized = command.strip().lower()
+    if normalized == "reset":
+        return "命令已调整为: /hapi bind reset"
     lines = [
         f"未知命令: /hapi {command}",
         "",
@@ -1042,7 +1043,7 @@ def _format_help_commands(title: str, topic: str) -> str:
             ("💬 Session 管理", "session"),
             ("📨 对话", "chat"),
             ("✅ 权限审批", "approve"),
-            ("🔔 通知管理", "push"),
+            ("🔔 多会话通知管理", "push"),
             ("📁 文件管理", "files"),
             ("⚙️ 配置管理", "config"),
         ]
@@ -1064,7 +1065,7 @@ def _get_home_help_text() -> str:
         ("💬 Session 管理", "session"),
         ("📨 对话", "chat"),
         ("✅ 权限审批", "approve"),
-        ("🔔 通知管理", "push"),
+        ("🔔 多会话通知管理", "push"),
         ("📁 文件管理", "files"),
         ("⚙️ 配置管理", "config"),
     ]
@@ -1103,7 +1104,7 @@ def get_help_text(topic: str = "") -> str:
     if normalized == "approve":
         return _format_help_commands("HAPI 帮助 / 审批与回答", "approve")
     if normalized == "push":
-        return _format_help_commands("HAPI 帮助 / 通知管理", "push")
+        return _format_help_commands("HAPI 帮助 / 多会话通知管理", "push")
     if normalized == "files":
         return _format_help_commands("HAPI 帮助 / 文件操作", "files")
     if normalized == "config":
