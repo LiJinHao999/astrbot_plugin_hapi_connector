@@ -87,8 +87,7 @@ class HapiConnectorPlugin(Star):
 
         # 绑定管理器
         self.binding_mgr = BindingManager()
-        # 兼容旧代码的属性访问
-        self._chat_bindings = self.binding_mgr._chat_bindings
+        # 直接访问捕获窗口映射
         self._session_owners = self.binding_mgr._session_owners
 
         # 快捷前缀

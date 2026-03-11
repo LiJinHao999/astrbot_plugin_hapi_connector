@@ -46,6 +46,8 @@ class SSEListener:
         self._summary_msg_count: int = 5
         # {session_id: seq}，记录已触发通知的消息序号，防止重复
         self._compact_notified_seqs: dict[str, int] = {}
+        # {session_id: seq}，记录已推送的新消息最大可见序号，防止重复通知
+        self._message_notified_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已处理的压缩完成消息序号，防止重复发「继续」
         self._compaction_completed_seqs: dict[str, int] = {}
 
@@ -67,6 +69,9 @@ class SSEListener:
         self._completion_task: asyncio.Task | None = None
         self._compact_check_sids: set[str] = set()
         self._compact_check_task: asyncio.Task | None = None
+        if self._task and not self._task.done():
+            logger.info("SSE 监听已在运行，跳过重复启动")
+            return
         self._task = asyncio.create_task(self._listen_loop())
 
     async def stop(self):
@@ -295,9 +300,6 @@ class SSEListener:
     def _update_session_cache(self, sid: str, updated_data: dict):
         """实时更新缓存中的 session 数据"""
         cache = self.sessions_cache
-        if not cache:
-            return
-
         for s in cache:
             if s.get("id") == sid:
                 if "active" in updated_data and updated_data["active"] is not None:
@@ -309,6 +311,21 @@ class SSEListener:
                 if "pendingRequestsCount" in updated_data:
                     s["pendingRequestsCount"] = updated_data["pendingRequestsCount"]
                 break
+        else:
+            metadata = updated_data.get("metadata")
+            cache.append({
+                "id": sid,
+                "active": updated_data.get("active", False),
+                "thinking": updated_data.get("thinking", False),
+                "pendingRequestsCount": updated_data.get("pendingRequestsCount", 0),
+                "metadata": copy.deepcopy(metadata) if isinstance(metadata, dict) else {},
+            })
+
+    def _already_notified_messages(self, sid: str, latest_visible_seq: int) -> bool:
+        return latest_visible_seq <= self._message_notified_seqs.get(sid, -1)
+
+    def _mark_messages_notified(self, sid: str, latest_visible_seq: int):
+        self._message_notified_seqs[sid] = latest_visible_seq
 
     async def _debounced_completion(self):
         """防抖：等待状态稳定后再推送任务完成通知（避免 Codex 频繁切换 thinking 导致重复推送）"""
@@ -447,6 +464,10 @@ class SSEListener:
             if not visible_msgs:
                 return
 
+            latest_visible_seq = max(msg.get("seq", 0) for msg, _ in visible_msgs)
+            if self._already_notified_messages(sid, latest_visible_seq):
+                return
+
             label = session_label_short(sid, self.sessions_cache)
 
             if len(visible_msgs) == 1:
@@ -459,6 +480,7 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
+            self._mark_messages_notified(sid, latest_visible_seq)
             await self._push_notification(output, sid)
 
         except Exception as e:
@@ -496,6 +518,10 @@ class SSEListener:
             if not agent_texts:
                 return
 
+            latest_visible_seq = max(msg.get("seq", 0) for msg, _ in agent_texts)
+            if self._already_notified_messages(sid, latest_visible_seq):
+                return
+
             label = session_label_short(sid, self.sessions_cache)
 
             if len(agent_texts) == 1:
@@ -508,6 +534,7 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
+            self._mark_messages_notified(sid, latest_visible_seq)
             await self._push_notification(output, sid)
 
         except Exception as e:
@@ -543,6 +570,10 @@ class SSEListener:
                 return
 
             agent_texts = agent_texts[-self._summary_msg_count:]
+            latest_visible_seq = max(msg.get("seq", 0) for msg, _ in agent_texts)
+            if self._already_notified_messages(sid, latest_visible_seq):
+                return
+
             label = session_label_short(sid, self.sessions_cache)
 
             if len(agent_texts) == 1:
@@ -555,6 +586,7 @@ class SSEListener:
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
 
+            self._mark_messages_notified(sid, latest_visible_seq)
             await self._push_notification(output, sid)
 
         except Exception as e:
@@ -614,4 +646,3 @@ class SSEListener:
                                 sid[:8], len(requests_data))
             except Exception as e:
                 logger.warning("加载 session %s 待审批失败: %s", sid[:8], e)
-
