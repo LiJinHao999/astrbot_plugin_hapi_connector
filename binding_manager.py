@@ -8,8 +8,39 @@ class BindingManager:
         self._session_owners: dict[str, list[str]] = {}  # {session_id: [umo]}
         self._window_states: dict[str, dict] = {}  # {umo: {current_session, current_flavor}}
 
+    def _remove_owner(self, session_id: str, umo: str):
+        owners = self._session_owners.get(session_id, [])
+        if not owners:
+            return
+        next_owners = [owner for owner in owners if owner != umo]
+        if next_owners:
+            self._session_owners[session_id] = next_owners
+        else:
+            self._session_owners.pop(session_id, None)
+
+    def bind_window(self, session_id: str, umo: str, flavor: str):
+        """将 session 独占绑定到窗口，并同步窗口当前状态"""
+        released_windows: list[str] = []
+
+        previous_session = self.get_window_session(umo)
+        if previous_session and previous_session != session_id:
+            self._remove_owner(previous_session, umo)
+
+        current_owners = list(self._session_owners.get(session_id, []))
+        for owner in current_owners:
+            if owner == umo:
+                continue
+            self._remove_owner(session_id, owner)
+            if self.get_window_session(owner) == session_id:
+                self.clear_window_state(owner)
+            released_windows.append(owner)
+
+        self._session_owners[session_id] = [umo]
+        self.set_window_state(umo, session_id, flavor)
+        return released_windows
+
     def capture(self, session_id: str, umo: str):
-        """捕获窗口为 session 的推送目标"""
+        """兼容旧接口：仅更新 session 的捕获窗口"""
         self._session_owners[session_id] = [umo]
 
     def get_owners(self, session_id: str) -> list[str]:
@@ -46,6 +77,29 @@ class BindingManager:
         """清理窗口状态"""
         if umo in self._window_states:
             del self._window_states[umo]
+
+    def unbind_window(self, umo: str) -> dict | None:
+        """解除窗口与当前 session 的绑定"""
+        state = self._window_states.pop(umo, None)
+        if state:
+            session_id = state.get("current_session")
+            if session_id:
+                self._remove_owner(session_id, umo)
+            return state
+
+        for session_id, owners in list(self._session_owners.items()):
+            if umo in owners:
+                self._remove_owner(session_id, umo)
+                break
+        return None
+
+    def unbind_session(self, session_id: str) -> list[str]:
+        """解除 session 的所有窗口绑定"""
+        owners = list(self._session_owners.pop(session_id, []))
+        for owner in owners:
+            if self.get_window_session(owner) == session_id:
+                self.clear_window_state(owner)
+        return owners
 
     def find_window_by_session(self, session_id: str) -> str | None:
         """查找持有指定 session 的窗口"""
