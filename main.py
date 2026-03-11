@@ -1464,26 +1464,28 @@ class HapiConnectorPlugin(Star):
         sender_id = event.get_sender_id()
         umo = event.unified_msg_origin
 
-        if not arg or arg == "status":
+        if not arg:
+            # 设置当前窗口为默认
             state = self._user_states_cache.get(sender_id, {})
-            current = state.get("primary_umo")
+            state["primary_umo"] = umo
+            self._user_states_cache[sender_id] = state
+            await self.put_kv_data(f"user_state_{sender_id}", state)
+            yield event.plain_result("✓ 已设置当前窗口为默认发送窗口")
+        elif arg == "status":
+            # 复用 /hapi list all 的显示逻辑
+            await self._refresh_sessions()
+            text = formatters.format_bind_status(self.sessions_cache, self._session_owners)
 
-            if not arg:
-                # 设置当前窗口为默认
-                state["primary_umo"] = umo
-                self._user_states_cache[sender_id] = state
-                await self.put_kv_data(f"user_state_{sender_id}", state)
-                yield event.plain_result("✓ 已设置当前窗口为默认发送窗口")
-            else:
-                # 查看状态
-                if current:
-                    display = current[:50] + "..." if len(current) > 50 else current
-                    is_current = "（当前窗口）" if current == umo else ""
-                    yield event.plain_result(f"默认发送窗口: {display} {is_current}")
-                else:
-                    yield event.plain_result("未设置默认发送窗口\n使用 /hapi bind 设置当前窗口为默认")
+            # 附加默认窗口信息
+            state = self._user_states_cache.get(sender_id, {})
+            primary = state.get("primary_umo")
+            if primary:
+                display = primary[:40] + "..." if len(primary) > 40 else primary
+                text += f"\n\n默认发送窗口: {display}"
+
+            yield event.plain_result(text)
         else:
-            yield event.plain_result("用法:\n  /hapi bind        设置当前窗口为默认\n  /hapi bind status 查看默认窗口")
+            yield event.plain_result("用法:\n  /hapi bind        设置当前窗口为默认\n  /hapi bind status 查看推送路由")
 
     # ── routes ──
 
