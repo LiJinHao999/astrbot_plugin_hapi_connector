@@ -238,7 +238,7 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]], window_states: dict[str, dict] = None) -> str:
+def format_bind_status(sessions: list[dict], session_owners: dict[str, str], window_states: dict[str, dict] = None) -> str:
     """格式化全局绑定状态（复用 session 列表格式 + 绑定信息 + 窗口状态）"""
     if not sessions:
         return "没有任何 session"
@@ -276,10 +276,10 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, list[str]
             parts.append(f"⚠️ {pending}待审批")
 
         # 添加绑定信息
-        owners = session_owners.get(sid, [])
-        if owners:
-            owner_str = ", ".join([o[:20] + "..." if len(o) > 20 else o for o in owners])
-            parts.append(f"📌{owner_str}")
+        owner = session_owners.get(sid)
+        if owner:
+            owner_display = owner[:20] + "..." if len(owner) > 20 else owner
+            parts.append(f"📌{owner_display}")
 
         # 添加窗口状态
         if window_states:
