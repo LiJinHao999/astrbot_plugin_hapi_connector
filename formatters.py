@@ -281,11 +281,11 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, str], win
             owner_display = owner[:20] + "..." if len(owner) > 20 else owner
             parts.append(f"📌{owner_display}")
 
-        # 添加窗口状态
+        # 添加窗口状态（显示当前活跃交互的窗口）
         if window_states:
-            active_windows = [umo[:20] for umo, state in window_states.items() if state.get("current_session") == sid]
-            if active_windows:
-                parts.append(f"🪟{len(active_windows)}窗口")
+            active_umo = next((umo for umo, state in window_states.items() if state.get("current_session") == sid), None)
+            if active_umo:
+                parts.append(f"🪟正在交互")
 
         lines.append(" | ".join(parts))
 
