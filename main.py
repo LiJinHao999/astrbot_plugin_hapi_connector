@@ -1119,8 +1119,8 @@ class HapiConnectorPlugin(Star):
 
     _OUTPUT_LEVELS = {
         "silence": "仅推送权限请求和任务完成提醒",
-        "summary": "任务完成时推送最近几条 agent 消息摘要",
-        "simple": "AI 思考完成后推送最近 agent 文本消息",
+        "summary": "任务完成时推送最近的 agent 消息",
+        "simple": "仅推送 agent 文本消息，不包含复杂的工具调用信息",
         "detail": "实时推送所有新消息（信息量较大）",
     }
 
