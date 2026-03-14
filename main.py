@@ -173,22 +173,33 @@ class HapiConnectorPlugin(Star):
         stored_session_owners = await self.get_kv_data("session_owners", {})
         if isinstance(stored_session_owners, dict):
             for sid, umos in stored_session_owners.items():
-                if not isinstance(sid, str) or not isinstance(umos, list):
+                if not isinstance(sid, str):
                     continue
-                normalized_umos = [str(umo) for umo in umos if str(umo)]
-                if normalized_umos:
-                    self._session_owners[sid] = [normalized_umos[-1]]
+                # 兼容旧格式（列表）和新格式（字符串）
+                if isinstance(umos, list):
+                    if umos:
+                        umo = str(umos[-1])
+                        self._session_owners[sid] = umo
+                        if umo not in self.binding_mgr._window_sessions:
+                            self.binding_mgr._window_sessions[umo] = []
+                        if sid not in self.binding_mgr._window_sessions[umo]:
+                            self.binding_mgr._window_sessions[umo].append(sid)
+                elif isinstance(umos, str):
+                    self._session_owners[sid] = umos
+                    if umos not in self.binding_mgr._window_sessions:
+                        self.binding_mgr._window_sessions[umos] = []
+                    if sid not in self.binding_mgr._window_sessions[umos]:
+                        self.binding_mgr._window_sessions[umos].append(sid)
 
         # 加载窗口状态
-        for sid, umos in self._session_owners.items():
-            for umo in umos:
-                window_state = await self.get_kv_data(f"window_state_{umo}", None)
-                if window_state:
-                    self.binding_mgr.set_window_state(
-                        umo,
-                        window_state.get("current_session", ""),
-                        window_state.get("current_flavor", "")
-                    )
+        for sid, umo in self._session_owners.items():
+            window_state = await self.get_kv_data(f"window_state_{umo}", None)
+            if window_state:
+                self.binding_mgr.set_window_state(
+                    umo,
+                    window_state.get("current_session", ""),
+                    window_state.get("current_flavor", "")
+                )
 
         # 执行数据迁移
         await self._migrate_to_capture_model()
