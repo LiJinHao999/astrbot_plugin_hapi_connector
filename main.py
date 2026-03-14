@@ -1873,12 +1873,12 @@ class HapiConnectorPlugin(Star):
         lines = ["会话推送路由："]
         has_routes = False
 
-        for sid, umos in self._session_owners.items():
+        for sid, umo in self._session_owners.items():
             s = next((s for s in self.sessions_cache if s["id"] == sid), None)
-            if s and umos:
+            if s and umo:
                 flavor = s.get("metadata", {}).get("flavor", "?")
                 summary = s.get("metadata", {}).get("summary", {}).get("text", "")[:20]
-                umo_display = umos[0][:40] + "..." if len(umos[0]) > 40 else umos[0]
+                umo_display = umo[:40] + "..." if len(umo) > 40 else umo
                 lines.append(f"  [{flavor}] {sid[:8]} {summary}\n    → {umo_display}")
                 has_routes = True
 
