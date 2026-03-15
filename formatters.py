@@ -531,7 +531,7 @@ def format_question_notification(req: dict, label: str, total: int) -> str:
 def format_permission_notification(label: str, detail: str, total: int) -> str:
     """格式化普通权限审批通知，复用统一的会话前缀。"""
     lines = [
-        label,
+        f"🔐 权限请求 {label}",
         f"  {detail}",
         "",
         f"当前共 {total} 个待审批，审批指令:",

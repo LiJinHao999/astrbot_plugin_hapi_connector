@@ -214,7 +214,7 @@ class HapiConnectorPlugin(Star):
         await self.sse_listener.load_existing_pending()
 
         # 启动 SSE
-        output_level = self.config.get("output_level", "detail")
+        output_level = self.config.get("output_level", "simple")
         remind = self.config.get("remind_pending", True)
         remind_interval = self.config.get("remind_interval", 180)
         auto_approve = self.config.get("auto_approve_enabled", False)

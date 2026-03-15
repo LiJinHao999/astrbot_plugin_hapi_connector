@@ -47,7 +47,7 @@
   "output_level": {
     "description": "SSE 推送级别",
     "type": "string",
-    "default": "detail",
+    "default": "simple",
     "options": ["silence", "simple", "summary", "detail"],
     "hint": "silence: 仅推送权限请求；simple: 推送纯文本消息及系统事件；summary: 任务完成时推送最近 N 条消息；detail: 实时推送所有消息"
   },
