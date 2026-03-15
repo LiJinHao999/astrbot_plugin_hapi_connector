@@ -45,7 +45,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.6.0")
+          "1.6.1")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1456,13 +1456,21 @@ class HapiConnectorPlugin(Star):
 
     # ── archive ──
 
-    async def cmd_archive(self, event: AstrMessageEvent):
-        """归档当前 session"""
+    async def cmd_archive(self, event: AstrMessageEvent, target: str = ""):
+        """归档 session: /hapi archive [序号或ID前缀]"""
         await self._set_user_state(event)
-        sid = self._effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
-            return
+
+        if target:
+            await self._refresh_sessions()
+            sid = self._resolve_target(target)
+            if not sid:
+                yield event.plain_result(f"未找到匹配的 session: {target}")
+                return
+        else:
+            sid = self._effective_sid(event)
+            if not sid:
+                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi archive <序号>")
+                return
 
         yield event.plain_result(f"确认归档 session [{sid[:8]}]?\n回复 y 确认")
 
@@ -1490,13 +1498,21 @@ class HapiConnectorPlugin(Star):
 
     # ── rename ──
 
-    async def cmd_rename(self, event: AstrMessageEvent):
-        """重命名当前 session"""
+    async def cmd_rename(self, event: AstrMessageEvent, target: str = ""):
+        """重命名 session: /hapi rename [序号或ID前缀]"""
         await self._set_user_state(event)
-        sid = self._effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
-            return
+
+        if target:
+            await self._refresh_sessions()
+            sid = self._resolve_target(target)
+            if not sid:
+                yield event.plain_result(f"未找到匹配的 session: {target}")
+                return
+        else:
+            sid = self._effective_sid(event)
+            if not sid:
+                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi rename <序号>")
+                return
 
         yield event.plain_result(f"请输入 session [{sid[:8]}] 的新名称:")
 
@@ -1521,13 +1537,22 @@ class HapiConnectorPlugin(Star):
 
     # ── delete ──
 
-    async def cmd_delete(self, event: AstrMessageEvent):
-        """删除当前 session"""
+    async def cmd_delete(self, event: AstrMessageEvent, target: str = ""):
+        """删除 session: /hapi delete [序号或ID前缀]"""
         await self._set_user_state(event)
-        sid = self._effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
-            return
+
+        # 支持传入序号或 ID 前缀
+        if target:
+            await self._refresh_sessions()
+            sid = self._resolve_target(target)
+            if not sid:
+                yield event.plain_result(f"未找到匹配的 session: {target}")
+                return
+        else:
+            sid = self._effective_sid(event)
+            if not sid:
+                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi delete <序号>")
+                return
 
         # 检查是否处于 active 状态
         is_active = False
