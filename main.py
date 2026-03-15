@@ -996,11 +996,16 @@ class HapiConnectorPlugin(Star):
         target = self.sessions_cache[idx - 1]
         target_sid = target["id"]
         target_flavor = target.get("metadata", {}).get("flavor", "claude")
+
+        # 提醒用户当前窗口的 session
+        current_sid = self._current_sid(event)
+        reminder = ""
+        if current_sid and current_sid != target_sid:
+            reminder = f"→ 发送到 [{target_flavor}] {target_sid[:8]} (当前窗口: {current_sid[:8]})\n"
+
         ok, msg = await session_ops.send_message(self.client, target_sid, text)
-        if ok:
-            await self._capture_window(target_sid, event.unified_msg_origin, target_flavor)
         await self._set_user_state(event)
-        yield event.plain_result(msg)
+        yield event.plain_result(reminder + msg)
 
     # ── perm ──
 
@@ -2079,10 +2084,14 @@ class HapiConnectorPlugin(Star):
                 yield event.plain_result("正在上传文件...\n" + "\n".join(upload_msgs))
 
         # 发送消息（带附件）
+        # 提醒用户当前窗口的 session
+        current_sid = self._current_sid(event)
+        reminder = ""
+        if current_sid and current_sid != target_sid:
+            reminder = f"→ 发送到 [{target_flavor}] {target_sid[:8]} (当前窗口: {current_sid[:8]})\n"
+
         ok, msg = await session_ops.send_message(self.client, target_sid, text, attachments)
-        if ok:
-            await self._capture_window(target_sid, event.unified_msg_origin, target_flavor)
         await self._set_user_state(event)
-        yield event.plain_result(msg)
+        yield event.plain_result(reminder + msg)
         event.stop_event()
 
