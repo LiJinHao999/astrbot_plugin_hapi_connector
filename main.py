@@ -45,7 +45,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude Code / Codex / Gemini / OpenCode vibe coding",
-          "1.6.1")
+          "2.0.0_llmtest")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -313,6 +313,10 @@ class HapiConnectorPlugin(Star):
             await self.put_kv_data(f"user_state_{sender_id}", state)
         elif sender_id not in self._user_states_cache:
             self._user_states_cache[sender_id] = state
+
+        # 存储消息ID（用于QQ官渠回复）
+        if hasattr(event, 'message_id') and event.message_id:
+            self.binding_mgr.set_window_message_id(event.unified_msg_origin, str(event.message_id))
 
         # 维护 known_users 列表
         known = [str(uid) for uid in await self.get_kv_data("known_users", [])]
@@ -628,10 +632,21 @@ class HapiConnectorPlugin(Star):
                 if self._should_skip_duplicate_notification(umo, session_id, text):
                     continue
                 chunks = self._split_message(text) if len(text) > 4200 else [text]
+
+                # 获取窗口的最后消息ID（用于QQ官渠回复）
+                message_id = self.binding_mgr.get_window_message_id(umo)
+
                 for chunk in chunks:
                     try:
                         chain = MessageChain().message(chunk)
-                        await self.context.send_message(umo, chain)
+                        try:
+                            await self.context.send_message(umo, chain)
+                        except Exception as e:
+                            # 如果普通发送失败且有 message_id，尝试带 message_id 发送（QQ官渠）
+                            if message_id and "msg_id" in str(e).lower():
+                                await self.context.send_message(umo, chain, message_id=message_id)
+                            else:
+                                raise
                     except Exception as e:
                         logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
                         break
