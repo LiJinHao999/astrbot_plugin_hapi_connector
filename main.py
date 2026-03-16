@@ -633,20 +633,10 @@ class HapiConnectorPlugin(Star):
                     continue
                 chunks = self._split_message(text) if len(text) > 4200 else [text]
 
-                # 获取窗口的最后消息ID（用于QQ官渠回复）
-                message_id = self.binding_mgr.get_window_message_id(umo)
-
                 for chunk in chunks:
                     try:
                         chain = MessageChain().message(chunk)
-                        try:
-                            await self.context.send_message(umo, chain)
-                        except Exception as e:
-                            # 如果普通发送失败且有 message_id，尝试带 message_id 发送（QQ官渠）
-                            if message_id and "msg_id" in str(e).lower():
-                                await self.context.send_message(umo, chain, message_id=message_id)
-                            else:
-                                raise
+                        await self.context.send_message(umo, chain)
                     except Exception as e:
                         logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
                         break
