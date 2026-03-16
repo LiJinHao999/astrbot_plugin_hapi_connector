@@ -108,6 +108,9 @@ class HapiConnectorPlugin(Star):
         self._admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
         self._recent_notifications: dict[tuple[str, str, str], float] = {}
 
+        # event 缓存，用于主动推送
+        self._event_cache: dict[str, AstrMessageEvent] = {}
+
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         """检查发送者是否为管理员"""
         return str(event.get_sender_id()) in self._admin_ids
@@ -638,7 +641,16 @@ class HapiConnectorPlugin(Star):
                         chain = MessageChain().message(chunk)
                         await self.context.send_message(umo, chain)
                     except Exception as e:
-                        logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
+                        logger.warning("推送到窗口失败 (umo=%s): %s，尝试使用缓存 event", umo[:20], e)
+                        cached_event = self._event_cache.get(umo)
+                        if cached_event:
+                            try:
+                                await cached_event.send(chain)
+                            except Exception as e2:
+                                logger.error("使用缓存 event 推送也失败: %s", e2)
+                                break
+                        else:
+                            break
                         break
             return
 
@@ -768,6 +780,7 @@ class HapiConnectorPlugin(Star):
     @filter.command("hapi")
     async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
         """统一处理 /hapi 路由与帮助提示"""
+        self._event_cache[event.unified_msg_origin] = event
         remainder = self._extract_hapi_remainder(event, raw)
         if not remainder:
             await self._ensure_primary_session(event)
@@ -1964,6 +1977,7 @@ class HapiConnectorPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
     async def poke_approve_handler(self, event: AstrMessageEvent):
         """戳一戳机器人 → 自动批准所有待审批请求 (仅 QQ NapCat)"""
+        self._event_cache[event.unified_msg_origin] = event
         if not self._poke_approve:
             return
 
@@ -2026,6 +2040,7 @@ class HapiConnectorPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def quick_prefix_handler(self, event: AstrMessageEvent):
         """快捷前缀: > 消息 或 >N 消息 (仅管理员)"""
+        self._event_cache[event.unified_msg_origin] = event
         prefix = self._quick_prefix
         raw = event.message_str
 
