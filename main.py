@@ -640,14 +640,13 @@ class HapiConnectorPlugin(Star):
                     try:
                         chain = MessageChain().message(chunk)
                         await self.context.send_message(umo, chain)
-                    except Exception as e:
-                        logger.warning("推送到窗口失败 (umo=%s): %s，尝试使用缓存 event", umo[:20], e)
+                    except Exception:
                         cached_event = self._event_cache.get(umo)
                         if cached_event:
                             try:
                                 await cached_event.send(chain)
-                            except Exception as e2:
-                                logger.error("使用缓存 event 推送也失败: %s", e2)
+                            except Exception as e:
+                                logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
                                 break
                         else:
                             break
@@ -780,7 +779,6 @@ class HapiConnectorPlugin(Star):
     @filter.command("hapi")
     async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
         """统一处理 /hapi 路由与帮助提示"""
-        self._event_cache[event.unified_msg_origin] = event
         remainder = self._extract_hapi_remainder(event, raw)
         if not remainder:
             await self._ensure_primary_session(event)
@@ -1977,7 +1975,6 @@ class HapiConnectorPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=20)
     async def poke_approve_handler(self, event: AstrMessageEvent):
         """戳一戳机器人 → 自动批准所有待审批请求 (仅 QQ NapCat)"""
-        self._event_cache[event.unified_msg_origin] = event
         if not self._poke_approve:
             return
 
