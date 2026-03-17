@@ -85,11 +85,27 @@ class LLMIntegration:
         sid = self.state_mgr.current_sid(event) or "llm_global"
 
         # 添加到 pending 队列（伪装成 HAPI 权限请求）
-        req_id, future = self.pending_mgr.add_llm_tool_request(sid, tool_name, args)
+        req_id, future, index = self.pending_mgr.add_llm_tool_request(sid, tool_name, args)
+
+        # 计算当前待审批总数
+        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        items = self.pending_mgr.flatten_pending(event, visible_sids)
+        total = len(items)
 
         # 发送通知（复用现有通知机制）
         args_str = ", ".join(f"{k}={v}" for k, v in args.items())
-        msg = f"🤖 LLM 工具调用请求\n工具: {tool_name}\n参数: {args_str}\n\n💡 批准：/hapi a 或 /hapi a <序号>\n💡 拒绝：/hapi deny 或 /hapi deny <序号>"
+        msg = f"""🤖 LLM 工具调用请求
+  {tool_name}
+  参数: {args_str}
+
+当前共 {total} 个待审批，此请求审批序号：{index}
+
+审批指令:
+  /hapi a        全部批准
+  /hapi a <序号>  批准单个
+  /hapi deny     全部拒绝
+  /hapi deny <序号> 拒绝单个
+  /hapi pending   查看完整列表"""
 
         targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
         if targets:

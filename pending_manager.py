@@ -32,6 +32,12 @@ class PendingManager:
 
     def remove_entry(self, sid: str, rid: str):
         """移除单个待审批条目"""
+        # 回收序号
+        if sid in self.sse_listener.pending and rid in self.sse_listener.pending[sid]:
+            req = self.sse_listener.pending[sid][rid]
+            index = req.get("index", 0)
+            if index > 0:
+                self.sse_listener.free_index(index)
         approval_ops.remove_pending_entry(self.sse_listener.pending, sid, rid)
 
     async def approve_items(self, items: list[tuple[str, str, dict]], client) -> str | None:
@@ -41,17 +47,23 @@ class PendingManager:
         if not regular:
             return None
 
+        # 先处理 LLM 工具请求的 Future（避免序列化问题）
+        llm_futures = []
+        for sid, rid, req in regular:
+            if self.is_llm_tool_request(req):
+                future = req.pop("future", None)  # 移除 future 避免序列化
+                if future:
+                    llm_futures.append((sid, rid, future))
+
         results = await approval_ops.batch_approve(client, regular)
         for sid, rid, success in results:
             if success:
                 self.remove_entry(sid, rid)
 
-        # 处理 LLM 工具请求
-        for sid, rid, req in regular:
-            if self.is_llm_tool_request(req):
-                future = req.get("future")
-                if future and not future.done():
-                    future.set_result(True)
+        # 设置 LLM 工具请求的 Future 结果
+        for sid, rid, future in llm_futures:
+            if not future.done():
+                future.set_result(True)
 
         success_count = sum(1 for _, _, ok in results if ok)
         fail_count = len(results) - success_count
@@ -93,25 +105,29 @@ class PendingManager:
 
     # ──── LLM 工具审批（伪装成 HAPI 权限请求）────
 
-    def add_llm_tool_request(self, session_id: str, tool_name: str, args: dict) -> tuple[str, asyncio.Future]:
-        """添加 LLM 工具审批请求到 pending 队列，返回 (request_id, future)"""
+    def add_llm_tool_request(self, session_id: str, tool_name: str, args: dict) -> tuple[str, asyncio.Future, int]:
+        """添加 LLM 工具审批请求到 pending 队列，返回 (request_id, future, index)"""
         import uuid
         req_id = f"llm_{uuid.uuid4().hex[:8]}"
         future = asyncio.Future()
+
+        # 分配序号
+        index = self.sse_listener.allocate_index()
 
         # 伪装成 HAPI 权限请求格式
         fake_request = {
             "tool": tool_name,
             "arguments": args,
-            "type": "llm_tool",  # 特殊标记
-            "future": future,  # 用于等待审批结果
+            "type": "llm_tool",
+            "future": future,
+            "index": index,
         }
 
         if session_id not in self.sse_listener.pending:
             self.sse_listener.pending[session_id] = {}
         self.sse_listener.pending[session_id][req_id] = fake_request
 
-        return req_id, future
+        return req_id, future, index
 
     def is_llm_tool_request(self, req: dict) -> bool:
         """判断是否为 LLM 工具审批请求"""

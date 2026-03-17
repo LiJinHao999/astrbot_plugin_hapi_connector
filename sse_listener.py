@@ -26,6 +26,9 @@ class SSEListener:
         self.output_level: str = "detail"
         # {session_id: {request_id: {tool, arguments, ...}}}
         self.pending: dict[str, dict] = {}
+        # 序号管理：空闲序号池
+        self._free_indices: set[int] = set()
+        self._max_index: int = 0
         # 跟踪 session 状态以检测变化
         self.session_states: dict[str, dict] = {}
         self._lock = asyncio.Lock()
@@ -232,6 +235,19 @@ class SSEListener:
                     for rid, req in requests_data.items()
                     if rid not in old_reqs
                 ]
+                # 检测被删除的请求，回收序号
+                removed_rids = set(old_reqs.keys()) - set(requests_data.keys())
+                for rid in removed_rids:
+                    req = old_reqs[rid]
+                    index = req.get("index", 0)
+                    if index > 0:
+                        self.free_index(index)
+
+                # 为新请求分配序号
+                for rid, req in new_requests:
+                    if "index" not in req:
+                        req["index"] = self.allocate_index()
+
                 if requests_data:
                     self.pending[sid] = requests_data
                 elif sid in self.pending:
@@ -700,6 +716,20 @@ class SSEListener:
                 return now >= start or now <= end
         except Exception:
             return False
+
+    def allocate_index(self) -> int:
+        """分配最小可用序号"""
+        if self._free_indices:
+            idx = min(self._free_indices)
+            self._free_indices.remove(idx)
+            return idx
+        self._max_index += 1
+        return self._max_index
+
+    def free_index(self, index: int):
+        """回收序号"""
+        if index > 0:
+            self._free_indices.add(index)
 
     async def _push_notification(self, text: str, session_id: str):
         """通过回调向所有已注册的管理员推送消息"""
