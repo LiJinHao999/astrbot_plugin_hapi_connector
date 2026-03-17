@@ -118,7 +118,15 @@ class SSEListener:
 
     def get_all_pending(self) -> dict[str, dict]:
         """返回所有 session 的待审批请求（同步读取快照）"""
-        return copy.deepcopy(self.pending)
+        # 移除 Future 后再 deepcopy
+        result = {}
+        for sid, reqs in self.pending.items():
+            result[sid] = {}
+            for rid, req in reqs.items():
+                req_copy = req.copy()
+                req_copy.pop("future", None)
+                result[sid][rid] = req_copy
+        return result
 
     async def _listen_loop(self):
         """主循环：SSE 监听 + 指数退避重连"""
