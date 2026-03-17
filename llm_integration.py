@@ -25,14 +25,19 @@ class LLMIntegration:
     async def on_llm_request_hook(self, event: AstrMessageEvent, request: ProviderRequest):
         """根据权限和窗口状态动态控制工具可见性"""
         # 1. 权限检查：非管理员移除所有工具
-        if not self.plugin._is_admin(event):
+        is_admin = self.plugin._is_admin(event)
+        logger.debug(f"[LLM工具] 权限检查: is_admin={is_admin}")
+        if not is_admin:
             self._remove_hapi_tools(request)
+            logger.debug("[LLM工具] 非管理员，已移除所有工具")
             return
 
         # 2. 上下文检查：窗口无可见 session 时移除工具
         visible_sessions = self.state_mgr.visible_sessions_for_window(event, self.sessions_cache)
+        logger.debug(f"[LLM工具] 可见session数: {len(visible_sessions)}, 总session数: {len(self.sessions_cache)}")
         if not visible_sessions:
             self._remove_hapi_tools(request)
+            logger.debug("[LLM工具] 当前窗口无可见session，已移除所有工具")
             return
 
         # 3. 状态注入：附加 HAPI Hub 信息
