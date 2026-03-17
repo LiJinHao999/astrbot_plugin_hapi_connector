@@ -67,3 +67,25 @@ def build_question_prompt(q_items: list, qi_idx: int, qi: int,
         lines.append(f"  [{i}] {opt['label']}{desc}")
     lines.append(f"  [{len(opts) + 1}] 其他（自定义输入）")
     return "\n".join(lines)
+
+
+async def batch_approve(client: AsyncHapiClient,
+                        items: list[tuple[str, str, dict]]) -> list[tuple[str, str, bool]]:
+    """批量批准权限请求，返回 [(sid, rid, success), ...]"""
+    results = []
+    for sid, rid, req in items:
+        # LLM 工具请求：直接标记成功（实际审批在 pending_manager 中处理）
+        if req.get("type") == "llm_tool":
+            results.append((sid, rid, True))
+            continue
+
+        # HAPI 原生请求：调用 API
+        ok, _ = await session_ops.approve_permission(client, sid, rid)
+        results.append((sid, rid, ok))
+    return results
+
+
+async def answer_question(client: AsyncHapiClient, sid: str, rid: str, answers: dict) -> bool:
+    """回答 question 类型的权限请求"""
+    ok, _ = await session_ops.answer_permission_question(client, sid, rid, answers)
+    return ok

@@ -109,6 +109,10 @@ class HapiConnectorPlugin(Star):
         # event 缓存，用于主动推送
         self.notification_mgr._event_cache = {}
 
+        # LLM 工具集成
+        from .llm_integration import LLMIntegration
+        self.llm_integration = LLMIntegration(self)
+
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         """检查发送者是否为管理员（动态读取配置）"""
         astrbot_config = self.context.get_config()

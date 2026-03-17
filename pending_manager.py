@@ -1,5 +1,7 @@
 """待审批权限请求管理"""
 
+import asyncio
+import time
 from astrbot.api.event import AstrMessageEvent
 from . import approval_ops
 from . import formatters
@@ -44,6 +46,13 @@ class PendingManager:
             if success:
                 self.remove_entry(sid, rid)
 
+        # 处理 LLM 工具请求
+        for sid, rid, req in regular:
+            if self.is_llm_tool_request(req):
+                future = req.get("future")
+                if future and not future.done():
+                    future.set_result(True)
+
         success_count = sum(1 for _, _, ok in results if ok)
         fail_count = len(results) - success_count
         if fail_count > 0:
@@ -81,3 +90,30 @@ class PendingManager:
                 lambda ctrl, ev, s=sid, r=rid, rq=req: q_waiter(ctrl, ev, s, r, rq),
                 timeout=120
             )
+
+    # ──── LLM 工具审批（伪装成 HAPI 权限请求）────
+
+    def add_llm_tool_request(self, session_id: str, tool_name: str, args: dict) -> tuple[str, asyncio.Future]:
+        """添加 LLM 工具审批请求到 pending 队列，返回 (request_id, future)"""
+        import uuid
+        req_id = f"llm_{uuid.uuid4().hex[:8]}"
+        future = asyncio.Future()
+
+        # 伪装成 HAPI 权限请求格式
+        fake_request = {
+            "tool": tool_name,
+            "arguments": args,
+            "type": "llm_tool",  # 特殊标记
+            "future": future,  # 用于等待审批结果
+        }
+
+        if session_id not in self.sse_listener.pending:
+            self.sse_listener.pending[session_id] = {}
+        self.sse_listener.pending[session_id][req_id] = fake_request
+
+        return req_id, future
+
+    def is_llm_tool_request(self, req: dict) -> bool:
+        """判断是否为 LLM 工具审批请求"""
+        return req.get("type") == "llm_tool"
+
