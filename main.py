@@ -119,6 +119,11 @@ class HapiConnectorPlugin(Star):
         admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
         return str(event.get_sender_id()) in admin_ids
 
+    @filter.on_llm_request()
+    async def on_llm_request_hook(self, event: AstrMessageEvent, request):
+        """LLM 工具可见性控制钩子"""
+        await self.llm_integration.on_llm_request_hook(event, request)
+
     # ──── 辅助方法 ────
 
     def _conn_warning(self) -> str | None:
