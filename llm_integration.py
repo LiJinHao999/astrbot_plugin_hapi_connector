@@ -433,12 +433,21 @@ quick_prefix (快捷前缀): {quick_prefix}
             yield "操作已被用户拒绝"
             return
 
-        # 执行命令，提取文本内容返回给 LLM
+        # 执行命令，收集结果
+        results = []
         async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, command):
+            # result 是 MessageChain，提取文本
             if hasattr(result, 'chain'):
+                text_parts = []
                 for seg in result.chain:
                     if hasattr(seg, 'text'):
-                        yield seg.text
-            else:
-                yield str(result)
+                        text_parts.append(seg.text)
+                if text_parts:
+                    results.append("".join(text_parts))
+
+        # 返回给 LLM
+        if results:
+            yield "\n".join(results)
+        else:
+            yield "命令执行完成"
 
