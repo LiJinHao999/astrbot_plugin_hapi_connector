@@ -270,18 +270,12 @@ class HapiConnectorPlugin(Star):
 
     def _extract_hapi_remainder(self, event: AstrMessageEvent, raw: str = "") -> str:
         """Choose the most complete /hapi remainder from raw and message text."""
-        candidates: list[str] = []
-        seen: set[str] = set()
+        # 如果 raw 参数非空，优先使用（LLM 工具调用场景）
+        if raw and raw.strip():
+            return self._strip_hapi_prefix(raw.strip())
 
-        for source in ((raw or "").strip(), (event.message_str or "").strip()):
-            remainder = self._strip_hapi_prefix(source)
-            if remainder in seen:
-                continue
-            seen.add(remainder)
-            candidates.append(remainder)
-
-        if not candidates:
-            return ""
+        # 否则从 event.message_str 提取
+        return self._strip_hapi_prefix((event.message_str or "").strip())
 
         return max(candidates, key=lambda item: (len(item.split()), len(item)))
 

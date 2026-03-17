@@ -306,9 +306,15 @@ quick_prefix (快捷前缀): {quick_prefix}
             yield "操作已被用户拒绝"
             return
 
-        # 复用 cmd_sw 逻辑
+        # 复用 cmd_sw 逻辑，提取消息内容返回给 LLM
         async for result in self.plugin.cmd_handlers.cmd_sw(event, target):
-            yield result
+            # result 是 MessageChain，提取文本内容
+            if hasattr(result, 'chain'):
+                for seg in result.chain:
+                    if hasattr(seg, 'text'):
+                        yield seg.text
+            else:
+                yield str(result)
 
     async def tool_create_session(self, event: AstrMessageEvent, directory: str, agent: str,
                                    machine_id: str = "", session_type: str = "simple", yolo: bool = False):
