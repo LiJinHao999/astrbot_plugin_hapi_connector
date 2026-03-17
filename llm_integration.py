@@ -5,6 +5,7 @@ import time
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.provider import ProviderRequest
 from astrbot.api import logger
+from astrbot.api.message.components import MessageChain
 from . import session_ops
 from . import formatters
 
@@ -93,7 +94,7 @@ class LLMIntegration:
 
         targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
         if targets:
-            await self.plugin.context.send_message(targets[0], msg)
+            await self.plugin.context.send_message(targets[0], MessageChain().text(msg))
 
         # 等待审批结果（5分钟超时）
         try:
@@ -194,26 +195,27 @@ class LLMIntegration:
             yield "当前窗口未绑定 session"
             return
 
-        limit = max(1, min(rounds * 2, 20))
-        ok, data = await session_ops.fetch_messages(self.client, sid, limit)
-        if not ok:
-            yield f"获取消息失败: {data}"
-            return
+        try:
+            # 多取消息以保证覆盖 N 轮
+            fetch_limit = min(rounds * 80, 500)
+            msgs = await session_ops.fetch_messages(self.client, sid, limit=fetch_limit)
+            all_rounds = formatters.split_into_rounds(msgs)
+            # 取最后 N 轮
+            selected = all_rounds[-rounds:]
+            if not selected:
+                yield "暂无消息记录"
+                return
 
-        messages = data.get("messages", [])
-        if not messages:
-            yield "暂无消息记录"
-            return
+            # 格式化所有轮次
+            lines = []
+            total = len(selected)
+            for i, round_msgs in enumerate(selected, 1):
+                text = formatters.format_round(round_msgs, i, total)
+                lines.append(text)
 
-        lines = [f"最近 {len(messages)} 条消息:"]
-        for msg in reversed(messages[-limit:]):
-            role = msg.get("role", "?")
-            content = msg.get("content", {})
-            preview = formatters.extract_text_preview({"content": content}, max_len=100)
-            if preview:
-                lines.append(f"[{role}]: {preview}")
-
-        yield "\n".join(lines)
+            yield "\n\n".join(lines)
+        except Exception as e:
+            yield f"获取消息失败: {e}"
 
     async def tool_get_config_status(self, event: AstrMessageEvent):
         '''获取当前插件配置状态及可修改项说明。'''
@@ -224,8 +226,6 @@ class LLMIntegration:
         remind = self.plugin.sse_listener._remind_enabled
         remind_interval = self.plugin.sse_listener._remind_interval
         quick_prefix = self.plugin.config.get("quick_prefix", ">")
-        default_window = self.plugin.config.get("default_notification_window", "")
-        default_flavor = self.plugin.config.get("default_flavor", "claude")
 
         info = f"""当前配置状态:
 
@@ -244,13 +244,7 @@ remind_pending (定时提醒待审批): {'开启' if remind else '关闭'}
   值: true/false
 
 quick_prefix (快捷前缀): {quick_prefix}
-  用于快速发送消息，如 "> 消息内容"
-
-default_notification_window (默认通知窗口): {default_window or '(未设置，使用session绑定窗口)'}
-  留空则发送到session绑定窗口，填写窗口ID则强制发送到指定窗口
-
-default_flavor (默认代理类型): {default_flavor}
-  创建session时的默认flavor (claude/codex/gemini/opencode)"""
+  用于快速发送消息，如 "> 消息内容\""""
         yield info
 
     async def tool_list_commands(self, event: AstrMessageEvent, topic: str = ""):
@@ -382,15 +376,6 @@ default_flavor (默认代理类型): {default_flavor}
         elif config_name == "quick_prefix":
             self.plugin._quick_prefix = value
             self.plugin.config["quick_prefix"] = value
-            yield f"✅ 已设置 {config_name} = {value}"
-        elif config_name == "default_notification_window":
-            self.plugin.config["default_notification_window"] = value
-            yield f"✅ 已设置 {config_name} = {value}"
-        elif config_name == "default_flavor":
-            if value not in ["claude", "codex", "gemini", "opencode"]:
-                yield "default_flavor 只能是 claude/codex/gemini/opencode"
-                return
-            self.plugin.config["default_flavor"] = value
             yield f"✅ 已设置 {config_name} = {value}"
         else:
             yield f"不支持的配置项: {config_name}，请先调用 hapi_coding_get_config_status 查看可用配置"

@@ -1,4 +1,4 @@
-"""用户状态和窗口绑定管理"""
+"""用户状态和通知窗口绑定管理"""
 
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
@@ -9,7 +9,7 @@ NOTIFICATION_ROUTE_FLAVORS = ("claude", "codex", "gemini")
 
 
 class StateManager:
-    """管理用户状态、窗口绑定、路由"""
+    """管理用户状态、通知窗口绑定、路由"""
 
     def __init__(self, kv_helper, binding_mgr: BindingManager):
         self.kv = kv_helper
@@ -28,7 +28,7 @@ class StateManager:
         window_state = self.binding_mgr._window_states.get(umo)
         await self.kv.put_kv_data(f"window_state_{umo}", window_state if window_state else None)
 
-    # ──── 窗口绑定 ────
+    # ──── 通知窗口绑定 ────
 
     async def capture_window(self, session_id: str, umo: str, flavor: str):
         """将 session 捕获到当前窗口，并释放旧窗口上的同 session 绑定"""

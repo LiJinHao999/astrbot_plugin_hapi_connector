@@ -162,10 +162,18 @@ class HapiConnectorPlugin(Star):
 
     @filter.llm_tool(name="hapi_coding_list_commands")
     async def tool_list_commands(self, event: AstrMessageEvent, topic: str = ""):
-        '''列出所有可用的 HAPI 指令。
+        '''列出所有可用的HAPI指令。根据用户问题选择对应专题：
+        - 会话：会话管理（创建、切换、列表、删除等）
+        - 对话：对话与消息（发送消息、查看历史等）
+        - 审批：审批权限请求（批准、拒绝等）
+        - 通知：通知与路由（推送设置、默认推送通知窗口绑定等）
+        - 文件：文件操作（读取、写入等）
+        - 配置：配置管理（修改推送级别、权限模式等）
+        - 全部：查看所有命令
+        不填topic显示常用帮助。
 
         Args:
-            topic(string): 帮助主题，不填默认显示常用帮助，常用帮助末尾会列出所有可用专题
+            topic(string): 帮助专题，可选值：会话/对话/审批/通知/文件/配置/全部
         '''
         async for result in self.llm_integration.tool_list_commands(event, topic):
             yield result
