@@ -103,17 +103,16 @@ class HapiConnectorPlugin(Star):
         # summary 模式消息条数
         self._summary_msg_count = self.config.get("summary_msg_count", 5)
 
-        # 管理员列表（用于 catch-all 处理器手动鉴权）
-        astrbot_config = self.context.get_config()
-        self._admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
         self._recent_notifications: dict[tuple[str, str, str], float] = {}
 
         # event 缓存，用于主动推送
         self._event_cache: dict[str, AstrMessageEvent] = {}
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
-        """检查发送者是否为管理员"""
-        return str(event.get_sender_id()) in self._admin_ids
+        """检查发送者是否为管理员（动态读取配置）"""
+        astrbot_config = self.context.get_config()
+        admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
+        return str(event.get_sender_id()) in admin_ids
 
     # ──── 会话捕获管理 ────
 
