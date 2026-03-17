@@ -434,8 +434,12 @@ quick_prefix (快捷前缀): {quick_prefix}
             return
 
         # 执行命令，边收集边返回
+        logger.info(f"[LLM工具] 开始执行命令: {command}")
         has_result = False
+        result_count = 0
         async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, command):
+            result_count += 1
+            logger.info(f"[LLM工具] 收到第 {result_count} 个结果，类型: {type(result)}")
             # result 是 MessageChain，提取文本
             if hasattr(result, 'chain'):
                 text_parts = []
@@ -443,9 +447,16 @@ quick_prefix (快捷前缀): {quick_prefix}
                     if hasattr(seg, 'text'):
                         text_parts.append(seg.text)
                 if text_parts:
+                    text = "".join(text_parts)
+                    logger.info(f"[LLM工具] 提取文本: {text[:100]}...")
                     has_result = True
-                    yield "".join(text_parts)
+                    yield text
+                else:
+                    logger.info(f"[LLM工具] MessageChain 无文本内容")
+            else:
+                logger.info(f"[LLM工具] 非 MessageChain 结果: {result}")
 
+        logger.info(f"[LLM工具] 命令执行完成，共 {result_count} 个结果，has_result={has_result}")
         if not has_result:
             yield "命令执行完成"
 
