@@ -28,53 +28,36 @@ class LLMIntegration:
         is_admin = self.plugin._is_admin(event)
         logger.debug(f"[LLM工具] 权限检查: is_admin={is_admin}")
         if not is_admin:
-            self._remove_hapi_tools(request)
+            self._remove_hapi_tools(request, keep_basic=False)
             logger.debug("[LLM工具] 非管理员，已移除所有工具")
             return
 
-        # 2. 上下文检查：窗口无可见 session 时移除工具
+        # 2. 上下文检查：窗口无可见 session 时只保留基础工具
         visible_sessions = self.state_mgr.visible_sessions_for_window(event, self.sessions_cache)
         logger.debug(f"[LLM工具] 可见session数: {len(visible_sessions)}, 总session数: {len(self.sessions_cache)}")
         if not visible_sessions:
-            self._remove_hapi_tools(request)
-            logger.debug("[LLM工具] 当前窗口无可见session，已移除所有工具")
+            self._remove_hapi_tools(request, keep_basic=True)
+            logger.debug("[LLM工具] 当前窗口无可见session，已移除非基础工具")
             return
 
-        # 3. 状态注入：附加 HAPI Hub 信息
-        total_count = len(self.sessions_cache)
-        visible_count = len(visible_sessions)
-        bound_sid = self.state_mgr.current_sid(event)
+    def _remove_hapi_tools(self, request: ProviderRequest, keep_basic: bool = False):
+        """移除所有 hapi_coding 工具
 
-        context_info = f"""
-
-## HAPI Coding Hub
-已连接到 HAPI 服务，可使用 hapi_coding 工具管理远程 coding sessions。
-- 当前聊天窗口可见 {visible_count} 个 session
-- Hub 总共 {total_count} 个 session"""
-
-        if bound_sid:
-            bound = next((s for s in visible_sessions if s.get("id") == bound_sid), None)
-            if bound:
-                meta = bound.get("metadata", {})
-                path = meta.get("path", "unknown")
-                agent = bound.get("agent", "unknown")
-                active = "活跃" if bound.get("active") else "非活跃"
-                title = (meta.get("summary") or {}).get("text", "")
-
-                session_info = f"session {bound_sid[:8]}"
-                if title:
-                    session_info = f"{title} ({session_info})"
-
-                context_info += f"\n- 当前正在与 {session_info} 交互: {path} ({agent}, {active})"
-
-        request.system_prompt = (request.system_prompt or "") + context_info
-
-    def _remove_hapi_tools(self, request: ProviderRequest):
-        """移除所有 hapi_coding 工具"""
+        Args:
+            keep_basic: 是否保留基础工具（list_sessions/list_commands/execute_command）
+        """
         if not hasattr(request, 'func_tool') or not request.func_tool:
             return
 
-        tool_names = [
+        # 基础工具（始终可用）
+        basic_tools = {
+            "hapi_coding_list_sessions",
+            "hapi_coding_list_commands",
+            "hapi_coding_execute_command",
+        }
+
+        # 所有工具
+        all_tools = {
             "hapi_coding_get_status",
             "hapi_coding_list_sessions",
             "hapi_coding_message_history",
@@ -86,9 +69,12 @@ class LLMIntegration:
             "hapi_coding_change_config",
             "hapi_coding_stop_message",
             "hapi_coding_execute_command",
-        ]
+        }
 
-        for tool_name in tool_names:
+        # 决定要移除的工具
+        tools_to_remove = all_tools - basic_tools if keep_basic else all_tools
+
+        for tool_name in tools_to_remove:
             request.func_tool.remove_tool(tool_name)
 
     # ──── 审批机制 ────
@@ -154,10 +140,18 @@ class LLMIntegration:
             path(string): 按路径搜索
             agent(string): 按代理类型过滤（claude/codex/gemini/opencode）
         '''
+        # 当前窗口无session时，自动查询所有session
+        visible_sessions = self.state_mgr.visible_sessions_for_window(event, self.sessions_cache)
+        if not visible_sessions and window == "":
+            window = "all"
+            auto_switched = True
+        else:
+            auto_switched = False
+
         if window == "all":
             sessions = self.sessions_cache
         else:
-            sessions = self.state_mgr.visible_sessions_for_window(event, self.sessions_cache)
+            sessions = visible_sessions
 
         # 过滤
         if path:
@@ -183,6 +177,10 @@ class LLMIntegration:
         text = text.replace("⚠️", "[待审批]")
         text = text.replace("💡", "提示:")
 
+        # 如果自动切换到all，添加提示
+        if auto_switched:
+            text = "提示：当前窗口无可见session，已自动查询所有窗口的session\n\n" + text
+
         yield text
 
     async def tool_message_history(self, event: AstrMessageEvent, rounds: int = 1):
@@ -197,7 +195,7 @@ class LLMIntegration:
             return
 
         limit = max(1, min(rounds * 2, 20))
-        ok, data = await session_ops.get_messages(self.client, sid, limit)
+        ok, data = await session_ops.fetch_messages(self.client, sid, limit)
         if not ok:
             yield f"获取消息失败: {data}"
             return
@@ -226,14 +224,15 @@ class LLMIntegration:
         remind = self.plugin.sse_listener._remind_enabled
         remind_interval = self.plugin.sse_listener._remind_interval
         quick_prefix = self.plugin.config.get("quick_prefix", ">")
-        summary_msg_count = self.plugin._summary_msg_count
+        default_window = self.plugin.config.get("default_notification_window", "")
+        default_flavor = self.plugin.config.get("default_flavor", "claude")
 
         info = f"""当前配置状态:
 
 output_level (SSE推送级别): {output_level}
   - silence: 仅推送权限请求和任务完成提醒
-  - summary: 任务完成时推送最近的 agent 消息
   - simple: 仅推送 agent 文本消息，不包含复杂的工具调用信息
+  - summary: 任务完成时推送最近的 agent 消息
   - detail: 实时推送所有新消息（信息量较大）
 
 auto_approve_enabled (忙时自动审批): {'开启' if auto_approve else '关闭'}
@@ -247,14 +246,20 @@ remind_pending (定时提醒待审批): {'开启' if remind else '关闭'}
 quick_prefix (快捷前缀): {quick_prefix}
   用于快速发送消息，如 "> 消息内容"
 
-summary_msg_count (summary模式消息数): {summary_msg_count}
-  summary 模式下推送的消息条数"""
+default_notification_window (默认通知窗口): {default_window or '(未设置，使用session绑定窗口)'}
+  留空则发送到session绑定窗口，填写窗口ID则强制发送到指定窗口
+
+default_flavor (默认代理类型): {default_flavor}
+  创建session时的默认flavor (claude/codex/gemini/opencode)"""
         yield info
 
-    async def tool_list_commands(self, event: AstrMessageEvent):
-        '''列出所有可用的 HAPI 指令。'''
-        async for result in self.plugin.cmd_handlers.cmd_help(event, ""):
-            yield result
+    async def tool_list_commands(self, event: AstrMessageEvent, topic: str = ""):
+        '''列出所有可用的 HAPI 指令。
+
+        Args:
+            topic(string): 帮助主题（可选，默认显示常用帮助）
+        '''
+        yield formatters.get_help_text(topic)
 
     # ──── 操作类工具（需要审批）────
 
@@ -378,14 +383,15 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
             self.plugin._quick_prefix = value
             self.plugin.config["quick_prefix"] = value
             yield f"✅ 已设置 {config_name} = {value}"
-        elif config_name == "summary_msg_count":
-            try:
-                count = int(value)
-                self.plugin._summary_msg_count = count
-                self.plugin.config["summary_msg_count"] = count
-                yield f"✅ 已设置 {config_name} = {count}"
-            except ValueError:
-                yield "summary_msg_count 必须是数字"
+        elif config_name == "default_notification_window":
+            self.plugin.config["default_notification_window"] = value
+            yield f"✅ 已设置 {config_name} = {value}"
+        elif config_name == "default_flavor":
+            if value not in ["claude", "codex", "gemini", "opencode"]:
+                yield "default_flavor 只能是 claude/codex/gemini/opencode"
+                return
+            self.plugin.config["default_flavor"] = value
+            yield f"✅ 已设置 {config_name} = {value}"
         else:
             yield f"不支持的配置项: {config_name}，请先调用 hapi_coding_get_config_status 查看可用配置"
 

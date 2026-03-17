@@ -95,6 +95,19 @@
     "type": "string",
     "default": "07:00",
     "hint": "例如开始 22:00、结束 08:00，即晚上10点到次日早上8点，支持跨午夜"
+  },
+  "default_notification_window": {
+    "description": "默认通知发送窗口",
+    "type": "string",
+    "default": "",
+    "hint": "留空则发送到 session 绑定的窗口，填写窗口 ID 则强制发送到指定窗口"
+  },
+  "default_flavor": {
+    "description": "创建 session 时的默认 flavor",
+    "type": "string",
+    "default": "claude",
+    "options": ["claude", "codex", "gemini", "opencode"],
+    "hint": "LLM 工具创建 session 时的默认代理类型"
   }
 }
 

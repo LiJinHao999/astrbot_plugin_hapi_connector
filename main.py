@@ -126,152 +126,109 @@ class HapiConnectorPlugin(Star):
 
     # ──── LLM 工具代理方法 ────
 
-    @filter.llm_tool(
-        name="hapi_coding_get_status",
-        description="获取当前交互中的 HAPI session 的状态信息",
-        parameters={"type": "object", "properties": {}, "required": []}
-    )
+    @filter.llm_tool(name="hapi_coding_get_status")
     async def tool_get_status(self, event: AstrMessageEvent):
+        '''获取当前交互中的 HAPI session 的状态信息。'''
         async for result in self.llm_integration.tool_get_status(event):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_list_sessions",
-        description="列出 HAPI 的可交互 session 列表",
-        parameters={
-            "type": "object",
-            "properties": {
-                "window": {"type": "string", "description": "按聊天窗口过滤（默认为空表示当前窗口，设为 'all' 查询所有聊天窗口，用户没有明确要求时一般置空）"},
-                "path": {"type": "string", "description": "按路径搜索（可选）"},
-                "agent": {"type": "string", "description": "按代理类型过滤（claude/codex/gemini/opencode，可选）"}
-            },
-            "required": []
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_list_sessions")
     async def tool_list_sessions(self, event: AstrMessageEvent, window: str = "", path: str = "", agent: str = ""):
+        '''列出 HAPI 的可交互 session 列表。
+
+        Args:
+            window(string): 窗口过滤，空=当前窗口，all=所有窗口
+            path(string): 路径搜索关键词
+            agent(string): 代理类型，claude/codex/gemini/opencode
+        '''
         async for result in self.llm_integration.tool_list_sessions(event, window, path, agent):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_message_history",
-        description="查询当前交互中的 session 的历史消息",
-        parameters={
-            "type": "object",
-            "properties": {
-                "rounds": {"type": "integer", "description": "查询最近几轮消息（默认 1 轮）"}
-            },
-            "required": []
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_message_history")
     async def tool_message_history(self, event: AstrMessageEvent, rounds: int = 1):
+        '''查询当前交互中的 session 的历史消息。
+
+        Args:
+            rounds(number): 查询最近几轮消息，默认1轮
+        '''
         async for result in self.llm_integration.tool_message_history(event, rounds):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_get_config_status",
-        description="获取当前插件配置状态及可修改项说明",
-        parameters={"type": "object", "properties": {}, "required": []}
-    )
+    @filter.llm_tool(name="hapi_coding_get_config_status")
     async def tool_get_config_status(self, event: AstrMessageEvent):
+        '''获取当前插件配置状态及可修改项说明。'''
         async for result in self.llm_integration.tool_get_config_status(event):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_list_commands",
-        description="列出所有可用的 HAPI 指令",
-        parameters={"type": "object", "properties": {}, "required": []}
-    )
-    async def tool_list_commands(self, event: AstrMessageEvent):
-        async for result in self.llm_integration.tool_list_commands(event):
+    @filter.llm_tool(name="hapi_coding_list_commands")
+    async def tool_list_commands(self, event: AstrMessageEvent, topic: str = ""):
+        '''列出所有可用的 HAPI 指令。
+
+        Args:
+            topic(string): 帮助主题，不填默认显示常用帮助，常用帮助末尾会列出所有可用专题
+        '''
+        async for result in self.llm_integration.tool_list_commands(event, topic):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_send_message",
-        description="向当前 session 发送消息",
-        parameters={
-            "type": "object",
-            "properties": {
-                "message": {"type": "string", "description": "要发送的消息内容"}
-            },
-            "required": ["message"]
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_send_message")
     async def tool_send_message(self, event: AstrMessageEvent, message: str):
+        '''向当前 session 发送消息。
+
+        Args:
+            message(string): 要发送的消息内容
+        '''
         async for result in self.llm_integration.tool_send_message(event, message):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_switch_session",
-        description="切换到指定的 session",
-        parameters={
-            "type": "object",
-            "properties": {
-                "target": {"type": "string", "description": "session 序号（如 \"1\"）或 session ID（如 \"abc12345\"）"}
-            },
-            "required": ["target"]
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_switch_session")
     async def tool_switch_session(self, event: AstrMessageEvent, target: str):
+        '''切换到指定的 session。
+
+        Args:
+            target(string): session序号如1或session ID前缀如abc12345
+        '''
         async for result in self.llm_integration.tool_switch_session(event, target):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_create_session",
-        description="创建新的 coding session",
-        parameters={
-            "type": "object",
-            "properties": {
-                "directory": {"type": "string", "description": "工作目录路径"},
-                "agent": {"type": "string", "description": "代理类型（claude/codex/gemini/opencode）"},
-                "machine_id": {"type": "string", "description": "机器 ID（可选，管理多机器时必填）"},
-                "session_type": {"type": "string", "description": "session 类型（simple/worktree，默认 simple）"},
-                "yolo": {"type": "boolean", "description": "是否自动批准所有权限（默认 false）"}
-            },
-            "required": ["directory", "agent"]
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_create_session")
     async def tool_create_session(self, event: AstrMessageEvent, directory: str, agent: str,
                                    machine_id: str = "", session_type: str = "simple", yolo: bool = False):
+        '''创建新的 coding session。
+
+        Args:
+            directory(string): 工作目录路径
+            agent(string): 代理类型，claude/codex/gemini/opencode
+            machine_id(string): 机器ID，可选，管理多机器时必填
+            session_type(string): session类型，simple或worktree，默认simple
+            yolo(boolean): 是否自动批准所有权限，默认false
+        '''
         async for result in self.llm_integration.tool_create_session(event, directory, agent, machine_id, session_type, yolo):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_change_config",
-        description="修改插件配置项。必须先调用 hapi_coding_get_config_status 查看可修改项",
-        parameters={
-            "type": "object",
-            "properties": {
-                "config_name": {"type": "string", "description": "配置项名称"},
-                "value": {"type": "string", "description": "新值"}
-            },
-            "required": ["config_name", "value"]
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_change_config")
     async def tool_change_config(self, event: AstrMessageEvent, config_name: str, value: str):
+        '''修改插件配置项。必须先调用hapi_coding_get_config_status查看可修改项。
+
+        Args:
+            config_name(string): 配置项名称
+            value(string): 新值
+        '''
         async for result in self.llm_integration.tool_change_config(event, config_name, value):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_stop_message",
-        description="停止当前 session 的消息生成",
-        parameters={"type": "object", "properties": {}, "required": []}
-    )
+    @filter.llm_tool(name="hapi_coding_stop_message")
     async def tool_stop_message(self, event: AstrMessageEvent):
+        '''停止当前 session 的消息生成。'''
         async for result in self.llm_integration.tool_stop_message(event):
             yield result
 
-    @filter.llm_tool(
-        name="hapi_coding_execute_command",
-        description="直接执行 HAPI 指令。在使用前请务必调用 hapi_coding_list_commands 查看指令格式和参数说明，错误的指令可能导致不可预料的后果",
-        parameters={
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "完整的 /hapi 指令（不含 /hapi 前缀）"}
-            },
-            "required": ["command"]
-        }
-    )
+    @filter.llm_tool(name="hapi_coding_execute_command")
     async def tool_execute_command(self, event: AstrMessageEvent, command: str):
+        '''直接执行HAPI指令。使用前请务必调用hapi_coding_list_commands查看指令格式和参数说明。
+
+        Args:
+            command(string): 完整的/hapi指令，不含/hapi前缀
+        '''
         async for result in self.llm_integration.tool_execute_command(event, command):
             yield result
 
