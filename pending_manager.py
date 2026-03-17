@@ -47,14 +47,15 @@ class PendingManager:
         if not regular:
             return None
 
-        # 先提取 LLM 工具请求的 Future（避免序列化问题）
+        # 先从原始 pending 提取 LLM 工具请求的 Future
         llm_futures = []
         for sid, rid, req in regular:
             if self.is_llm_tool_request(req):
-                future = req.get("future")  # 不要 pop，保留引用
+                # 从原始 pending 获取 Future（items 里的 req 可能是副本）
+                original_req = self.sse_listener.pending.get(sid, ).get(rid, {})
+                future = original_req.get("future")
                 if future:
                     llm_futures.append((sid, rid, future))
-                req.pop("future", None)  # 移除避免序列化
 
         results = await approval_ops.batch_approve(client, regular)
 
