@@ -577,6 +577,13 @@ class CommandHandlers:
             if is_compact_request(req):
                 self.plugin.pending_mgr.remove_entry(sid, rid)
                 yield event.plain_result("✓ 已取消压缩: /compact")
+            elif self.plugin.pending_mgr.is_llm_tool_request(req):
+                future = req.get("future")
+                if future and not future.done():
+                    future.set_result(False)
+                self.plugin.pending_mgr.remove_entry(sid, rid)
+                tool = req.get("tool", "?")
+                yield event.plain_result(f"✓ 已拒绝: {tool}")
             else:
                 ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
@@ -588,6 +595,13 @@ class CommandHandlers:
                 if is_compact_request(req):
                     self.plugin.pending_mgr.remove_entry(sid, rid)
                     results.append("✓ /compact (已取消)")
+                elif self.plugin.pending_mgr.is_llm_tool_request(req):
+                    future = req.get("future")
+                    if future and not future.done():
+                        future.set_result(False)
+                    self.plugin.pending_mgr.remove_entry(sid, rid)
+                    tool = req.get("tool", "?")
+                    results.append(f"✓ {tool}")
                 else:
                     ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")

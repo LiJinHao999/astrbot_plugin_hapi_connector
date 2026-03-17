@@ -89,19 +89,22 @@ class LLMIntegration:
 
         # 发送通知（复用现有通知机制）
         args_str = ", ".join(f"{k}={v}" for k, v in args.items())
-        msg = f"🤖 LLM 工具调用请求\n工具: {tool_name}\n参数: {args_str}\n\n使用 /hapi approve 批准"
+        msg = f"🤖 LLM 工具调用请求\n工具: {tool_name}\n参数: {args_str}\n\n💡 批准：/hapi a 或 /hapi a <序号>\n💡 拒绝：/hapi deny 或 /hapi deny <序号>"
 
         targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
         if targets:
             await self.plugin.context.send_message(targets[0], MessageChain().message(msg))
 
-        # 等待审批结果（5分钟超时）
+        # 等待审批结果（1分钟超时）
         try:
-            approved = await asyncio.wait_for(future, timeout=300)
+            approved = await asyncio.wait_for(future, timeout=60)
             return approved
         except asyncio.TimeoutError:
             # 超时清理
             self.pending_mgr.remove_entry(sid, req_id)
+            # 如果处于忙时托管时段，超时默认允许
+            if self.plugin.sse_listener._auto_approve_enabled and self.plugin.sse_listener._in_auto_approve_window():
+                return True
             return False
 
     # ──── 查询类工具（无需审批）────
