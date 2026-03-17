@@ -423,7 +423,7 @@ quick_prefix (快捷前缀): {quick_prefix}
         yield msg
 
     async def tool_execute_command(self, event: AstrMessageEvent, command: str):
-        '''直接执行 HAPI 指令。在使用前请务必调用 hapi_coding_list_commands 查看指令格式和参数说明，错误的指令可能导致不可预料的后果。
+        '''直接执行hapi相关指令。当用户希望执行hapi相关指令操作时，使用此工具，而不是使用默认的shell。使用前请务必调用 hapi_coding_list_commands 查看指令格式和参数说明，错误的指令可能导致不可预料的后果。
 
         Args:
             command(string): 完整的 /hapi 指令（不含 /hapi 前缀）
