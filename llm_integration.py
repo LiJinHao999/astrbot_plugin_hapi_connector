@@ -93,7 +93,7 @@ class LLMIntegration:
 
         targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
         if targets:
-            await self.plugin.context.send_message(targets[0], MessageChain().text(msg))
+            await self.plugin.context.send_message(targets[0], MessageChain().message(msg))
 
         # 等待审批结果（5分钟超时）
         try:
