@@ -124,12 +124,12 @@ class LLMIntegration:
         '''获取当前交互中的 HAPI session 的状态信息。'''
         sid = self.state_mgr.current_sid(event)
         if not sid:
-            yield event.plain_result("当前窗口未绑定 session")
+            yield "当前窗口未绑定 session"
             return
 
         session = next((s for s in self.sessions_cache if s.get("id") == sid), None)
         if not session:
-            yield event.plain_result("Session 不存在")
+            yield "Session 不存在"
             return
 
         meta = session.get("metadata", {})
@@ -144,7 +144,7 @@ class LLMIntegration:
 - Agent: {agent}
 - 状态: {active}
 - 权限模式: {perm_mode}"""
-        yield event.plain_result(info)
+        yield info
 
     async def tool_list_sessions(self, event: AstrMessageEvent, window: str = "", path: str = "", agent: str = ""):
         '''列出 HAPI 的可交互 session 列表。
@@ -163,22 +163,27 @@ class LLMIntegration:
         if path:
             sessions = [s for s in sessions if path.lower() in s.get("metadata", {}).get("path", "").lower()]
         if agent:
-            sessions = [s for s in sessions if s.get("agent", "").lower() == agent.lower()]
+            sessions = [s for s in sessions if s.get("metadata", {}).get("flavor", "").lower() == agent.lower()]
 
         if not sessions:
-            yield event.plain_result("没有找到符合条件的 session")
+            yield "没有找到符合条件的 session"
             return
 
-        lines = [f"找到 {len(sessions)} 个 session:"]
-        for idx, s in enumerate(sessions, 1):
-            sid = s.get("id", "")
-            meta = s.get("metadata", {})
-            path_str = meta.get("path", "unknown")
-            agent_str = s.get("agent", "unknown")
-            active = "✓" if s.get("active") else "✗"
-            lines.append(f"{idx}. [{sid[:8]}] {path_str} ({agent_str}) {active}")
+        # 复用 formatters.format_session_list，但移除 emoji
+        current_sid = self.state_mgr.current_sid(event)
+        text = formatters.format_session_list(sessions, current_sid, self.sessions_cache, header_current_window=event.unified_msg_origin)
 
-        yield event.plain_result("\n".join(lines))
+        # 替换 emoji 为文字
+        text = text.replace("📁", "[目录]")
+        text = text.replace("🏷️", "ID:")
+        text = text.replace("💭", "[思考中]")
+        text = text.replace("🟢", "[运行中]")
+        text = text.replace("⚪", "[已关闭]")
+        text = text.replace("🤖", "")
+        text = text.replace("⚠️", "[待审批]")
+        text = text.replace("💡", "提示:")
+
+        yield text
 
     async def tool_message_history(self, event: AstrMessageEvent, rounds: int = 1):
         '''查询当前交互中的 session 的历史消息。
@@ -188,18 +193,18 @@ class LLMIntegration:
         '''
         sid = self.state_mgr.current_sid(event)
         if not sid:
-            yield event.plain_result("当前窗口未绑定 session")
+            yield "当前窗口未绑定 session"
             return
 
         limit = max(1, min(rounds * 2, 20))
         ok, data = await session_ops.get_messages(self.client, sid, limit)
         if not ok:
-            yield event.plain_result(f"获取消息失败: {data}")
+            yield f"获取消息失败: {data}"
             return
 
         messages = data.get("messages", [])
         if not messages:
-            yield event.plain_result("暂无消息记录")
+            yield "暂无消息记录"
             return
 
         lines = [f"最近 {len(messages)} 条消息:"]
@@ -210,7 +215,7 @@ class LLMIntegration:
             if preview:
                 lines.append(f"[{role}]: {preview}")
 
-        yield event.plain_result("\n".join(lines))
+        yield "\n".join(lines)
 
     async def tool_get_config_status(self, event: AstrMessageEvent):
         '''获取当前插件配置状态及可修改项说明。'''
@@ -244,7 +249,7 @@ quick_prefix (快捷前缀): {quick_prefix}
 
 summary_msg_count (summary模式消息数): {summary_msg_count}
   summary 模式下推送的消息条数"""
-        yield event.plain_result(info)
+        yield info
 
     async def tool_list_commands(self, event: AstrMessageEvent):
         '''列出所有可用的 HAPI 指令。'''
@@ -261,17 +266,17 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
         '''
         sid = self.state_mgr.current_sid(event)
         if not sid:
-            yield event.plain_result("当前窗口未绑定 session")
+            yield "当前窗口未绑定 session"
             return
 
         # 请求审批
         if not await self._require_approval("hapi_coding_send_message", {"message": message}, event):
-            yield event.plain_result("操作已被拒绝")
+            yield "操作已被拒绝"
             return
 
         # 执行发送
         ok, result = await session_ops.send_message(self.client, sid, message)
-        yield event.plain_result(result if ok else f"发送失败: {result}")
+        yield result if ok else f"发送失败: {result}"
 
     async def tool_switch_session(self, event: AstrMessageEvent, target: str):
         '''切换到指定的 session。
@@ -281,7 +286,7 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
         '''
         # 请求审批
         if not await self._require_approval("hapi_coding_switch_session", {"target": target}, event):
-            yield event.plain_result("操作已被拒绝")
+            yield "操作已被拒绝"
             return
 
         # 复用 cmd_sw 逻辑
@@ -303,11 +308,11 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
         try:
             machines = await session_ops.fetch_machines(self.client)
         except Exception as e:
-            yield event.plain_result(f"获取机器列表失败: {e}")
+            yield f"获取机器列表失败: {e}"
             return
 
         if not machines:
-            yield event.plain_result("没有在线的机器")
+            yield "没有在线的机器"
             return
 
         # 处理 machine_id
@@ -322,23 +327,23 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
                     host = meta.get("host", "unknown")
                     plat = meta.get("platform", "?")
                     lines.append(f"  - {mid}: {host} ({plat})")
-                yield event.plain_result("\n".join(lines))
+                yield "\n".join(lines)
                 return
 
         # 请求审批
         if not await self._require_approval("hapi_coding_create_session",
                                            {"machine_id": machine_id, "directory": directory,
                                             "agent": agent, "session_type": session_type, "yolo": yolo}, event):
-            yield event.plain_result("操作已被拒绝")
+            yield "操作已被拒绝"
             return
 
         # 执行创建
         ok, msg, sid = await session_ops.spawn_session(self.client, machine_id, directory, agent, session_type, yolo)
         if ok and sid:
             await self.state_mgr.capture_window(sid, event.unified_msg_origin, agent)
-            yield event.plain_result(f"✅ 已创建 session: {sid[:8]}")
+            yield f"✅ 已创建 session: {sid[:8]}"
         else:
-            yield event.plain_result(f"创建失败: {msg}")
+            yield f"创建失败: {msg}"
 
     async def tool_change_config(self, event: AstrMessageEvent, config_name: str, value: str):
         '''修改插件配置项。必须先调用 hapi_coding_get_config_status 查看可修改项。
@@ -350,57 +355,57 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
         # 请求审批
         if not await self._require_approval("hapi_coding_change_config",
                                            {"config_name": config_name, "value": value}, event):
-            yield event.plain_result("操作已被拒绝")
+            yield "操作已被拒绝"
             return
 
         # 执行修改
         if config_name == "output_level":
             if value not in ["silence", "summary", "simple", "detail"]:
-                yield event.plain_result("output_level 只能是 silence/summary/simple/detail")
+                yield "output_level 只能是 silence/summary/simple/detail"
                 return
             self.plugin.sse_listener.output_level = value
             self.plugin.config["output_level"] = value
-            yield event.plain_result(f"✅ 已设置 {config_name} = {value}")
+            yield f"✅ 已设置 {config_name} = {value}"
         elif config_name == "auto_approve_enabled":
             bool_val = value.lower() in ["true", "1", "yes", "on", "开启"]
             self.plugin.sse_listener._auto_approve_enabled = bool_val
-            yield event.plain_result(f"✅ 已设置 {config_name} = {bool_val}")
+            yield f"✅ 已设置 {config_name} = {bool_val}"
         elif config_name == "remind_pending":
             bool_val = value.lower() in ["true", "1", "yes", "on", "开启"]
             self.plugin.sse_listener._remind_enabled = bool_val
-            yield event.plain_result(f"✅ 已设置 {config_name} = {bool_val}")
+            yield f"✅ 已设置 {config_name} = {bool_val}"
         elif config_name == "quick_prefix":
             self.plugin._quick_prefix = value
             self.plugin.config["quick_prefix"] = value
-            yield event.plain_result(f"✅ 已设置 {config_name} = {value}")
+            yield f"✅ 已设置 {config_name} = {value}"
         elif config_name == "summary_msg_count":
             try:
                 count = int(value)
                 self.plugin._summary_msg_count = count
                 self.plugin.config["summary_msg_count"] = count
-                yield event.plain_result(f"✅ 已设置 {config_name} = {count}")
+                yield f"✅ 已设置 {config_name} = {count}"
             except ValueError:
-                yield event.plain_result("summary_msg_count 必须是数字")
+                yield "summary_msg_count 必须是数字"
         else:
-            yield event.plain_result(f"不支持的配置项: {config_name}，请先调用 hapi_coding_get_config_status 查看可用配置")
+            yield f"不支持的配置项: {config_name}，请先调用 hapi_coding_get_config_status 查看可用配置"
 
     async def tool_stop_message(self, event: AstrMessageEvent):
         '''停止当前 session 的消息生成。'''
         sid = self.state_mgr.current_sid(event)
         if not sid:
-            yield event.plain_result("当前窗口未绑定 session")
+            yield "当前窗口未绑定 session"
             return
 
         # 请求审批
         if not await self._require_approval("hapi_coding_stop_message", {"session_id": sid[:8]}, event):
-            yield event.plain_result("操作已被拒绝")
+            yield "操作已被拒绝"
             return
 
         # 执行停止
         ok, msg = await session_ops.abort_session(self.client, sid)
         if ok:
             await self.plugin._refresh_sessions()
-        yield event.plain_result(msg)
+        yield msg
 
     async def tool_execute_command(self, event: AstrMessageEvent, command: str):
         '''直接执行 HAPI 指令。在使用前请务必调用 hapi_coding_list_commands 查看指令格式和参数说明，错误的指令可能导致不可预料的后果。
@@ -410,7 +415,7 @@ summary_msg_count (summary模式消息数): {summary_msg_count}
         '''
         # 请求审批
         if not await self._require_approval("hapi_coding_execute_command", {"command": command}, event):
-            yield event.plain_result("操作已被拒绝")
+            yield "操作已被拒绝"
             return
 
         # 执行命令
