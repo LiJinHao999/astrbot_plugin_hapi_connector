@@ -287,7 +287,7 @@ class CommandHandlers:
             if mode.isdigit() and 1 <= int(mode) <= len(modes):
                 target = modes[int(mode) - 1]
             if target not in modes:
-                yield event.plain_result(f"无效模式，可用: {', '.join(modes)}")
+                yield event.plain_result(f"❌ 无效模式: {mode}\n可用: {', '.join(modes)}")
                 return
             ok, msg = await session_ops.set_permission_mode(self.client, sid, target)
             yield event.plain_result(msg)
@@ -345,7 +345,7 @@ class CommandHandlers:
             if mode.isdigit() and 1 <= int(mode) <= len(MODEL_MODES):
                 target = MODEL_MODES[int(mode) - 1]
             if target not in MODEL_MODES:
-                yield event.plain_result(f"无效模式，可用: {', '.join(MODEL_MODES)}")
+                yield event.plain_result(f"❌ 无效模式: {mode}\n可用: {', '.join(MODEL_MODES)}")
                 return
             ok, msg = await session_ops.set_model_mode(self.client, sid, target)
             yield event.plain_result(msg)
@@ -427,7 +427,7 @@ class CommandHandlers:
                 if reply.isdigit() and 1 <= int(reply) <= len(levels):
                     t = levels[int(reply) - 1]
                 if t not in self._OUTPUT_LEVELS:
-                    await ev.send(ev.plain_result(f"无效级别，可用: {', '.join(levels)}"))
+                    await ev.send(ev.plain_result(f"❌ 无效级别: {reply}\n可用: {', '.join(levels)}"))
                 else:
                     self.sse_listener.output_level = t
                     self.plugin.config["output_level"] = t
@@ -447,7 +447,7 @@ class CommandHandlers:
         if level.isdigit() and 1 <= int(level) <= len(levels):
             target = levels[int(level) - 1]
         if target not in self._OUTPUT_LEVELS:
-            lines = ["无效级别，可用:"]
+            lines = [f"❌ 无效级别: {level}\n", "可用:"]
             for i, (lvl, desc) in enumerate(self._OUTPUT_LEVELS.items(), 1):
                 lines.append(f"  [{i}] {lvl} — {desc}")
             yield event.plain_result("\n".join(lines))
@@ -1192,6 +1192,7 @@ class CommandHandlers:
                 yield result
         else:
             yield event.plain_result(
+                f"❌ 无效参数: {action}\n\n"
                 "用法:\n"
                 "  /hapi bind              设置当前窗口为默认\n"
                 "  /hapi bind claude       设置当前窗口为 claude 默认\n"
