@@ -433,12 +433,18 @@ quick_prefix (快捷前缀): {quick_prefix}
             yield "操作已被用户拒绝"
             return
 
-        # 执行命令，让消息正常发送给用户，同时收集文本返回给 LLM
+        # 执行命令
         logger.info(f"[LLM工具] 开始执行命令: {command}")
         results = []
+        first_result = None
         async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, command):
             logger.info(f"[LLM工具] 收到结果，类型: {type(result)}")
-            # 提取文本内容
+
+            # 保存第一个结果，稍后手动发送
+            if first_result is None:
+                first_result = result
+
+            # 提取文本
             if hasattr(result, 'chain'):
                 text_parts = []
                 for seg in result.chain:
@@ -449,10 +455,14 @@ quick_prefix (快捷前缀): {quick_prefix}
                     logger.info(f"[LLM工具] 提取文本: {text[:100]}...")
                     results.append(text)
 
-        # 返回汇总给 LLM
-        logger.info(f"[LLM工具] 命令执行完成，共收集 {len(results)} 条消息")
+        # 手动发送第一条消息
+        if first_result:
+            logger.info(f"[LLM工具] 手动发送第一条消息")
+            await event.send(first_result)
+
+        logger.info(f"[LLM工具] 命令执行完成，共 {len(results)} 条消息")
         if results:
-            yield f"命令执行完成，共 {len(results)} 条消息:\n" + "\n---\n".join(results)
+            yield f"命令执行完成。最后结果: {results[-1][:300]}"
         else:
             yield "命令执行完成"
 
