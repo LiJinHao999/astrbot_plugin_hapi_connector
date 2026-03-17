@@ -103,14 +103,16 @@ class HapiConnectorPlugin(Star):
         # summary 模式消息条数
         self._summary_msg_count = self.config.get("summary_msg_count", 5)
 
-        # 管理员列表（用于 catch-all 处理器手动鉴权）
-        astrbot_config = self.context.get_config()
-        self._admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
         self._recent_notifications: dict[tuple[str, str, str], float] = {}
 
+        # event 缓存，用于主动推送
+        self._event_cache: dict[str, AstrMessageEvent] = {}
+
     def _is_admin(self, event: AstrMessageEvent) -> bool:
-        """检查发送者是否为管理员"""
-        return str(event.get_sender_id()) in self._admin_ids
+        """检查发送者是否为管理员（动态读取配置）"""
+        astrbot_config = self.context.get_config()
+        admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
+        return str(event.get_sender_id()) in admin_ids
 
     # ──── 会话捕获管理 ────
 
@@ -313,6 +315,10 @@ class HapiConnectorPlugin(Star):
             await self.put_kv_data(f"user_state_{sender_id}", state)
         elif sender_id not in self._user_states_cache:
             self._user_states_cache[sender_id] = state
+
+        # 存储消息ID（用于QQ官渠回复）
+        if hasattr(event, 'message_id') and event.message_id:
+            self.binding_mgr.set_window_message_id(event.unified_msg_origin, str(event.message_id))
 
         # 维护 known_users 列表
         known = [str(uid) for uid in await self.get_kv_data("known_users", [])]
@@ -628,12 +634,21 @@ class HapiConnectorPlugin(Star):
                 if self._should_skip_duplicate_notification(umo, session_id, text):
                     continue
                 chunks = self._split_message(text) if len(text) > 4200 else [text]
+
                 for chunk in chunks:
                     try:
                         chain = MessageChain().message(chunk)
                         await self.context.send_message(umo, chain)
-                    except Exception as e:
-                        logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
+                    except Exception:
+                        cached_event = self._event_cache.get(umo)
+                        if cached_event:
+                            try:
+                                await cached_event.send(chain)
+                            except Exception as e:
+                                logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
+                                break
+                        else:
+                            break
                         break
             return
 
@@ -2021,6 +2036,7 @@ class HapiConnectorPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def quick_prefix_handler(self, event: AstrMessageEvent):
         """快捷前缀: > 消息 或 >N 消息 (仅管理员)"""
+        self._event_cache[event.unified_msg_origin] = event
         prefix = self._quick_prefix
         raw = event.message_str
 

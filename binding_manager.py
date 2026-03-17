@@ -8,6 +8,7 @@ class BindingManager:
         self._session_owners: dict[str, str] = {}  # {session_id: umo} 一个session只能绑定一个窗口
         self._window_sessions: dict[str, list[str]] = {}  # {umo: [session_ids]} 一个窗口可以绑定多个session
         self._window_states: dict[str, dict] = {}  # {umo: {current_session, current_flavor}}
+        self._window_message_ids: dict[str, str] = {}  # {umo: message_id} 存储每个窗口的最后消息ID
 
     def bind_window(self, session_id: str, umo: str, flavor: str):
         """将 session 绑定到窗口（持久绑定，一个窗口可以有多个session，一个session只能绑定一个窗口）"""
@@ -68,6 +69,15 @@ class BindingManager:
         """设置窗口活跃状态（不影响通知绑定）"""
         self._window_states[umo] = {"current_session": session_id, "current_flavor": flavor}
 
+    def set_window_message_id(self, umo: str, message_id: str):
+        """存储窗口的最后消息ID（用于QQ官渠回复）"""
+        if message_id:
+            self._window_message_ids[umo] = message_id
+
+    def get_window_message_id(self, umo: str) -> str | None:
+        """获取窗口的最后消息ID"""
+        return self._window_message_ids.get(umo)
+
     def get_window_session(self, umo: str) -> str | None:
         """获取窗口的当前 session"""
         return self._window_states.get(umo, {}).get("current_session")
@@ -121,3 +131,4 @@ class BindingManager:
         self._session_owners.clear()
         self._window_sessions.clear()
         self._window_states.clear()
+        self._window_message_ids.clear()
