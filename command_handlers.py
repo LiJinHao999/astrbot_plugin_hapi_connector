@@ -579,7 +579,9 @@ class CommandHandlers:
                 self.plugin.pending_mgr.remove_entry(sid, rid)
                 yield event.plain_result("✓ 已取消压缩: /compact")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
-                future = req.get("future")
+                # 从原始 pending 获取 Future
+                original_req = self.sse_listener.pending.get(sid, {}).get(rid, {})
+                future = original_req.get("future")
                 if future and not future.done():
                     future.set_result(False)
                 self.plugin.pending_mgr.remove_entry(sid, rid)
@@ -597,7 +599,9 @@ class CommandHandlers:
                     self.plugin.pending_mgr.remove_entry(sid, rid)
                     results.append("✓ /compact (已取消)")
                 elif self.plugin.pending_mgr.is_llm_tool_request(req):
-                    future = req.get("future")
+                    # 从原始 pending 获取 Future
+                    original_req = self.sse_listener.pending.get(sid, {}).get(rid, {})
+                    future = original_req.get("future")
                     if future and not future.done():
                         future.set_result(False)
                     self.plugin.pending_mgr.remove_entry(sid, rid)

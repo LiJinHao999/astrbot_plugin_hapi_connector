@@ -288,7 +288,7 @@ quick_prefix (快捷前缀): {quick_prefix}
 
         # 请求审批
         if not await self._require_approval("hapi_coding_send_message", {"message": message}, event):
-            yield "操作已被拒绝"
+            yield "操作已被用户拒绝"
             return
 
         # 执行发送
@@ -303,7 +303,7 @@ quick_prefix (快捷前缀): {quick_prefix}
         '''
         # 请求审批
         if not await self._require_approval("hapi_coding_switch_session", {"target": target}, event):
-            yield "操作已被拒绝"
+            yield "操作已被用户拒绝"
             return
 
         # 复用 cmd_sw 逻辑
@@ -351,7 +351,7 @@ quick_prefix (快捷前缀): {quick_prefix}
         if not await self._require_approval("hapi_coding_create_session",
                                            {"machine_id": machine_id, "directory": directory,
                                             "agent": agent, "session_type": session_type, "yolo": yolo}, event):
-            yield "操作已被拒绝"
+            yield "操作已被用户拒绝"
             return
 
         # 执行创建
@@ -372,7 +372,7 @@ quick_prefix (快捷前缀): {quick_prefix}
         # 请求审批
         if not await self._require_approval("hapi_coding_change_config",
                                            {"config_name": config_name, "value": value}, event):
-            yield "操作已被拒绝"
+            yield "操作已被用户拒绝"
             return
 
         # 执行修改
@@ -407,7 +407,7 @@ quick_prefix (快捷前缀): {quick_prefix}
 
         # 请求审批
         if not await self._require_approval("hapi_coding_stop_message", {"session_id": sid[:8]}, event):
-            yield "操作已被拒绝"
+            yield "操作已被用户拒绝"
             return
 
         # 执行停止
@@ -424,7 +424,7 @@ quick_prefix (快捷前缀): {quick_prefix}
         '''
         # 请求审批
         if not await self._require_approval("hapi_coding_execute_command", {"command": command}, event):
-            yield "操作已被拒绝"
+            yield "操作已被用户拒绝"
             return
 
         # 执行命令
