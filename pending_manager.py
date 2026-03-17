@@ -47,23 +47,25 @@ class PendingManager:
         if not regular:
             return None
 
-        # 先处理 LLM 工具请求的 Future（避免序列化问题）
+        # 先提取 LLM 工具请求的 Future（避免序列化问题）
         llm_futures = []
         for sid, rid, req in regular:
             if self.is_llm_tool_request(req):
-                future = req.pop("future", None)  # 移除 future 避免序列化
+                future = req.get("future")  # 不要 pop，保留引用
                 if future:
                     llm_futures.append((sid, rid, future))
+                req.pop("future", None)  # 移除避免序列化
 
         results = await approval_ops.batch_approve(client, regular)
-        for sid, rid, success in results:
-            if success:
-                self.remove_entry(sid, rid)
 
-        # 设置 LLM 工具请求的 Future 结果
+        # 先设置 Future 结果，再删除条目
         for sid, rid, future in llm_futures:
             if not future.done():
                 future.set_result(True)
+
+        for sid, rid, success in results:
+            if success:
+                self.remove_entry(sid, rid)
 
         success_count = sum(1 for _, _, ok in results if ok)
         fail_count = len(results) - success_count
