@@ -2,10 +2,9 @@
 
 import asyncio
 import time
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.provider import ProviderRequest
 from astrbot.api import logger
-from astrbot.api.message.components import MessageChain
 from . import session_ops
 from . import formatters
 
