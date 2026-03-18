@@ -95,13 +95,19 @@ class LLMIntegration:
         items = self.pending_mgr.flatten_pending(None, None)
         total = len(items)
 
+        # 计算窗口数量
+        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        visible_sids.add(event.unified_msg_origin)
+        window_items = self.pending_mgr.flatten_pending(event, visible_sids)
+        window_total = len(window_items)
+
         # 发送通知到当前窗口
         args_str = ", ".join(f"{k}={v}" for k, v in args.items())
         msg = f"""🤖 Astrbot 工具调用请求
   {tool_name}
   参数: {args_str}
 
-当前共 {total} 个待审批，此请求审批序号：{index}
+当前总共 {total} 个待审批，当前对话窗口共 {window_total} 个待审批，此请求审批序号 {index}
 
 审批指令:
   /hapi a        全部批准

@@ -267,6 +267,9 @@ class SSEListener:
                 label = session_label_short(sid, self.sessions_cache)
                 async with self._lock:
                     total = sum(len(r) for r in self.pending.values())
+                    session_total = len(self.pending.get(sid, {}))
+
+                index = req.get("index", 0)
 
                 if self._auto_approve_enabled and self._in_auto_approve_window() and not is_question_request(req):
                     # 忙时托管审批：自动批准非 question 请求
@@ -277,10 +280,10 @@ class SSEListener:
                     queued_notifications.append(notify_msg)
                 else:
                     if is_question_request(req):
-                        msg = format_question_notification(req, label, total)
+                        msg = format_question_notification(req, label, total, session_total, index)
                     else:
                         detail = format_request_detail(req)
-                        msg = format_permission_notification(label, detail, total)
+                        msg = format_permission_notification(label, detail, total, session_total, index)
                     queued_notifications.append(msg)
 
             self._queue_request_notifications(sid, queued_notifications)
@@ -454,14 +457,24 @@ class SSEListener:
                         f"[忙时托管审批] 已自动压缩上下文\n{label}\n  {mark} /compact", sid)
                 else:
                     async with self._lock:
-                        self.pending.setdefault(sid, {})["__compact__"] = {
-                            "tool": "__compact__", "arguments": {}}
+                        # 为压缩请求分配序号
+                        compact_req = {
+                            "tool": "__compact__",
+                            "arguments": {},
+                            "index": self.allocate_index()
+                        }
+                        self.pending.setdefault(sid, {})["__compact__"] = compact_req
                         total = sum(len(r) for r in self.pending.values())
+                        session_total = len(self.pending.get(sid, {}))
+
+                    index = compact_req["index"]
                     lines = [
                         f"⚠ 上下文过长\n{label}",
                         "  压缩上下文 (/compact)",
                         "",
-                        f"当前共 {total} 个待审批，审批指令:",
+                        f"当前总共 {total} 个待审批，当前会话共 {session_total} 个待审批，此请求审批序号 {index}",
+                        "",
+                        "审批指令:",
                         "  /hapi a        全部批准",
                         "  /hapi deny     取消",
                         "  /hapi pending  查看完整列表",

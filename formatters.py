@@ -511,7 +511,7 @@ def is_compact_request(req: dict) -> bool:
     return req.get("tool", "") == _COMPACT_TOOL
 
 
-def format_question_notification(req: dict, label: str, total: int) -> str:
+def format_question_notification(req: dict, label: str, total: int, session_total: int, index: int) -> str:
     """格式化 AskUserQuestion SSE 通知"""
     args = req.get("arguments") or {}
     questions = args.get("questions", []) if isinstance(args, dict) else []
@@ -524,17 +524,19 @@ def format_question_notification(req: dict, label: str, total: int) -> str:
         for i, opt in enumerate(q.get("options", []), 1):
             desc = f" — {opt['description']}" if opt.get("description") else ""
             lines.append(f"    [{i}] {opt['label']}{desc}")
-    lines += ["", f"当前共 {total} 个待审批", "💡 使用此命令交互式审批：/hapi answer"]
+    lines += ["", f"当前总共 {total} 个待审批，当前会话共 {session_total} 个待审批，此请求审批序号 {index}", "💡 使用此命令交互式审批：/hapi answer"]
     return "\n".join(lines)
 
 
-def format_permission_notification(label: str, detail: str, total: int) -> str:
+def format_permission_notification(label: str, detail: str, total: int, session_total: int, index: int) -> str:
     """格式化普通权限审批通知，复用统一的会话前缀。"""
     lines = [
         f"🔐 权限请求 {label}",
         f"  {detail}",
         "",
-        f"当前共 {total} 个待审批，审批指令:",
+        f"当前总共 {total} 个待审批，当前会话共 {session_total} 个待审批，此请求审批序号 {index}",
+        "",
+        "审批指令:",
         "  /hapi a        全部批准",
         "  /hapi allow <序号>  批准单个",
         "  /hapi deny     全部拒绝",
@@ -572,10 +574,11 @@ def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]
         return "没有待审批的请求"
 
     lines = [f"当前窗口待审批 ({len(items)} 个):"]
-    for i, (sid, rid, req) in enumerate(items, 1):
+    for sid, rid, req in items:
         label = session_label_short(sid, sessions_cache)
         detail = format_request_detail(req)
-        lines.append(f"\n[{i}] {label}")
+        index = req.get("index", 0)
+        lines.append(f"\n[{index}] {label}")
         lines.append(f"    🛠️ {detail}")
 
     lines.append("\n💡 批准全部：/hapi a")
