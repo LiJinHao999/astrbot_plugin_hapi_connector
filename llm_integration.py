@@ -91,9 +91,8 @@ class LLMIntegration:
         # 添加到 pending 队列（伪装成 HAPI 权限请求）
         req_id, future, index = self.pending_mgr.add_llm_tool_request(sid, tool_name, args)
 
-        # 计算当前待审批总数
-        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
-        items = self.pending_mgr.flatten_pending(event, visible_sids)
+        # 计算当前待审批总数（LLM 工具审批不受窗口限制，统计所有待审批）
+        items = self.pending_mgr.flatten_pending(None, None)
         total = len(items)
 
         # 发送通知（复用现有通知机制）
