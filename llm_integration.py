@@ -85,17 +85,17 @@ class LLMIntegration:
         Returns:
             (approved, reason): approved=True表示批准，reason说明原因（"approved"/"denied"/"timeout"/"notification_failed"）
         """
-        # 获取当前 session（用于存储审批请求）
-        sid = self.state_mgr.current_sid(event) or "llm_global"
+        # LLM 工具审批使用窗口 ID 作为 key，而不是 session ID
+        window_id = event.unified_msg_origin
 
         # 添加到 pending 队列（伪装成 HAPI 权限请求）
-        req_id, future, index = self.pending_mgr.add_llm_tool_request(sid, tool_name, args)
+        req_id, future, index = self.pending_mgr.add_llm_tool_request(window_id, tool_name, args)
 
         # 计算当前待审批总数（LLM 工具审批不受窗口限制，统计所有待审批）
         items = self.pending_mgr.flatten_pending(None, None)
         total = len(items)
 
-        # 发送通知（复用现有通知机制）
+        # 发送通知到当前窗口
         args_str = ", ".join(f"{k}={v}" for k, v in args.items())
         msg = f"""🤖 Astrbot 工具调用请求
   {tool_name}
@@ -110,24 +110,16 @@ class LLMIntegration:
   /hapi deny <序号> 拒绝单个
   /hapi pending   查看完整列表"""
 
-        targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
         notification_sent = False
-        if targets:
-            try:
-                await self.plugin.context.send_message(targets[0], MessageChain().message(msg))
-                notification_sent = True
-            except Exception:
-                cached_event = self.plugin.notification_mgr._event_cache.get(targets[0])
-                if cached_event:
-                    try:
-                        await cached_event.send(MessageChain().message(msg))
-                        notification_sent = True
-                    except Exception as e:
-                        logger.warning(f"LLM 工具审批通知发送失败: {e}")
+        try:
+            await event.send(MessageChain().message(msg))
+            notification_sent = True
+        except Exception as e:
+            logger.warning(f"LLM 工具审批通知发送失败: {e}")
 
         # 如果通知发送失败，立即返回拒绝
         if not notification_sent:
-            self.pending_mgr.remove_entry(sid, req_id)
+            self.pending_mgr.remove_entry(window_id, req_id)
             logger.error(f"LLM 工具 {tool_name} 审批通知发送失败，自动拒绝")
             return False, "notification_failed"
 
@@ -137,7 +129,7 @@ class LLMIntegration:
             return (True, "approved") if approved else (False, "denied")
         except asyncio.TimeoutError:
             # 超时，清理请求
-            self.pending_mgr.remove_entry(sid, req_id)
+            self.pending_mgr.remove_entry(window_id, req_id)
             logger.warning(f"LLM 工具 {tool_name} 审批超时（60秒无响应）")
             # 如果处于忙时托管时段，超时默认允许
             if self.plugin.sse_listener._auto_approve_enabled and self.plugin.sse_listener._in_auto_approve_window():
@@ -146,7 +138,7 @@ class LLMIntegration:
             return False, "timeout"
         except asyncio.CancelledError:
             # 任务被取消（通常是外部超时），清理并返回拒绝，不再传播异常
-            self.pending_mgr.remove_entry(sid, req_id)
+            self.pending_mgr.remove_entry(window_id, req_id)
             logger.warning(f"LLM 工具 {tool_name} 审批被取消")
             return False, "cancelled"
 
