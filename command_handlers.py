@@ -532,6 +532,15 @@ class CommandHandlers:
                 ok, _ = await session_ops.send_message(self.client, sid, "/compact")
                 self.plugin.pending_mgr.remove_entry(sid, rid)
                 yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: /compact")
+            elif self.plugin.pending_mgr.is_llm_tool_request(req):
+                # 从原始 pending 获取 Future
+                original_req = self.sse_listener.pending.get(sid, {}).get(rid, )
+                future = original_req.get("future")
+                if future and not future.done():
+                    future.set_result(True)
+                self.plugin.pending_mgr.remove_entry(sid, rid)
+                tool = req.get("tool", "?")
+                yield event.plain_result(f"✓ 已批准: {tool}")
             else:
                 ok, _ = await session_ops.approve_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
