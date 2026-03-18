@@ -386,6 +386,7 @@ class HapiConnectorPlugin(Star):
     async def handle_hapi(self, event: AstrMessageEvent, raw: str = ""):
         """处理 /hapi 命令"""
         if not self._is_admin(event):
+            yield event.plain_result("⚠️ 此命令仅限管理员使用")
             return
         async for result in self.cmd_handlers.cmd_hapi_router(event, raw):
             yield result

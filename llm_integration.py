@@ -109,7 +109,15 @@ class LLMIntegration:
 
         targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
         if targets:
-            await self.plugin.context.send_message(targets[0], MessageChain().message(msg))
+            try:
+                await self.plugin.context.send_message(targets[0], MessageChain().message(msg))
+            except Exception:
+                cached_event = self.plugin.notification_mgr._event_cache.get(targets[0])
+                if cached_event:
+                    try:
+                        await cached_event.send(MessageChain().message(msg))
+                    except Exception as e:
+                        logger.warning(f"LLM 工具审批通知发送失败: {e}")
 
         # 等待审批结果（1分钟超时）
         try:

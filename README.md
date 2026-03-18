@@ -67,6 +67,17 @@ hapi codex    # Open Codex
 
 ---
 
+## 为什么选择此远程方案？
+- **无缝切换**: 离开电脑后可以随时用手机接管
+- **远程vibe**: 使用插件可以在远程随意启动claudecode/codex/geminicil，随时随地开启一个新的交互
+- **本地部署**: 本地部署，极低延迟，同时不需要公网ip
+- **充分利用聊天软件的聊天窗口**: 参考[窗口隔离特性介绍](docs/session-isolation.md)，你可以在群聊A、B、C中随意切换、接收和管理不同的远程vibe会话，不局限于一个窗口下的交互和通知
+- **astrbot 原生 FC 能力集成**: 自然语言即可管理会话，支持类CC/CX的工具调用审批，工具严格隔离，在没有远程vibe会话中的群聊自动关闭，不污染上下文
+- **文件双向传输**: 支持利用astrbot进行小文件的下载、上传，方便查看日志或传递配置
+- **兼容QQ官方bot**: 无法主动推送消息时将消息fallback伪装为被动回复，兼容QQ官方bot
+- **智能审批机制**: 支持戳一戳快速批准、忙时自动托管、超时提醒，灵活应对不同场景
+
+
 ## 💡 实际应用场景
 
 - **离开电脑时继续推进任务**：手机上发一条消息，让 Claude Code 继续干活
@@ -124,11 +135,42 @@ hapi codex    # Open Codex
 
 ---
 
-## ⌨️ 指令大全
+## ⌨️ 使用指南
 
 所有指令以 `/hapi` 开头，**仅管理员可用**。
+**如果不想记指令也没关系，插件现已支持使用Astrbot原生function calling工具触发，请注意把相关工具打开**
 
-### 📋 会话查看
+### 🤖 LLM 工具集成（自然语言交互）
+
+插件提供 10 个 Function Calling 工具，支持用自然语言管理远程会话：
+
+| 工具名 | 说明 |
+|--------|------|
+| `hapi_coding_list_sessions` | 列出 session 列表（支持窗口/路径/代理过滤） |
+| `hapi_coding_get_status` | 获取当前 session 状态 |
+| `hapi_coding_message_history` | 查询历史消息 |
+| `hapi_coding_get_config_status` | 查看插件配置 |
+| `hapi_coding_list_commands` | 列出可用指令（按主题分类） |
+| `hapi_coding_send_message` | 发送消息到当前 session |
+| `hapi_coding_switch_session` | 切换 session |
+| `hapi_coding_create_session` | 创建新 session |
+| `hapi_coding_stop_message` | 停止消息生成 |
+| `hapi_coding_change_config` | 修改插件配置 |
+| `hapi_coding_execute_command` | 执行任意 /hapi 指令 |
+
+**使用方式**：在 Astrbot 管理面板开启工具后，直接对话即可，如"切换到1号session"、"创建一个 Claude 会话"。
+
+**推荐配置**：建议至少激活 `hapi_coding_list_commands` 和 `hapi_coding_execute_command` 两个工具。`execute_command` 可执行任意 /hapi 指令，其它工具仅为便捷性提供。
+
+**审批机制**：操作类工具需管理员审批（支持 `/hapi a` 批准、`/hapi deny` 拒绝、戳一戳快速批准），防止模型误操作。
+
+**智能隔离**：工具仅在管理员且当前窗口有 HAPI 会话时注册，不污染其他聊天上下文。
+
+---
+
+### ⌨️ 指令列表
+
+#### 📋 会话查看
 
 | 指令 | 说明 |
 |------|------|
@@ -138,7 +180,7 @@ hapi codex    # Open Codex
 | `/hapi s` | 查看当前会话状态（别名 `status`） |
 | `/hapi msg [轮数]` | 查看最近消息，默认 1 轮（别名 `messages`） |
 
-### 💬 消息发送
+#### 💬 消息发送
 
 | 指令 | 说明 |
 |------|------|
@@ -148,7 +190,7 @@ hapi codex    # Open Codex
 
 > 快捷前缀可在配置中修改，默认为 `>`
 
-### 🛠️ 远程 session 管理
+#### 🛠️ 远程 session 管理
 
 | 指令 | 说明 |
 |------|------|
@@ -160,7 +202,7 @@ hapi codex    # Open Codex
 | `/hapi delete` | 删除当前会话 |
 | `/hapi clean [路径前缀]` | 批量清理 inactive session |
 
-### ✅ 权限审批
+#### ✅ 权限审批
 
 | 指令 | 说明 |
 |------|------|
@@ -172,7 +214,7 @@ hapi codex    # Open Codex
 | `/hapi deny <序号>` | 拒绝单个请求 |
 | 戳一戳机器人 | 批准所有普通权限请求 + 交互式回答 question（仅 QQ NapCat，需开启 `poke_approve`） |
 
-### 📁 文件操作
+#### 📁 文件操作
 
 | 指令 | 说明 |
 |------|------|
@@ -182,7 +224,7 @@ hapi codex    # Open Codex
 | `/hapi download <路径>` | 下载远端文件到当前聊天（别名 `dl`） |
 | `/hapi upload [cancel]` | 上传文件到当前 session，支持交互上传和取消 |
 
-### 🔧 模式与帮助
+#### 🔧 模式与帮助
 
 | 指令 | 说明 |
 |------|------|
@@ -242,19 +284,24 @@ hapi codex    # Open Codex
 
 ```
 astrbot_plugin_hapi_connector/
-├── main.py              # 插件入口：指令组、前缀处理、生命周期
-├── binding_manager.py   # 聊天窗口通知推送与 session 绑定管理
-├── hapi_client.py       # 异步 HAPI HTTP 客户端 + JWT 管理
-├── cf_access.py         # Cloudflare Zero Trust Access 认证
-├── sse_listener.py      # 后台 SSE 监听 + 消息推送
-├── session_ops.py       # Session CRUD 操作
-├── file_ops.py          # 文件查询与下载
-├── approval_ops.py      # 审批业务逻辑
-├── create_wizard.py     # 创建会话向导状态机
-├── formatters.py        # 格式化输出
-├── constants.py         # 常量定义
-├── _conf_schema.json    # 配置 schema
-└── metadata.yaml        # 插件元信息
+├── main.py                 # 插件入口：生命周期、LLM 工具注册、戳一戳/快捷前缀处理
+├── command_handlers.py     # 所有 /hapi 子命令处理器
+├── llm_integration.py      # LLM Function Calling 工具集成（10个工具）
+├── state_manager.py        # 用户状态管理（当前 session、flavor、路由）
+├── notification_manager.py # 通知推送与消息分发
+├── pending_manager.py      # 待审批请求管理（序号分配、批准/拒绝）
+├── binding_manager.py      # 聊天窗口与 session 绑定管理
+├── hapi_client.py          # 异步 HAPI HTTP 客户端 + JWT 自动刷新
+├── cf_access.py            # Cloudflare Zero Trust Access 认证
+├── sse_listener.py         # 后台 SSE 监听 + 实时事件推送
+├── session_ops.py          # Session CRUD 操作封装
+├── file_ops.py             # 文件查询、上传、下载
+├── approval_ops.py         # 审批业务逻辑
+├── create_wizard.py        # 创建会话交互式向导
+├── formatters.py           # 格式化输出工具
+├── constants.py            # 常量定义（权限模式、模型、代理类型）
+├── _conf_schema.json       # 插件配置 schema
+└── metadata.yaml           # 插件元信息
 ```
 
 ---
@@ -265,8 +312,8 @@ astrbot_plugin_hapi_connector/
 - ✅ 完善部署文档与使用教程
 - ✅ 支持文件上传与下载逻辑
 - ✅ 支持多用户独立会话状态，通知相互隔离
+- ✅ 通过 AstrBot 自然语言触发指令
 - [ ] 支持将 Markdown 文字、AI编辑等影响观感长上下文渲染为图片（依赖库独立，可选下载）
-- [ ] 通过 AstrBot 自然语言触发指令，让聊天 LLM 感知当前编码任务
 
 ---
 
