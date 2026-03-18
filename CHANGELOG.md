@@ -1,6 +1,6 @@
 # 更新日志
 
-## v2.0.0 大更新 — 原生 Astrbot Function Calling 工具集成
+## v2.0.0 大更新 — 支持自然语言操作远程会话
 
 **此版本提供了 Astrbot 原生 Function Calling 能力的集成，现在你可以用自然语言管理远程 vibe 会话了**
 
