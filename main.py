@@ -201,7 +201,7 @@ class HapiConnectorPlugin(Star):
     @filter.llm_tool(name="hapi_coding_create_session")
     async def tool_create_session(self, event: AstrMessageEvent, directory: str, agent: str,
                                    machine_id: str = "", session_type: str = "simple", yolo: bool = False):
-        '''创建新的 coding session。
+        '''创建新的 coding session。创建成功后会自动切换到新session，无需手动调用switch_session。
 
         Args:
             directory(string): 工作目录路径
