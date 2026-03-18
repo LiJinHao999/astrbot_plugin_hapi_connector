@@ -79,8 +79,12 @@ class LLMIntegration:
 
     # ──── 审批机制 ────
 
-    async def _require_approval(self, tool_name: str, args: dict, event: AstrMessageEvent) -> bool:
-        """请求审批并等待结果（复用现有审批机制）"""
+    async def _require_approval(self, tool_name: str, args: dict, event: AstrMessageEvent) -> tuple[bool, str]:
+        """请求审批并等待结果
+
+        Returns:
+            (approved, reason): approved=True表示批准，reason说明原因（"approved"/"denied"/"timeout"/"notification_failed"）
+        """
         # 获取当前 session（用于存储审批请求）
         sid = self.state_mgr.current_sid(event) or "llm_global"
 
@@ -108,28 +112,39 @@ class LLMIntegration:
   /hapi pending   查看完整列表"""
 
         targets = self.state_mgr.select_notification_targets(sid if sid != "llm_global" else "", self.sessions_cache)
+        notification_sent = False
         if targets:
             try:
                 await self.plugin.context.send_message(targets[0], MessageChain().message(msg))
+                notification_sent = True
             except Exception:
                 cached_event = self.plugin.notification_mgr._event_cache.get(targets[0])
                 if cached_event:
                     try:
                         await cached_event.send(MessageChain().message(msg))
+                        notification_sent = True
                     except Exception as e:
                         logger.warning(f"LLM 工具审批通知发送失败: {e}")
+
+        # 如果通知发送失败，立即返回拒绝
+        if not notification_sent:
+            self.pending_mgr.remove_entry(sid, req_id)
+            logger.error(f"LLM 工具 {tool_name} 审批通知发送失败，自动拒绝")
+            return False, "notification_failed"
 
         # 等待审批结果（1分钟超时）
         try:
             approved = await asyncio.wait_for(future, timeout=60)
-            return approved
-        except asyncio.TimeoutError:
-            # 超时清理
+            return (True, "approved") if approved else (False, "denied")
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            # 超时或取消，清理请求
             self.pending_mgr.remove_entry(sid, req_id)
+            logger.warning(f"LLM 工具 {tool_name} 审批超时（60秒无响应）")
             # 如果处于忙时托管时段，超时默认允许
             if self.plugin.sse_listener._auto_approve_enabled and self.plugin.sse_listener._in_auto_approve_window():
-                return True
-            return False
+                logger.info(f"忙时托管时段，自动批准 {tool_name}")
+                return True, "auto_approved"
+            return False, "timeout"
 
     # ──── 查询类工具（无需审批）────
 
@@ -295,8 +310,14 @@ quick_prefix (快捷前缀): {quick_prefix}
             return
 
         # 请求审批
-        if not await self._require_approval("hapi_coding_send_message", {"message": message}, event):
-            yield "操作已被用户拒绝"
+        approved, reason = await self._require_approval("hapi_coding_send_message", {"message": message}, event)
+        if not approved:
+            if reason == "timeout":
+                yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
+            elif reason == "notification_failed":
+                yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
+            else:
+                yield "操作被用户拒绝"
             return
 
         # 执行发送
@@ -310,8 +331,14 @@ quick_prefix (快捷前缀): {quick_prefix}
             target(string): session 序号（如 "1"）或 session ID（如 "abc12345"）
         '''
         # 请求审批
-        if not await self._require_approval("hapi_coding_switch_session", {"target": target}, event):
-            yield "操作已被用户拒绝"
+        approved, reason = await self._require_approval("hapi_coding_switch_session", {"target": target}, event)
+        if not approved:
+            if reason == "timeout":
+                yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
+            elif reason == "notification_failed":
+                yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
+            else:
+                yield "操作被用户拒绝"
             return
 
         # 复用 cmd_sw 逻辑，提取消息内容返回给 LLM
@@ -362,10 +389,16 @@ quick_prefix (快捷前缀): {quick_prefix}
                 return
 
         # 请求审批
-        if not await self._require_approval("hapi_coding_create_session",
+        approved, reason = await self._require_approval("hapi_coding_create_session",
                                            {"machine_id": machine_id, "directory": directory,
-                                            "agent": agent, "session_type": session_type, "yolo": yolo}, event):
-            yield "操作已被用户拒绝"
+                                            "agent": agent, "session_type": session_type, "yolo": yolo}, event)
+        if not approved:
+            if reason == "timeout":
+                yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
+            elif reason == "notification_failed":
+                yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
+            else:
+                yield "操作被用户拒绝"
             return
 
         # 执行创建
@@ -384,9 +417,15 @@ quick_prefix (快捷前缀): {quick_prefix}
             value(string): 新值
         '''
         # 请求审批
-        if not await self._require_approval("hapi_coding_change_config",
-                                           {"config_name": config_name, "value": value}, event):
-            yield "操作已被用户拒绝"
+        approved, reason = await self._require_approval("hapi_coding_change_config",
+                                           {"config_name": config_name, "value": value}, event)
+        if not approved:
+            if reason == "timeout":
+                yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
+            elif reason == "notification_failed":
+                yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
+            else:
+                yield "操作被用户拒绝"
             return
 
         # 执行修改
@@ -426,8 +465,14 @@ quick_prefix (快捷前缀): {quick_prefix}
             return
 
         # 请求审批
-        if not await self._require_approval("hapi_coding_stop_message", {"session_id": sid[:8]}, event):
-            yield "操作已被用户拒绝"
+        approved, reason = await self._require_approval("hapi_coding_stop_message", {"session_id": sid[:8]}, event)
+        if not approved:
+            if reason == "timeout":
+                yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
+            elif reason == "notification_failed":
+                yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
+            else:
+                yield "操作被用户拒绝"
             return
 
         # 执行停止
@@ -443,8 +488,14 @@ quick_prefix (快捷前缀): {quick_prefix}
             command(string): 完整的 /hapi 指令（不含 /hapi 前缀）
         '''
         # 请求审批
-        if not await self._require_approval("hapi_coding_execute_command", {"command": command}, event):
-            yield "操作已被用户拒绝"
+        approved, reason = await self._require_approval("hapi_coding_execute_command", {"command": command}, event)
+        if not approved:
+            if reason == "timeout":
+                yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
+            elif reason == "notification_failed":
+                yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
+            else:
+                yield "操作被用户拒绝"
             return
 
         # 执行命令
