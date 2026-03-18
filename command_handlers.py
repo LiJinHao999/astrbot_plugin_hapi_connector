@@ -470,6 +470,7 @@ class CommandHandlers:
         """查看待审批请求列表: /hapi pending"""
         await self.state_mgr.set_user_state(event)
         visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
         pending = self.plugin.pending_mgr.get_pending_for_window(event, visible_sids)
         text = formatters.format_pending_requests(pending, self.sessions_cache)
         yield event.plain_result(text)
@@ -480,6 +481,7 @@ class CommandHandlers:
         """批准所有权限请求，再交互式回答 question: /hapi a"""
         await self.state_mgr.set_user_state(event)
         visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
         items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
         if not items:
             yield event.plain_result("没有待审批的请求")
@@ -508,6 +510,7 @@ class CommandHandlers:
         """批准权限请求（跳过 question）: /hapi allow [序号]"""
         await self.state_mgr.set_user_state(event)
         visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
         items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
         regular = [(sid, rid, req) for sid, rid, req in items
                    if not formatters.is_question_request(req)]
@@ -519,10 +522,12 @@ class CommandHandlers:
         raw = (target or "").strip()
         if raw and raw.isdigit():
             n = int(raw)
-            if n < 1 or n > len(regular):
-                yield event.plain_result(f"无效序号，当前共 {len(regular)} 个待批准权限请求")
+            # 根据 index 查找，而不是列表索引
+            found = [(sid, rid, req) for sid, rid, req in regular if req.get("index") == n]
+            if not found:
+                yield event.plain_result(f"无效序号 {n}")
                 return
-            sid, rid, req = regular[n - 1]
+            sid, rid, req = found[0]
             if is_compact_request(req):
                 ok, _ = await session_ops.send_message(self.client, sid, "/compact")
                 self.plugin.pending_mgr.remove_entry(sid, rid)
@@ -542,6 +547,7 @@ class CommandHandlers:
         """交互式回答 question 请求: /hapi answer [序号]"""
         await self.state_mgr.set_user_state(event)
         visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
         items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
         q_items = [(sid, rid, req) for sid, rid, req in items
                    if formatters.is_question_request(req)]
@@ -553,10 +559,12 @@ class CommandHandlers:
         raw = (target or event.message_str).strip()
         if raw and raw.isdigit():
             n = int(raw)
-            if n < 1 or n > len(q_items):
-                yield event.plain_result(f"无效序号，当前共 {len(q_items)} 个待回答问题")
+            # 根据 index 查找
+            found = [(sid, rid, req) for sid, rid, req in q_items if req.get("index") == n]
+            if not found:
+                yield event.plain_result(f"无效序号 {n}")
                 return
-            q_items = [q_items[n - 1]]
+            q_items = [found[0]]
 
         await self.plugin.pending_mgr.answer_questions_interactive(
             event, q_items, self.client, session_waiter, SessionController)
@@ -568,6 +576,7 @@ class CommandHandlers:
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
         await self.state_mgr.set_user_state(event)
         visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
         items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
         if not items:
             yield event.plain_result("没有待审批的请求")
@@ -577,10 +586,12 @@ class CommandHandlers:
         if raw and raw.isdigit():
             # 拒绝单个
             n = int(raw)
-            if n < 1 or n > len(items):
-                yield event.plain_result(f"无效序号，当前共 {len(items)} 个待审批")
+            # 根据 index 查找
+            found = [(sid, rid, req) for sid, rid, req in items if req.get("index") == n]
+            if not found:
+                yield event.plain_result(f"无效序号 {n}")
                 return
-            sid, rid, req = items[n - 1]
+            sid, rid, req = found[0]
             if is_compact_request(req):
                 self.plugin.pending_mgr.remove_entry(sid, rid)
                 yield event.plain_result("✓ 已取消压缩: /compact")

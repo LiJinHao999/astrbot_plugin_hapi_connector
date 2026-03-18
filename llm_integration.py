@@ -499,7 +499,8 @@ quick_prefix (快捷前缀): {quick_prefix}
         logger.info(f"[LLM工具] 开始执行命令: {command}")
         results = []
         is_first = True
-        async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, command):
+        # 直接传入 command，不要让 cmd_hapi_router 从 event.message_str 提取
+        async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, f"/hapi {command}"):
             logger.info(f"[LLM工具] 收到结果，类型: {type(result)}")
 
             # 第一条消息立即发送
