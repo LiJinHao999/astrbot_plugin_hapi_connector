@@ -13,8 +13,8 @@
 1. **新增 LLM 工具支持**：为 Astrbot 提供 10 个工具，实现 AI 代理远程管理 HAPI coding sessions
    - 查询类工具（4个）：获取 session 列表、状态、配置、可用命令
    - 操作类工具（6个）：发送消息、切换 session、创建 session、停止消息、修改配置、执行任意 HAPI 命令
-   - 为了管理会话，建议至少激活查询可用命令、执行任意 HAPI 命令两个工具(hapi_coding_list_commands、hapi_coding_execute_command )，执行 HAPI 命令的工具可以为你主动执行任一 hapi 命令，其它工具的存在仅是为了方便管理。
-   - 所有操作类工具均复用了审批命令和审批逻辑，需管理员审批，支持 `/hapi a` 快捷批准、`/hapi deny` 拒绝，依然支持戳一戳快速批准（QQ NapCat），防止模型呆傻误操作之类的给人添乱
+   - 为了管理会话，建议至少激活查询可用命令、执行任意 HAPI 命令两个工具 ( 即 hapi_coding_list_commands 和 hapi_coding_execute_command )，执行 HAPI 命令的工具可以为你主动执行任一 hapi 命令，其它工具的存在仅是为了方便管理和快速调用。
+   - 所有操作类工具均复用了审批命令和审批逻辑，需管理员审批，依然支持 `/hapi a` 快捷批准、`/hapi deny` 拒绝，依然支持戳一戳快速批准（QQ NapCat），防止模型呆傻误操作之类的给人添乱
 
 2. **审批机制优化**
    - 序号管理系统：每个待审批请求分配唯一序号，删除后自动回收复用
