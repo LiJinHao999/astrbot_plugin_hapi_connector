@@ -769,6 +769,10 @@ class SSEListener:
                 requests_data = agent_state.get("requests") or {}
                 if requests_data:
                     async with self._lock:
+                        # 为已有请求分配序号
+                        for rid, req in requests_data.items():
+                            if "index" not in req:
+                                req["index"] = self.allocate_index()
                         self.pending[sid] = requests_data
                     logger.info("加载 session %s 的 %d 个待审批请求",
                                 sid[:8], len(requests_data))
