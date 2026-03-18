@@ -412,6 +412,8 @@ class HapiConnectorPlugin(Star):
 
         await self.state_mgr.set_user_state(event)
         visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
+        # 同时包含当前窗口 ID（用于 LLM 工具审批）
+        visible_sids.add(event.unified_msg_origin)
         items = self.pending_mgr.flatten_pending(event, visible_sids)
         if not items:
             return  # 无待审批，静默
