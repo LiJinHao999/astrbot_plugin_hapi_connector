@@ -498,18 +498,14 @@ quick_prefix (快捷前缀): {quick_prefix}
         # 执行命令
         logger.info(f"[LLM工具] 开始执行命令: {command}")
         results = []
-        is_first = True
         # 直接传入 command，不要让 cmd_hapi_router 从 event.message_str 提取
         async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, f"/hapi {command}"):
             logger.info(f"[LLM工具] 收到结果，类型: {type(result)}")
 
-            # 第一条消息立即发送
-            if is_first:
-                logger.info(f"[LLM工具] 立即发送第一条消息")
-                await event.send(result)
-                is_first = False
+            # 立即发送给用户（包括交互提示）
+            await event.send(result)
 
-            # 提取文本
+            # 提取文本返回给 LLM
             if hasattr(result, 'chain'):
                 text_parts = []
                 for seg in result.chain:
@@ -522,7 +518,7 @@ quick_prefix (快捷前缀): {quick_prefix}
 
         logger.info(f"[LLM工具] 命令执行完成，共 {len(results)} 条消息")
         if results:
-            yield f"命令执行完成。最后结果: {results[-1][:300]}"
+            yield "\n\n".join(results)
         else:
             yield "命令执行完成"
 
