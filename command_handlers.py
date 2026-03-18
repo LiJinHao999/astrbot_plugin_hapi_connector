@@ -23,7 +23,9 @@ class CommandHandlers:
 
     async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
         """统一处理 /hapi 路由与帮助提示"""
+        from astrbot.api import logger
         remainder = self.plugin._extract_hapi_remainder(event, raw)
+        logger.debug(f"[cmd_hapi_router] raw='{raw}', remainder='{remainder}'")
         if not remainder:
             await self.state_mgr.ensure_primary_session(event)
             async for result in self.cmd_help(event, ""):
@@ -33,6 +35,7 @@ class CommandHandlers:
         parts = remainder.split(None, 1)
         subcommand = parts[0].lower()
         argument = parts[1] if len(parts) > 1 else ""
+        logger.debug(f"[cmd_hapi_router] subcommand='{subcommand}', argument='{argument}', parts={parts}")
         routes = {
             "help": (self.cmd_help, True),
             "帮助": (self.cmd_help, True),
