@@ -270,14 +270,18 @@ class HapiConnectorPlugin(Star):
 
     def _extract_hapi_remainder(self, event: AstrMessageEvent, raw: str = "") -> str:
         """Choose the most complete /hapi remainder from raw and message text."""
-        # 如果 raw 参数非空，优先使用（LLM 工具调用场景）
-        if raw and raw.strip():
-            return self._strip_hapi_prefix(raw.strip())
+        message_str = (event.message_str or "").strip()
+        raw_stripped = raw.strip() if raw else ""
 
-        # 否则从 event.message_str 提取
-        return self._strip_hapi_prefix((event.message_str or "").strip())
+        # 从 message_str 提取完整内容
+        from_message = self._strip_hapi_prefix(message_str)
 
-        return max(candidates, key=lambda item: (len(item.split()), len(item)))
+        # 如果 raw 非空且看起来更完整（LLM 工具调用场景会传入完整指令），使用 raw
+        if raw_stripped and len(raw_stripped.split()) >= len(from_message.split()):
+            return self._strip_hapi_prefix(raw_stripped)
+
+        # 否则使用 message_str（普通命令场景）
+        return from_message
 
     async def _refresh_sessions(self):
         """刷新 session 缓存"""
