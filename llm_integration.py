@@ -94,7 +94,7 @@ class LLMIntegration:
 
         # 发送通知（复用现有通知机制）
         args_str = ", ".join(f"{k}={v}" for k, v in args.items())
-        msg = f"""🤖 LLM 工具调用请求
+        msg = f"""🤖 Astrbot 工具调用请求
   {tool_name}
   参数: {args_str}
 
