@@ -211,12 +211,15 @@ class CommandHandlers:
 
     async def cmd_msg(self, event: AstrMessageEvent, rounds: str = ""):
         """查看最近消息（按轮次）: /hapi msg [轮数]"""
+        from astrbot.api import logger
+        logger.debug(f"[cmd_msg] 收到参数 rounds='{rounds}', type={type(rounds)}")
         await self.state_mgr.set_user_state(event)
         sid = self.state_mgr.effective_sid(event)
         if not sid:
             yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
             return
         rounds_int = int(rounds) if rounds.isdigit() and int(rounds) >= 1 else 1
+        logger.debug(f"[cmd_msg] 解析后 rounds_int={rounds_int}")
         try:
             # 多取消息以保证覆盖 N 轮（每轮约含多条原始消息）
             fetch_limit = min(rounds_int * 80, 500)

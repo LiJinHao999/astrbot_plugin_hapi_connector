@@ -396,18 +396,24 @@ quick_prefix (快捷前缀): {quick_prefix}
                 return
             self.plugin.sse_listener.output_level = value
             self.plugin.config["output_level"] = value
+            self.plugin.config.save_config()
             yield f"✅ 已设置 {config_name} = {value}"
         elif config_name == "auto_approve_enabled":
             bool_val = value.lower() in ["true", "1", "yes", "on", "开启"]
             self.plugin.sse_listener._auto_approve_enabled = bool_val
+            self.plugin.config["auto_approve_enabled"] = bool_val
+            self.plugin.config.save_config()
             yield f"✅ 已设置 {config_name} = {bool_val}"
         elif config_name == "remind_pending":
             bool_val = value.lower() in ["true", "1", "yes", "on", "开启"]
             self.plugin.sse_listener._remind_enabled = bool_val
+            self.plugin.config["remind_pending"] = bool_val
+            self.plugin.config.save_config()
             yield f"✅ 已设置 {config_name} = {bool_val}"
         elif config_name == "quick_prefix":
             self.plugin._quick_prefix = value
             self.plugin.config["quick_prefix"] = value
+            self.plugin.config.save_config()
             yield f"✅ 已设置 {config_name} = {value}"
         else:
             yield f"不支持的配置项: {config_name}，请先调用 hapi_coding_get_config_status 查看可用配置"
