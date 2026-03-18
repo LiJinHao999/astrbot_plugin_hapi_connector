@@ -498,14 +498,13 @@ quick_prefix (快捷前缀): {quick_prefix}
         # 执行命令
         logger.info(f"[LLM工具] 开始执行命令: {command}")
         results = []
-        # 直接传入 command，不要让 cmd_hapi_router 从 event.message_str 提取
         async for result in self.plugin.cmd_handlers.cmd_hapi_router(event, f"/hapi {command}"):
             logger.info(f"[LLM工具] 收到结果，类型: {type(result)}")
 
-            # 立即发送给用户（包括交互提示）
+            # 立即发送给用户
             await event.send(result)
 
-            # 提取文本返回给 LLM
+            # 提取文本
             if hasattr(result, 'chain'):
                 text_parts = []
                 for seg in result.chain:
@@ -517,7 +516,14 @@ quick_prefix (快捷前缀): {quick_prefix}
                     results.append(text)
 
         logger.info(f"[LLM工具] 命令执行完成，共 {len(results)} 条消息")
-        if results:
+
+        # 检测交互式命令
+        cmd_name = command.strip().split()[0] if command.strip() else ""
+        interactive_cmds = ['create', 'delete', 'rename', 'archive', 'perm', 'model', 'output', 'prune']
+
+        if cmd_name in interactive_cmds:
+            yield f"这是一条交互式命令，用户已自行完成交互设置，你可以自行思考和查看操作结果"
+        elif results:
             yield "\n\n".join(results)
         else:
             yield "命令执行完成"
