@@ -136,8 +136,8 @@ class LLMIntegration:
         try:
             approved = await asyncio.wait_for(future, timeout=60)
             return (True, "approved") if approved else (False, "denied")
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            # 超时或取消，清理请求
+        except asyncio.TimeoutError:
+            # 超时，清理请求
             self.pending_mgr.remove_entry(sid, req_id)
             logger.warning(f"LLM 工具 {tool_name} 审批超时（60秒无响应）")
             # 如果处于忙时托管时段，超时默认允许
@@ -145,6 +145,11 @@ class LLMIntegration:
                 logger.info(f"忙时托管时段，自动批准 {tool_name}")
                 return True, "auto_approved"
             return False, "timeout"
+        except asyncio.CancelledError:
+            # 任务被取消（通常是外部超时），清理并返回拒绝，不再传播异常
+            self.pending_mgr.remove_entry(sid, req_id)
+            logger.warning(f"LLM 工具 {tool_name} 审批被取消")
+            return False, "cancelled"
 
     # ──── 查询类工具（无需审批）────
 
