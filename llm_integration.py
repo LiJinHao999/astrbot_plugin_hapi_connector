@@ -311,6 +311,7 @@ quick_prefix (快捷前缀): {quick_prefix}
 
         # 请求审批
         approved, reason = await self._require_approval("hapi_coding_send_message", {"message": message}, event)
+        logger.debug(f"[tool_send_message] approved={approved}, reason={reason}")
         if not approved:
             if reason == "timeout":
                 yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
