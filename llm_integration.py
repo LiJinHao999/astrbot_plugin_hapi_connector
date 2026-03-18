@@ -111,7 +111,7 @@ class LLMIntegration:
 
 审批指令:
   /hapi a        全部批准
-  /hapi a <序号>  批准单个
+  /hapi allow <序号>  批准单个
   /hapi deny     全部拒绝
   /hapi deny <序号> 拒绝单个
   /hapi pending   查看完整列表"""

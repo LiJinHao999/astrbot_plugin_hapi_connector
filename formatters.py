@@ -582,7 +582,7 @@ def format_pending_requests(pending: dict[str, dict], sessions_cache: list[dict]
         lines.append(f"    🛠️ {detail}")
 
     lines.append("\n💡 批准全部：/hapi a")
-    lines.append("💡 批准单个：/hapi a <序号>")
+    lines.append("💡 批准单个：/hapi allow <序号>")
     lines.append("💡 拒绝全部：/hapi deny")
     lines.append("💡 拒绝单个：/hapi deny <序号>")
     return "\n".join(lines)
