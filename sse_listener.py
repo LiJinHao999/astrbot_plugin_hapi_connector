@@ -705,7 +705,7 @@ class SSEListener:
         async with self._lock:
             if not self.pending:
                 return
-            pending_snapshot = copy.deepcopy(self.pending)
+            pending_snapshot = self.get_all_pending()
 
         total = sum(len(r) for r in pending_snapshot.values())
         for sid, reqs in pending_snapshot.items():

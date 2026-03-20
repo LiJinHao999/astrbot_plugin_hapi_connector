@@ -1,7 +1,6 @@
 """LLM 工具集成 - 为 LLM 提供 HAPI Coding Session 交互能力"""
 
 import asyncio
-import time
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.provider import ProviderRequest
 from astrbot.api import logger
@@ -148,33 +147,31 @@ class LLMIntegration:
             logger.warning(f"LLM 工具 {tool_name} 审批被取消")
             return False, "cancelled"
 
+    def _effective_sid(self, event: AstrMessageEvent) -> str | None:
+        """统一解析当前工具应作用的 session。"""
+        return self.state_mgr.effective_sid(event)
+
+    @staticmethod
+    def _missing_session_text() -> str:
+        return (
+            "当前没有可操作的 session。请先调用 hapi_coding_list_sessions 查看会话，"
+            "再用 hapi_coding_switch_session 切换，或先创建一个新 session。"
+        )
+
     # ──── 查询类工具（无需审批）────
 
     async def tool_get_status(self, event: AstrMessageEvent):
         '''获取当前交互中的 HAPI session 的状态信息。'''
-        sid = self.state_mgr.current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
-            yield "当前窗口未绑定 session"
+            yield self._missing_session_text()
             return
 
-        session = next((s for s in self.sessions_cache if s.get("id") == sid), None)
-        if not session:
-            yield "Session 不存在"
-            return
-
-        meta = session.get("metadata", {})
-        agent = session.get("agent", "unknown")
-        active = "活跃" if session.get("active") else "非活跃"
-        perm_mode = session.get("permission_mode", "unknown")
-        path = meta.get("path", "unknown")
-
-        info = f"""当前 HAPI Coding Session 状态:
-- Session ID: {sid[:8]}...
-- 路径: {path}
-- Agent: {agent}
-- 状态: {active}
-- 权限模式: {perm_mode}"""
-        yield info
+        try:
+            detail = await session_ops.fetch_session_detail(self.client, sid)
+            yield formatters.format_session_status(detail)
+        except Exception as e:
+            yield f"获取状态失败: {e}"
 
     async def tool_list_sessions(self, event: AstrMessageEvent, window: str = "", path: str = "", agent: str = ""):
         '''列出 HAPI 的可交互 session 列表。
@@ -208,7 +205,7 @@ class LLMIntegration:
             return
 
         # 复用 formatters.format_session_list，但移除 emoji
-        current_sid = self.state_mgr.current_sid(event)
+        current_sid = self._effective_sid(event)
         text = formatters.format_session_list(sessions, current_sid, self.sessions_cache, header_current_window=event.unified_msg_origin)
 
         # 替换 emoji 为文字
@@ -233,9 +230,9 @@ class LLMIntegration:
         Args:
             rounds(number): 查询最近几轮消息（默认 1 轮）
         '''
-        sid = self.state_mgr.current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
-            yield "当前窗口未绑定 session"
+            yield self._missing_session_text()
             return
 
         try:
@@ -306,9 +303,9 @@ quick_prefix (快捷前缀): {quick_prefix}
         Args:
             message(string): 要发送的消息内容
         '''
-        sid = self.state_mgr.current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
-            yield "当前窗口未绑定 session"
+            yield self._missing_session_text()
             return
 
         # 请求审批
@@ -462,9 +459,9 @@ quick_prefix (快捷前缀): {quick_prefix}
 
     async def tool_stop_message(self, event: AstrMessageEvent):
         '''停止当前 session 的消息生成。'''
-        sid = self.state_mgr.current_sid(event)
+        sid = self._effective_sid(event)
         if not sid:
-            yield "当前窗口未绑定 session"
+            yield self._missing_session_text()
             return
 
         # 请求审批

@@ -99,6 +99,12 @@ async def approve_permission(client: AsyncHapiClient, sid: str, rid: str,
         return False, f"批准失败: {resp.status} {body_text[:200]}"
 
 
+async def answer_permission_question(client: AsyncHapiClient, sid: str, rid: str,
+                                     answers: dict) -> tuple[bool, str]:
+    """提交 AskUserQuestion 的回答。"""
+    return await approve_permission(client, sid, rid, answers=answers)
+
+
 async def deny_permission(client: AsyncHapiClient, sid: str, rid: str) -> tuple[bool, str]:
     """拒绝权限请求"""
     resp = await client.post(f"/api/sessions/{sid}/permissions/{rid}/deny", json={})

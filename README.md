@@ -118,7 +118,7 @@ hapi codex    # Open Codex
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `output_level` | SSE 推送级别：`silence` / `simple` / `summary` / `detail` | detail |
+| `output_level` | SSE 推送级别：`silence` / `simple` / `summary` / `detail` | simple |
 | `summary_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 戳一戳自动全部审批（仅 QQ NapCat） | 开启 |
@@ -142,7 +142,7 @@ hapi codex    # Open Codex
 
 ### 🤖 LLM 工具集成（自然语言交互）
 
-插件提供 10 个 Function Calling 工具，支持用自然语言管理远程会话：
+插件提供 11 个 Function Calling 工具，支持用自然语言管理远程会话：
 
 | 工具名 | 说明 |
 |--------|------|
@@ -160,11 +160,11 @@ hapi codex    # Open Codex
 
 **使用方式**：在 Astrbot 管理面板开启工具后，直接对话即可，如"切换到1号session"、"创建一个 Claude 会话"。
 
-**推荐配置**：建议至少激活 `hapi_coding_list_commands` 和 `hapi_coding_execute_command` 两个工具。`execute_command` 可执行任意 /hapi 指令，其它工具仅为便捷性提供。
+**推荐配置**：建议至少激活 `hapi_coding_list_commands`。如需覆盖尚未封装的 `/hapi` 子命令，再启用 `hapi_coding_execute_command`；常见操作优先使用结构化工具（如切换、创建、发消息、改配置）。
 
 **审批机制**：操作类工具需管理员审批（支持 `/hapi a` 批准、`/hapi deny` 拒绝、戳一戳快速批准），防止模型误操作。
 
-**智能隔离**：工具仅在管理员且当前窗口有 HAPI 会话时注册，不污染其他聊天上下文。
+**智能隔离**：非管理员不会注册任何工具；当前窗口没有可见 HAPI 会话时，仅保留 `hapi_coding_list_sessions`、`hapi_coding_list_commands`、`hapi_coding_execute_command` 3 个基础工具，避免污染上下文。
 
 ---
 
@@ -242,7 +242,7 @@ hapi codex    # Open Codex
 | `silence` | 仅推送权限请求和等待输入提醒，其余静默 |
 | `simple` | AI 思考完成后推送纯文本 agent 消息及系统事件（过滤工具调用） |
 | `summary` | AI 思考完成后推送最近 N 条 agent 消息（N 由 summary_msg_count 控制，过滤工具调用） |
-| `detail` | 实时推送所有新消息（信息量较大，默认） |
+| `detail` | 实时推送所有新消息（信息量较大） |
 
 ---
 

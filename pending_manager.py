@@ -82,29 +82,60 @@ class PendingManager:
         if not questions:
             return
 
-        async def q_waiter(controller: SessionController, ev: AstrMessageEvent,
-                          sid: str, rid: str, req: dict):
-            user_input = (ev.message_str or "").strip()
-            if not user_input:
-                await ev.send("❌ 输入为空，已取消")
-                return
+        for qi_idx, (sid, rid, req) in enumerate(questions):
+            args = req.get("arguments") or {}
+            question_list = args.get("questions", []) if isinstance(args, dict) else []
+            if not question_list:
+                await event.send(event.plain_result("❌ 当前问题请求缺少题目内容，无法继续回答"))
+                continue
 
-            answers = {opt["label"]: user_input for opt in req.get("options", [])}
-            success = await approval_ops.answer_question(client, sid, rid, answers)
+            answers: dict[str, list[str]] = {}
+
+            for qi, question in enumerate(question_list):
+                opts = question.get("options", [])
+                prompt = approval_ops.build_question_prompt(
+                    questions, qi_idx, qi, question, self.sse_listener.sessions_cache
+                )
+                await event.send(event.plain_result(prompt))
+
+                collected: list[str] = []
+
+                @session_waiter(timeout=120, record_history_chains=False)
+                async def q_waiter(controller: SessionController, ev: AstrMessageEvent,
+                                   _opts=opts, _collected=collected, _state={"other": False}):
+                    reply = (ev.message_str or "").strip()
+                    if not reply:
+                        controller.keep(timeout=120, reset_timeout=True)
+                        return
+
+                    if _state["other"]:
+                        _collected.append(reply)
+                        controller.stop()
+                    elif reply.isdigit() and 1 <= int(reply) <= len(_opts):
+                        _collected.append(_opts[int(reply) - 1]["label"])
+                        controller.stop()
+                    elif reply.isdigit() and int(reply) == len(_opts) + 1:
+                        _state["other"] = True
+                        await ev.send(ev.plain_result("请输入自定义回答:"))
+                        controller.keep(timeout=120, reset_timeout=True)
+                    else:
+                        _collected.append(reply)
+                        controller.stop()
+
+                try:
+                    await q_waiter(event)
+                except TimeoutError:
+                    await event.send(event.plain_result("操作超时，已取消"))
+                    return
+
+                answers[str(qi)] = collected
+
+            success, msg = await approval_ops.answer_question(client, sid, rid, answers)
             if success:
                 self.remove_entry(sid, rid)
-                await ev.send(f"✅ 已提交答案")
+                await event.send(event.plain_result(msg))
             else:
-                await ev.send(f"❌ 提交失败")
-
-        for sid, rid, req in questions:
-            prompt = formatters.format_question_prompt(req)
-            await event.send(prompt)
-            await session_waiter(
-                event,
-                lambda ctrl, ev, s=sid, r=rid, rq=req: q_waiter(ctrl, ev, s, r, rq),
-                timeout=120
-            )
+                await event.send(event.plain_result(f"❌ {msg}"))
 
     # ──── LLM 工具审批（伪装成 HAPI 权限请求）────
 

@@ -85,7 +85,7 @@ async def batch_approve(client: AsyncHapiClient,
     return results
 
 
-async def answer_question(client: AsyncHapiClient, sid: str, rid: str, answers: dict) -> bool:
+async def answer_question(client: AsyncHapiClient, sid: str, rid: str,
+                          answers: dict) -> tuple[bool, str]:
     """回答 question 类型的权限请求"""
-    ok, _ = await session_ops.answer_permission_question(client, sid, rid, answers)
-    return ok
+    return await session_ops.answer_permission_question(client, sid, rid, answers)
