@@ -115,7 +115,7 @@ class HapiConnectorPlugin(Star):
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         """检查发送者是否为管理员（动态读取配置）"""
-        astrbot_config = self.context.get_config()
+        astrbot_config = self.context.get_config(event.unified_msg_origin)
         admin_ids = [str(x) for x in astrbot_config.get("admins_id", [])]
         return str(event.get_sender_id()) in admin_ids
 

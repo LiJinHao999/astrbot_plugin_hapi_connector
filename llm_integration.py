@@ -320,7 +320,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             elif reason == "notification_failed":
                 yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
             else:
-                yield "操作被用户拒绝"
+                yield "操作已被用户拒绝，请停止工具调用，先交流清楚问题"
             return
 
         # 执行发送
@@ -341,7 +341,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             elif reason == "notification_failed":
                 yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
             else:
-                yield "操作被用户拒绝"
+                yield "操作已被用户拒绝，请停止工具调用，先交流清楚问题"
             return
 
         # 复用 cmd_sw 逻辑，提取消息内容返回给 LLM
@@ -401,7 +401,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             elif reason == "notification_failed":
                 yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
             else:
-                yield "操作被用户拒绝"
+                yield "操作已被用户拒绝，请停止工具调用，先交流清楚问题"
             return
 
         # 执行创建
@@ -428,7 +428,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             elif reason == "notification_failed":
                 yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
             else:
-                yield "操作被用户拒绝"
+                yield "操作已被用户拒绝，请停止工具调用，先交流清楚问题"
             return
 
         # 执行修改
@@ -475,7 +475,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             elif reason == "notification_failed":
                 yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
             else:
-                yield "操作被用户拒绝"
+                yield "操作已被用户拒绝，请停止工具调用，先交流清楚问题"
             return
 
         # 执行停止
@@ -498,7 +498,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             elif reason == "notification_failed":
                 yield "操作失败：无法发送审批通知到用户。请检查是否已绑定 session。"
             else:
-                yield "操作被用户拒绝"
+                yield "操作已被用户拒绝，请停止工具调用，先交流清楚问题"
             return
 
         # 执行命令
