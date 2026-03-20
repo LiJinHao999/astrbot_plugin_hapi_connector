@@ -437,6 +437,7 @@ class CommandHandlers:
                 else:
                     self.sse_listener.output_level = t
                     self.plugin.config["output_level"] = t
+                    self.plugin.config.save_config()
                     await ev.send(ev.plain_result(
                         f"SSE 推送级别已切换为: {t}\n{self._OUTPUT_LEVELS[t]}"))
                 controller.stop()
@@ -461,6 +462,7 @@ class CommandHandlers:
 
         self.sse_listener.output_level = target
         self.plugin.config["output_level"] = target
+        self.plugin.config.save_config()
         yield event.plain_result(
             f"SSE 推送级别已切换为: {target}\n{self._OUTPUT_LEVELS[target]}")
 
