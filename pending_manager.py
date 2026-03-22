@@ -52,7 +52,12 @@ class PendingManager:
         for sid, rid, req in regular:
             if self.is_llm_tool_request(req):
                 # 从原始 pending 获取 Future（items 里的 req 可能是副本）
-                original_req = self.sse_listener.pending.get(sid, ).get(rid, {})
+                session_pending = self.sse_listener.pending.get(sid) or {}
+                if not isinstance(session_pending, dict):
+                    session_pending = {}
+                original_req = session_pending.get(rid) or {}
+                if not isinstance(original_req, dict):
+                    original_req = {}
                 future = original_req.get("future")
                 if future:
                     llm_futures.append((sid, rid, future))
