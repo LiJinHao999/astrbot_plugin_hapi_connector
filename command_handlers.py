@@ -536,7 +536,12 @@ class CommandHandlers:
                 yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: /compact")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
                 # 从原始 pending 获取 Future
-                original_req = self.sse_listener.pending.get(sid, {}).get(rid, )
+                session_pending = self.sse_listener.pending.get(sid) or {}
+                if not isinstance(session_pending, dict):
+                    session_pending = {}
+                original_req = session_pending.get(rid) or {}
+                if not isinstance(original_req, dict):
+                    original_req = {}
                 future = original_req.get("future")
                 if future and not future.done():
                     future.set_result(True)
@@ -1243,8 +1248,18 @@ class CommandHandlers:
         for sid, umo in self.state_mgr._session_owners.items():
             s = next((s for s in self.sessions_cache if s["id"] == sid), None)
             if s and umo:
-                flavor = s.get("metadata", {}).get("flavor", "?")
-                summary = s.get("metadata", {}).get("summary", ).get("text", "")[:20]
+                metadata = s.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                flavor = metadata.get("flavor", "?")
+                summary_data = metadata.get("summary") or {}
+                if isinstance(summary_data, dict):
+                    summary_text = summary_data.get("text", "")
+                else:
+                    summary_text = summary_data
+                if summary_text is None:
+                    summary_text = ""
+                summary = str(summary_text)[:20]
                 umo_display = umo[:40] + "..." if len(umo) > 40 else umo
                 lines.append(f"  [{flavor}] {sid[:8]} {summary}\n    → {umo_display}")
                 has_routes = True

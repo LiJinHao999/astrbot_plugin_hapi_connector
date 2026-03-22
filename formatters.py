@@ -318,7 +318,9 @@ def format_session_list(
     # 按 path 分组但保持原始顺序
     current_path = None
     for local_idx, s in enumerate(sessions, 1):
-        meta = s.get("metadata", )
+        meta = s.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
         path = meta.get("path", "(无路径)")
 
         # 当 path 变化时显示分组标题
@@ -331,7 +333,14 @@ def format_session_list(
         sid = s.get("id", "?")
         sid_short = sid[:8]
         display_idx = index_by_sid.get(sid, local_idx)
-        summary = (meta.get("summary") or {}).get("text", "") or "(无标题)"
+        summary_data = meta.get("summary") or {}
+        if isinstance(summary_data, dict):
+            summary_text = summary_data.get("text", "")
+        else:
+            summary_text = summary_data
+        if summary_text is None:
+            summary_text = ""
+        summary = str(summary_text) or "(无标题)"
         flavor = meta.get("flavor", "?")
         model = s.get("modelMode", "default")
         pending = s.get("pendingRequestsCount", 0)
