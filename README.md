@@ -320,7 +320,7 @@ astrbot_plugin_hapi_connector/
 ## 🙏 致谢
 
 - [HAPI](https://github.com/tiann/hapi) — 本插件连接的后端服务，由 [@tiann](https://github.com/tiann) 开发
-- [AstrBot](https://github.com/Soulter/AstrBot) — 跨平台聊天机器人框架
+- [AstrBot](https://github.com/AstrBotDevs/AstrBot) — 跨平台聊天机器人框架
 
 ---
 ## 💗 友情链接
