@@ -323,6 +323,9 @@ astrbot_plugin_hapi_connector/
 - [AstrBot](https://github.com/Soulter/AstrBot) — 跨平台聊天机器人框架
 
 ---
+## 💗 友情链接
+- [linuxdo社区](https://linux.do/) — 极度优秀的 AI 知识分享社区
+---
 
 ## 👥 贡献指南
 
