@@ -325,6 +325,7 @@ astrbot_plugin_hapi_connector/
 ---
 ## 💗 友情链接
 - [linuxdo社区](https://linux.do/) — 极度优秀的 AI 知识分享社区
+- [linuxdo上关于此插件的设计思路贴](https://linux.do/t/topic/1799761)
 ---
 
 ## 👥 贡献指南
