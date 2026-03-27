@@ -1,6 +1,6 @@
 """创建 Session 向导状态机：步骤推进、输入校验、提示文本构建"""
 
-from .constants import AGENTS
+from .constants import AGENTS, CODEX_REASONING_EFFORT_OPTIONS, CODEX_REASONING_EFFORT_VALUES
 
 
 class WizardResult:
@@ -18,7 +18,7 @@ class WizardResult:
 
 
 class CreateWizard:
-    """5 步创建 Session 向导，纯状态机，不依赖 AstrBot 事件系统"""
+    """创建 Session 向导，纯状态机，不依赖 AstrBot 事件系统"""
 
     def __init__(self, machines: list, labels: list):
         self.state = {
@@ -31,6 +31,7 @@ class CreateWizard:
             "session_type": "simple",
             "worktree_name": "",
             "agent": None,
+            "model_reasoning_effort": None,
             "yolo": False,
             "recent_paths": [],
         }
@@ -42,6 +43,12 @@ class CreateWizard:
 
     def set_recent_paths(self, paths: list):
         self.state["recent_paths"] = paths
+
+    def _total_steps(self) -> int:
+        return 6 if self.state.get("agent") == "codex" else 5
+
+    def _yolo_step_number(self) -> int:
+        return 6 if self.state.get("agent") == "codex" else 5
 
     def initial_prompt(self) -> WizardResult:
         """返回向导第一条提示（步骤 1 或自动跳到步骤 2）"""
@@ -73,6 +80,25 @@ class CreateWizard:
             lines.append("请输入完整路径")
         return "\n".join(lines)
 
+    def _step5_prompt(self) -> WizardResult:
+        """构建 YOLO 步骤提示"""
+        step_no = self._yolo_step_number()
+        total = self._total_steps()
+        lines = [
+            f"步骤 {step_no}/{total} — 启用 YOLO 模式?",
+            "  [1] 否 — 正常审批流程",
+            "  [2] 是 — 跳过审批和沙箱 (危险)",
+        ]
+        return WizardResult("\n".join(lines))
+
+    def _codex_reasoning_prompt(self) -> WizardResult:
+        """构建 Codex 思考深度提示"""
+        lines = ["代理: codex", "", "步骤 5/6 — 选择 Codex 思考深度:"]
+        for i, (_, label) in enumerate(CODEX_REASONING_EFFORT_OPTIONS, 1):
+            lines.append(f"  [{i}] {label}")
+        lines.append("回复序号选择，或直接输入 none/minimal/low/medium/high/xhigh")
+        return WizardResult("\n".join(lines))
+
     def process(self, raw: str) -> WizardResult:
         """处理用户输入，推进向导状态，返回下一步结果"""
         s = self.state
@@ -88,6 +114,8 @@ class CreateWizard:
             return self._step31(raw)
         elif step == 4:
             return self._step4(raw)
+        elif step == 41:
+            return self._step41(raw)
         elif step == 5:
             return self._step5(raw)
         elif step == 6:
@@ -179,15 +207,28 @@ class CreateWizard:
         else:
             return WizardResult(f"请输入 1~{len(AGENTS)} 的数字或代理名")
 
+        if s["agent"] == "codex":
+            s["step"] = 41
+            return self._codex_reasoning_prompt()
+
         s["step"] = 5
-        lines = [
-            f"代理: {s['agent']}",
-            "",
-            "步骤 5/5 — 启用 YOLO 模式?",
-            "  [1] 否 — 正常审批流程",
-            "  [2] 是 — 跳过审批和沙箱 (危险)",
-        ]
-        return WizardResult("\n".join(lines))
+        s["model_reasoning_effort"] = None
+        return self._step5_prompt()
+
+    def _step41(self, raw: str) -> WizardResult:
+        """步骤 4.1: 选择 Codex 思考深度"""
+        s = self.state
+        if raw.isdigit() and 1 <= int(raw) <= len(CODEX_REASONING_EFFORT_OPTIONS):
+            s["model_reasoning_effort"] = CODEX_REASONING_EFFORT_OPTIONS[int(raw) - 1][0]
+        else:
+            normalized = raw.strip().lower()
+            if normalized in CODEX_REASONING_EFFORT_VALUES:
+                s["model_reasoning_effort"] = normalized
+            else:
+                return WizardResult("请输入有效序号，或直接输入 none/minimal/low/medium/high/xhigh")
+
+        s["step"] = 5
+        return self._step5_prompt()
 
     def _step5(self, raw: str) -> WizardResult:
         """步骤 5: YOLO 模式"""
@@ -206,8 +247,11 @@ class CreateWizard:
             f"  目录:     {s['directory']}",
             f"  类型:     {s['session_type']}",
             f"  代理:     {s['agent']}",
-            f"  YOLO:     {'是' if s['yolo'] else '否'}",
         ]
+        if s["agent"] == "codex":
+            reasoning_text = s["model_reasoning_effort"] or "继承 Codex 默认设置"
+            lines.append(f"  思考深度: {reasoning_text}")
+        lines.append(f"  YOLO:     {'是' if s['yolo'] else '否'}")
         if s["worktree_name"]:
             lines.append(f"  工作树名: {s['worktree_name']}")
         if s["agent"] == "codex" and s["yolo"]:

@@ -200,7 +200,8 @@ class HapiConnectorPlugin(Star):
 
     @filter.llm_tool(name="hapi_coding_create_session")
     async def tool_create_session(self, event: AstrMessageEvent, directory: str, agent: str,
-                                   machine_id: str = "", session_type: str = "simple", yolo: bool = False):
+                                   machine_id: str = "", session_type: str = "simple", yolo: bool = False,
+                                   model_reasoning_effort: str = ""):
         '''创建新的 coding session。创建成功后会自动切换到新session，无需手动调用switch_session。
 
         Args:
@@ -209,8 +210,10 @@ class HapiConnectorPlugin(Star):
             machine_id(string): 机器ID，可选，管理多机器时必填
             session_type(string): session类型，simple或worktree，默认simple
             yolo(boolean): 是否自动批准所有权限，默认false
+            model_reasoning_effort(string): 仅 Codex 可选；留空表示继承 Codex 默认设置，可选 none/minimal/low/medium/high/xhigh
         '''
-        async for result in self.llm_integration.tool_create_session(event, directory, agent, machine_id, session_type, yolo):
+        async for result in self.llm_integration.tool_create_session(
+                event, directory, agent, machine_id, session_type, yolo, model_reasoning_effort):
             yield result
 
     @filter.llm_tool(name="hapi_coding_change_config")

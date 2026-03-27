@@ -721,6 +721,7 @@ class CommandHandlers:
                     session_type=s["session_type"],
                     yolo=s["yolo"],
                     worktree_name=s["worktree_name"],
+                    model_reasoning_effort=s.get("model_reasoning_effort"),
                 )
                 await self.plugin._refresh_sessions()
                 if ok and new_sid:

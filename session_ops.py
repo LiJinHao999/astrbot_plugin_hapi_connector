@@ -200,7 +200,8 @@ async def fetch_recent_paths(client: AsyncHapiClient) -> list[str]:
 
 async def spawn_session(client: AsyncHapiClient, machine_id: str,
                         directory: str, agent: str, session_type: str = "simple",
-                        yolo: bool = False, worktree_name: str = "") -> tuple[bool, str, str | None]:
+                        yolo: bool = False, worktree_name: str = "",
+                        model_reasoning_effort: str | None = None) -> tuple[bool, str, str | None]:
     """创建新 session，返回 (成功, 消息, session_id 或 None)"""
     body = {
         "directory": directory,
@@ -210,6 +211,8 @@ async def spawn_session(client: AsyncHapiClient, machine_id: str,
     }
     if worktree_name:
         body["worktreeName"] = worktree_name
+    if model_reasoning_effort:
+        body["modelReasoningEffort"] = model_reasoning_effort
 
     resp = await client.post(f"/api/machines/{machine_id}/spawn", json=body)
     if resp.status != 200:

@@ -352,7 +352,8 @@ quick_prefix (快捷前缀): {quick_prefix}
                 yield str(result)
 
     async def tool_create_session(self, event: AstrMessageEvent, directory: str, agent: str,
-                                   machine_id: str = "", session_type: str = "simple", yolo: bool = False):
+                                   machine_id: str = "", session_type: str = "simple", yolo: bool = False,
+                                   model_reasoning_effort: str = ""):
         '''创建新的 coding session。
 
         Args:
@@ -361,6 +362,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             machine_id(string): 机器 ID（可选，管理多机器时必填）
             session_type(string): session 类型（simple/worktree，默认 simple）
             yolo(boolean): 是否自动批准所有权限（默认 false）
+            model_reasoning_effort(string): 仅 Codex 可选；留空表示继承 Codex 默认设置，可选 none/minimal/low/medium/high/xhigh
         '''
         # 获取机器列表
         try:
@@ -371,6 +373,12 @@ quick_prefix (快捷前缀): {quick_prefix}
 
         if not machines:
             yield "没有在线的机器"
+            return
+
+        agent = (agent or "").strip().lower()
+        from .constants import AGENTS
+        if agent not in AGENTS:
+            yield f"不支持的 agent: {agent}，可选: {', '.join(AGENTS)}"
             return
 
         # 处理 machine_id
@@ -388,10 +396,27 @@ quick_prefix (快捷前缀): {quick_prefix}
                 yield "\n".join(lines)
                 return
 
+        normalized_effort = (model_reasoning_effort or "").strip().lower()
+        if agent == "codex":
+            from .constants import CODEX_REASONING_EFFORT_VALUES
+            inherit_aliases = {"", "inherit", "default", "auto"}
+            if normalized_effort in inherit_aliases:
+                normalized_effort = ""
+            elif normalized_effort not in CODEX_REASONING_EFFORT_VALUES:
+                yield "Codex 的 model_reasoning_effort 只能是留空(继承默认配置)或 none/minimal/low/medium/high/xhigh"
+                return
+        elif normalized_effort:
+            yield "只有 Codex 支持 model_reasoning_effort；其他代理请留空"
+            return
+
+        approval_payload = {"machine_id": machine_id, "directory": directory,
+                            "agent": agent, "session_type": session_type, "yolo": yolo}
+        if agent == "codex":
+            approval_payload["model_reasoning_effort"] = normalized_effort or "inherit"
+
         # 请求审批
         approved, reason = await self._require_approval("hapi_coding_create_session",
-                                           {"machine_id": machine_id, "directory": directory,
-                                            "agent": agent, "session_type": session_type, "yolo": yolo}, event)
+                                           approval_payload, event)
         if not approved:
             if reason == "timeout":
                 yield "操作超时：60秒内未收到用户审批。请提醒用户使用 /hapi a 批准或 /hapi deny 拒绝。"
@@ -402,7 +427,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             return
 
         # 执行创建
-        ok, msg, sid = await session_ops.spawn_session(self.client, machine_id, directory, agent, session_type, yolo)
+        ok, msg, sid = await session_ops.spawn_session(self.client, machine_id, directory, agent, session_type, yolo, model_reasoning_effort=normalized_effort or None)
         if ok and sid:
             await self.state_mgr.capture_window(sid, event.unified_msg_origin, agent)
             yield f"✅ 已创建 session: {sid[:8]}"
