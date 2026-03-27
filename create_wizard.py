@@ -93,10 +93,11 @@ class CreateWizard:
 
     def _codex_reasoning_prompt(self) -> WizardResult:
         """构建 Codex 思考深度提示"""
-        lines = ["代理: codex", "", "步骤 5/6 — 选择 Codex 思考深度:"]
+        lines = ["代理: codex", "", "步骤 5/6 — 选择 Codex 思考深度（需 HAPI >= 0.16.2）:"]
         for i, (_, label) in enumerate(CODEX_REASONING_EFFORT_OPTIONS, 1):
             lines.append(f"  [{i}] {label}")
         lines.append("回复序号选择，或直接输入 none/minimal/low/medium/high/xhigh")
+        lines.append("注意：旧版本 HAPI (小于0.16.2) 请选择 [1] 继承默认设置")
         return WizardResult("\n".join(lines))
 
     def process(self, raw: str) -> WizardResult:
