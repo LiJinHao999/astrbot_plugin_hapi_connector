@@ -160,6 +160,8 @@ hapi codex    # Open Codex
 
 **使用方式**：在 Astrbot 管理面板开启工具后，直接对话即可，如"切换到1号session"、"创建一个 Claude 会话"。
 
+**Codex 创建补充**：`hapi_coding_create_session` 现在支持可选参数 `model_reasoning_effort`。留空时不会向 HAPI 显式传该字段，Codex 将继承默认设置；具体使用哪套默认设置取决于 Codex 进程实际运行的用户。只有显式填写 `none/minimal/low/medium/high/xhigh` 时才会覆盖默认值。
+
 **推荐配置**：建议至少激活 `hapi_coding_list_commands`。如需覆盖尚未封装的 `/hapi` 子命令，再启用 `hapi_coding_execute_command`；常见操作优先使用结构化工具（如切换、创建、发消息、改配置）。
 
 **审批机制**：操作类工具需管理员审批（支持 `/hapi a` 批准、`/hapi deny` 拒绝、戳一戳快速批准），防止模型误操作。
@@ -194,13 +196,15 @@ hapi codex    # Open Codex
 
 | 指令 | 说明 |
 |------|------|
-| `/hapi create` | 创建新会话（5 步交互向导） |
+| `/hapi create` | 创建新会话（交互向导；Codex 为 6 步，其他为 5 步） |
 | `/hapi abort [序号\|ID前缀]` | 中断会话，默认当前（别名 `stop`） |
 | `/hapi remote` | 切换当前会话到 remote 远程托管模式 |
 | `/hapi archive` | 归档当前会话 |
 | `/hapi rename` | 重命名当前会话 |
 | `/hapi delete` | 删除当前会话 |
 | `/hapi clean [路径前缀]` | 批量清理 inactive session |
+
+> Codex 创建补充：默认会继承 Codex 默认设置中的思考深度；只有你在创建时显式选择 `none/minimal/low/medium/high/xhigh` 时，插件才会覆盖默认值。
 
 #### ✅ 权限审批
 
@@ -299,7 +303,7 @@ astrbot_plugin_hapi_connector/
 ├── approval_ops.py         # 审批业务逻辑
 ├── create_wizard.py        # 创建会话交互式向导
 ├── formatters.py           # 格式化输出工具
-├── constants.py            # 常量定义（权限模式、模型、代理类型）
+├── constants.py            # 常量定义（权限模式、模型、代理类型、Codex 思考深度）
 ├── _conf_schema.json       # 插件配置 schema
 └── metadata.yaml           # 插件元信息
 ```
