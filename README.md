@@ -200,6 +200,7 @@ hapi codex    # Open Codex
 | `/hapi abort [序号\|ID前缀]` | 中断会话，默认当前（别名 `stop`） |
 | `/hapi remote` | 切换当前会话到 remote 远程托管模式 |
 | `/hapi archive` | 归档当前会话 |
+| `/hapi resume [序号\|ID前缀]` | 恢复被 archive 的 inactive session |
 | `/hapi rename` | 重命名当前会话 |
 | `/hapi delete` | 删除当前会话 |
 | `/hapi clean [路径前缀]` | 批量清理 inactive session |
