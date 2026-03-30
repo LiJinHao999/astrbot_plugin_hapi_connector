@@ -741,6 +741,7 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "create",
     "abort", "stop",
     "archive",
+    "resume",
     "rename",
     "delete",
     "clean",
@@ -830,6 +831,13 @@ HELP_COMMANDS = [
         "summary": "归档当前 session",
         "example": None,
         "home": False,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi resume [序号|ID前缀]",
+        "summary": "恢复被 archive 的 inactive session",
+        "example": "/hapi resume 1",
+        "home": True,
     },
     {
         "topic": "session",

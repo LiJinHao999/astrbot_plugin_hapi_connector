@@ -153,6 +153,20 @@ async def archive_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str]
         return False, f"归档失败: {resp.status} {body[:200]}"
 
 
+async def resume_session(client: AsyncHapiClient, sid: str) -> tuple[bool, str, str | None]:
+    """恢复 inactive session，返回 (成功, 描述, 恢复后的 session_id 或 None)"""
+    resp = await client.post(f"/api/sessions/{sid}/resume", json={})
+    if resp.ok:
+        data = await resp.json()
+        resp.release()
+        resumed_sid = data.get("sessionId") or sid
+        return True, f"已恢复 [{resumed_sid[:8]}]", resumed_sid
+    else:
+        body = await resp.text()
+        resp.release()
+        return False, f"恢复失败: {resp.status} {body[:200]}", None
+
+
 async def rename_session(client: AsyncHapiClient, sid: str, new_name: str) -> tuple[bool, str]:
     """重命名 session"""
     resp = await client.patch(f"/api/sessions/{sid}", json={"name": new_name})

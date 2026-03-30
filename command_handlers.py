@@ -62,6 +62,7 @@ class CommandHandlers:
             "abort": (self.cmd_abort, True),
             "stop": (self.cmd_abort, True),
             "archive": (self.cmd_archive, False),
+            "resume": (self.cmd_resume, True),
             "rename": (self.cmd_rename, False),
             "delete": (self.cmd_delete, False),
             "clean": (self.cmd_clean, True),
@@ -833,6 +834,49 @@ class CommandHandlers:
         matches = [s for s in self.sessions_cache if s.get("id", "").startswith(target)]
         return matches[0]["id"] if len(matches) == 1 else None
 
+    # ── resume ──
+
+    async def cmd_resume(self, event: AstrMessageEvent, target: str = ""):
+        """恢复 inactive session: /hapi resume [序号|ID前缀]"""
+        await self.state_mgr.set_user_state(event)
+        await self.plugin._refresh_sessions()
+
+        if not target:
+            sid = self.state_mgr.effective_sid(event)
+            if not sid:
+                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi resume <序号>")
+                return
+        else:
+            sid = None
+            if target.isdigit():
+                idx = int(target)
+                if 1 <= idx <= len(self.sessions_cache):
+                    sid = self.sessions_cache[idx - 1]["id"]
+            if sid is None:
+                matches = [s for s in self.sessions_cache
+                           if s.get("id", "").startswith(target)]
+                if len(matches) == 1:
+                    sid = matches[0]["id"]
+                elif len(matches) > 1:
+                    labels = [f"  {s['id'][:8]}..." for s in matches]
+                    yield event.plain_result(
+                        f"匹配到 {len(matches)} 个 session，请更精确:\n"
+                        + "\n".join(labels))
+                    return
+            if sid is None:
+                yield event.plain_result("未找到匹配的 session")
+                return
+
+        ok, msg, resumed_sid = await session_ops.resume_session(self.client, sid)
+        if ok and resumed_sid:
+            await self.plugin._refresh_sessions()
+            resumed = next((s for s in self.sessions_cache if s.get("id") == resumed_sid), None)
+            flavor = (resumed or {}).get("metadata", {}).get("flavor") or self.state_mgr.effective_flavor(event) or "claude"
+            await self.state_mgr.capture_window(resumed_sid, event.unified_msg_origin, flavor)
+            if resumed_sid != sid:
+                msg += f"\n已自动切换到恢复后的 session [{flavor}] {resumed_sid[:8]}..."
+        yield event.plain_result(msg)
+
     # ── rename ──
 
     async def cmd_rename(self, event: AstrMessageEvent, target: str = ""):
@@ -1306,4 +1350,3 @@ class CommandHandlers:
         await self.plugin._refresh_sessions()
 
         yield event.plain_result("✓ 已重置所有状态\n捕获关系和窗口状态已清空，默认窗口和 flavor 默认路由已保留")
-
