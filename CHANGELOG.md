@@ -1,5 +1,9 @@
 # 更新日志
 
+## v2.0.6 — resume 命令增强
+
+1. 新增 `/hapi resume` 状态预检查，避免对非 inactive session 执行 resume 时收到难懂的 API 错误提示
+
 ## v2.0.5 — Codex 思考深度支持
 
 1. 新增 Codex 会话创建时的思考深度选项（需 HAPI 服务端 >= 0.16.2）

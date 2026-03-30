@@ -867,6 +867,14 @@ class CommandHandlers:
                 yield event.plain_result("未找到匹配的 session")
                 return
 
+        # 状态预检查
+        target_session = next((s for s in self.sessions_cache if s.get("id") == sid), None)
+        if target_session:
+            state = target_session.get("state", "unknown")
+            if state != "inactive":
+                yield event.plain_result(f"Session [{sid[:8]}] 当前状态为 {state}，只能恢复 inactive 状态的 session")
+                return
+
         ok, msg, resumed_sid = await session_ops.resume_session(self.client, sid)
         if ok and resumed_sid:
             await self.plugin._refresh_sessions()
