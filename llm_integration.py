@@ -20,7 +20,6 @@ class LLMIntegration:
 
     # ──── 工具可见性控制 ────
 
-    @filter.on_llm_request()
     async def on_llm_request_hook(self, event: AstrMessageEvent, request: ProviderRequest):
         """根据权限和窗口状态动态控制工具可见性"""
         # 1. 权限检查：非管理员移除所有工具
