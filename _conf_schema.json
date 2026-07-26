@@ -86,8 +86,8 @@
   "cmd_keyword_maps": {
     "description": "快捷关键词映射（JSON）",
     "type": "string",
-    "default": "[{\"keywords\":[\"stop\",\"停\"],\"command\":\"stop\"},{\"keywords\":[\"sw\"],\"command\":\"sw\"},{\"keywords\":[\"cl\"],\"command\":\"to\",\"args\":\"1 /clear\"},{\"keywords\":[\"hapi指令别名\"],\"command\":\"alias\"},{\"keywords\":[\"继续\"],\"command\":\"to\",\"args\":\"1 继续\"}]",
-    "hint": "快捷关键词映射到 /hapi 子命令。to 可设发送消息（如 cl→to 1 /clear）。推荐在 WebUI「交互优化」配置"
+    "default": "[{\"keywords\":[\"stop\",\"停\"],\"command\":\"stop\"},{\"keywords\":[\"sw\"],\"command\":\"sw\"},{\"keywords\":[\"cl\"],\"command\":\"send\",\"args\":\"/clear\"},{\"keywords\":[\"继续\"],\"command\":\"send\",\"args\":\"继续\"},{\"keywords\":[\"专注\"],\"command\":\"focus\",\"args\":\"on\"},{\"keywords\":[\"退出专注\"],\"command\":\"focus\",\"args\":\"off\"},{\"keywords\":[\"hapi指令别名\"],\"command\":\"alias\"}]",
+    "hint": "快捷关键词映射到 /hapi 子命令。可设固定发送内容（如 cl→send /clear，发到当前会话）。推荐在 WebUI「交互优化」配置"
   },
   "remind_pending": {
     "description": "待审批请求超时重复提醒",

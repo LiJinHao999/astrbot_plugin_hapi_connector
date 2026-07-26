@@ -406,10 +406,10 @@ function textSessionOptionsHtml() {
 }
 
 const TEXT_TEST_MODE_HINTS = {
-  direct_window: "直接使用 context.send_message() 主动发到窗口；用于和命令回复链路对照。普通 QQ 通常会原样显示 Markdown 标记。",
-  bound_plain: "调用正式 NotificationManager，按 Session 绑定、Agent 默认或全局默认路由推送纯文本。",
-  sse_message: "模拟 HAPI SSE 自动拉取到 Agent 消息后的完整呈现链路，并遵循当前 render_mode / render_kinds 设置。",
-  command_reply: "与 /hapi msg 最接近：使用目标窗口最近缓存的 AstrMessageEvent，通过 plain_result() 返回。需先在该窗口发过消息。",
+  command_reply: "模拟你发指令后机器人「回复你」的方式，和 /hapi msg 的显示效果一致。需要先在目标窗口里发过一条消息。",
+  direct_window: "机器人「主动发消息」到窗口，用来和上面的回复方式对比。普通 QQ 里主动消息通常会原样显示 # 和 ** 这类 Markdown 符号。",
+  bound_plain: "走正式的通知推送流程（AI 有新消息时就是这条路），按你的推送窗口设置投递纯文本。",
+  sse_message: "完整模拟「AI 说了句话 → 推送到聊天」的全过程，会应用你设置的文字 / 图片渲染方式，最接近日常实际效果。",
 };
 
 function syncTextTestControls() {
@@ -611,7 +611,7 @@ function findCmdMeta(cmdId) {
 function cmdDisplayLabel(cmdId) {
   const c = findCmdMeta(cmdId);
   if (!c) return cmdId ? `/hapi ${cmdId}` : "";
-  const argHint = c.takes_arg ? "可带参" : "整句";
+  const argHint = c.takes_arg ? "关键词后可接参数" : "需整句完全匹配";
   return `${c.usage} — ${c.summary || c.id} · ${argHint}`;
 }
 
@@ -668,7 +668,7 @@ function renderCmdComboPanel(combo, query, selectedId) {
     html += `<div class="cmd-combo-group">${esc(names[tid] || tid)}</div>`;
     for (const c of cmds) {
       const on = c.id === selectedId ? " is-on" : "";
-      const argHint = c.takes_arg ? "可带参" : "整句";
+      const argHint = c.takes_arg ? "关键词后可接参数" : "需整句完全匹配";
       html += `<button type="button" class="cmd-combo-item${on}" data-cmd="${attr(c.id)}">
         <span class="cmd-combo-usage mono">${esc(c.usage)}</span>
         <span class="cmd-combo-sum">${esc(c.summary || c.id)} · ${argHint}</span>
@@ -762,9 +762,11 @@ function paintKwMapList() {
     .map((row, i) => {
       const kws = Array.isArray(row.keywords) ? row.keywords.join("，") : "";
       const args = row.args || "";
-      // 仅 /hapi to 显示「发送消息」固定内容
-      const isTo = String(row.command || "") === "to";
-      return `<div class="kw-map-row ${isTo ? "has-msg" : ""}" data-idx="${i}">
+      // 可带固定参数的命令显示参数输入框（send/to=发送内容；focus 等=命令参数）
+      const cmd = String(row.command || "");
+      const hasArgs = ["to", "send", "focus"].includes(cmd) || Boolean(args);
+      const argsLabel = ["to", "send"].includes(cmd) ? "发送消息" : "固定参数";
+      return `<div class="kw-map-row ${hasArgs ? "has-msg" : ""}" data-idx="${i}">
         <label class="kw-map-field">
           <span class="kw-map-label">关键词</span>
           <input type="text" class="ctrl js-kw-keys" data-idx="${i}" value="${attr(kws)}" placeholder="stop，停（逗号分隔，可多个）" />
@@ -774,10 +776,10 @@ function paintKwMapList() {
           ${cmdSelectHtml(row.command || "", i)}
         </label>
         ${
-          isTo
+          hasArgs
             ? `<label class="kw-map-field kw-map-args">
-          <span class="kw-map-label">发送消息</span>
-          <input type="text" class="ctrl js-kw-args" data-idx="${i}" value="${attr(args)}" placeholder="如 1 /clear" />
+          <span class="kw-map-label">${argsLabel}</span>
+          <input type="text" class="ctrl js-kw-args" data-idx="${i}" value="${attr(args)}" placeholder="如 /clear（send=发到当前会话）" />
         </label>`
             : ""
         }
@@ -817,6 +819,213 @@ function paintKwMapList() {
   });
 }
 
+/* ── 会话创建模板 ── */
+
+const TPL_AGENTS = ["claude", "codex", "cursor", "grok", "kimi", "opencode", "pi"];
+const TPL_REASONING_AGENTS = ["codex", "opencode"];
+const TPL_EFFORTS = ["", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function tplMachineOptions(selected) {
+  // snapshot.machines 是 normalize_machine 视图：顶层 label / host / platform_label
+  const machines = state.data?.machines || [];
+  const opts = [`<option value="">自动（只有一台机器时可留空）</option>`];
+  for (const m of machines) {
+    const name = m.label || m.host || (m.id ? m.id.slice(0, 8) : "?");
+    const plat = m.platform_label || m.platform || "";
+    opts.push(
+      `<option value="${attr(m.id)}" ${selected === m.id ? "selected" : ""}>${esc(plat ? `${name} · ${plat}` : name)}</option>`,
+    );
+  }
+  // 模板存的机器已不在线时仍显示，避免静默丢配置
+  if (selected && !machines.some((m) => m.id === selected)) {
+    opts.push(`<option value="${attr(selected)}" selected>已离线机器 (${esc(selected.slice(0, 8))}...)</option>`);
+  }
+  return opts.join("");
+}
+
+/** 每个模板一张卡片：首行 名称+删除；代理单选段；目录整行；机器/类型/思考深度/YOLO 一行 */
+function paintTplList() {
+  const host = $("#ix-tpl-list");
+  if (!host) return;
+  const rows = Array.isArray(state._ixTemplates) ? state._ixTemplates : [];
+  if (!rows.length) {
+    host.innerHTML = `<div class="empty-inline">还没有模板。点「添加模板」：起个名、选代理、填默认目录（可留空）。</div>`;
+    return;
+  }
+  host.innerHTML = rows
+    .map((t, i) => {
+      const showReasoning = TPL_REASONING_AGENTS.includes(t.agent || "");
+      const agentSeg = TPL_AGENTS.map(
+        (a) =>
+          `<label class="tpl-agent-opt ${t.agent === a ? "is-on" : ""}">
+            <input type="radio" name="tpl-agent-${i}" class="js-tpl-agent" data-idx="${i}" value="${a}" ${t.agent === a ? "checked" : ""} />${a}</label>`,
+      ).join("");
+      const effortOpts = TPL_EFFORTS.map(
+        (v) =>
+          `<option value="${v}" ${(t.model_reasoning_effort || "") === v ? "selected" : ""}>${v || "继承默认"}</option>`,
+      ).join("");
+      return `<div class="tpl-card" data-idx="${i}">
+        <div class="tpl-card-head">
+          <input type="text" class="ctrl tpl-name-input js-tpl-name" data-idx="${i}" value="${attr(t.name || "")}"
+            placeholder="模板名，如：主项目" />
+          <span class="tpl-usage mono">/hapi create ${esc(t.name || "…")}</span>
+          <button type="button" class="btn btn-sm btn-danger js-tpl-del" data-idx="${i}">删除</button>
+        </div>
+        <div class="tpl-field">
+          <span class="kw-map-label">AI 代理</span>
+          <div class="tpl-agent-seg">${agentSeg}</div>
+        </div>
+        <div class="tpl-field">
+          <span class="kw-map-label">默认工作目录</span>
+          <input type="text" class="ctrl mono js-tpl-dir" data-idx="${i}" value="${attr(t.directory || "")}"
+            placeholder="如 /home/me/proj；留空则创建时在命令里传：/hapi create ${attr(t.name || "模板名")} <目录>" />
+        </div>
+        <div class="tpl-grid">
+          <label class="kw-map-field">
+            <span class="kw-map-label">机器</span>
+            <select class="ctrl js-tpl-machine" data-idx="${i}">${tplMachineOptions(t.machine_id || "")}</select>
+          </label>
+          <label class="kw-map-field">
+            <span class="kw-map-label">会话类型</span>
+            <select class="ctrl js-tpl-type" data-idx="${i}">
+              <option value="simple" ${t.session_type !== "worktree" ? "selected" : ""}>simple — 直接用该目录</option>
+              <option value="worktree" ${t.session_type === "worktree" ? "selected" : ""}>worktree — 建新工作树</option>
+            </select>
+          </label>
+          ${
+            showReasoning
+              ? `<label class="kw-map-field">
+            <span class="kw-map-label">思考深度</span>
+            <select class="ctrl js-tpl-effort" data-idx="${i}">${effortOpts}</select>
+          </label>`
+              : ""
+          }
+          <label class="kw-map-field tpl-yolo-field">
+            <span class="kw-map-label">YOLO（跳过审批，危险）</span>
+            <label class="switch">
+              <input type="checkbox" class="js-tpl-yolo" data-idx="${i}" ${t.yolo ? "checked" : ""} />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text">${t.yolo ? "开启" : "关闭"}</span>
+            </label>
+          </label>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  const bind = (sel, key) => {
+    $$(sel).forEach((el) => {
+      const handler = () => {
+        const i = Number(el.dataset.idx);
+        if (!state._ixTemplates?.[i]) return;
+        const val = el.type === "checkbox" ? el.checked : String(el.value || "").trim();
+        state._ixTemplates[i][key] = val;
+        // 代理 / 名称 / YOLO 变化影响卡片内联展示，需要重绘
+        if (key === "agent" || key === "yolo") paintTplList();
+        markTplDirty();
+      };
+      if (el.tagName === "SELECT" || el.type === "checkbox" || el.type === "radio") el.onchange = handler;
+      else el.oninput = handler;
+    });
+  };
+  bind("#ix-tpl-list .js-tpl-name", "name");
+  bind("#ix-tpl-list .js-tpl-agent", "agent");
+  bind("#ix-tpl-list .js-tpl-dir", "directory");
+  bind("#ix-tpl-list .js-tpl-machine", "machine_id");
+  bind("#ix-tpl-list .js-tpl-type", "session_type");
+  bind("#ix-tpl-list .js-tpl-effort", "model_reasoning_effort");
+  bind("#ix-tpl-list .js-tpl-yolo", "yolo");
+
+  // 名称改动时同步内联 usage 提示（不整卡重绘，避免打断输入）
+  $$("#ix-tpl-list .js-tpl-name").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const usage = inp.closest(".tpl-card-head")?.querySelector(".tpl-usage");
+      if (usage) usage.textContent = `/hapi create ${String(inp.value || "").trim() || "…"}`;
+    });
+  });
+
+  $$("#ix-tpl-list .js-tpl-del").forEach((btn) => {
+    btn.onclick = () => {
+      const i = Number(btn.dataset.idx);
+      if (!Array.isArray(state._ixTemplates)) return;
+      state._ixTemplates.splice(i, 1);
+      paintTplList();
+      markTplDirty();
+    };
+  });
+}
+
+/** 脏基线：进入页面 / 保存成功时记录，切页时比较 */
+function tplSnapshot() {
+  return stableJson(
+    (state._ixTemplates || []).map((t) => ({
+      name: t.name || "",
+      agent: t.agent || "",
+      directory: t.directory || "",
+      machine_id: t.machine_id || "",
+      session_type: t.session_type || "simple",
+      worktree_name: t.worktree_name || "",
+      yolo: Boolean(t.yolo),
+      model_reasoning_effort: t.model_reasoning_effort || "",
+    })),
+  );
+}
+
+function isTplDirty() {
+  if (!Array.isArray(state._ixTemplates)) return false;
+  return tplSnapshot() !== (state._ixTplBaseline || tplSnapshot());
+}
+
+function markTplDirty() {
+  paintSaveStatus($("#ix-tpl-save-status"), isTplDirty() ? "dirty" : "");
+}
+
+async function loadTemplates() {
+  // 有未保存编辑时不从远端覆盖（重绘场景），只重画现有内存数据
+  if (Array.isArray(state._ixTemplates) && isTplDirty()) {
+    paintTplList();
+    markTplDirty();
+    return;
+  }
+  if (isLive() && getApi()) {
+    try {
+      const res = await getApi().getSessionTemplates();
+      state._ixTemplates = Array.isArray(res?.templates) ? res.templates : [];
+    } catch (err) {
+      state._ixTemplates = [];
+    }
+  } else {
+    state._ixTemplates = Array.isArray(state._mockTemplates) ? state._mockTemplates : [];
+  }
+  state._ixTplBaseline = tplSnapshot();
+  paintTplList();
+}
+
+async function saveTemplates() {
+  const templates = (state._ixTemplates || []).filter(
+    (t) => String(t.name || "").trim() && String(t.agent || "").trim(),
+  );
+  try {
+    if (isLive() && getApi()) {
+      const res = await getApi().setSessionTemplates(templates);
+      state._ixTemplates = Array.isArray(res?.templates) ? res.templates : templates;
+      toast(res?.message || "模板已保存");
+    } else {
+      state._mockTemplates = templates.map((t) => ({ ...t }));
+      state._ixTemplates = state._mockTemplates;
+      toast("模板已保存（本地预览）");
+    }
+    state._ixTplBaseline = tplSnapshot();
+    paintTplList();
+    paintSaveStatus($("#ix-tpl-save-status"), "saved");
+    return true;
+  } catch (err) {
+    toast("保存模板失败: " + (err.message || err));
+    paintSaveStatus($("#ix-tpl-save-status"), "error");
+    return false;
+  }
+}
+
 function collectQuickOpsPatchFromForm() {
   const pokeOn = Boolean($("#ix-poke")?.checked);
   const pokeAction =
@@ -850,8 +1059,8 @@ function collectQuickOpsPatchFromForm() {
         keywords: [...(m.keywords || [])].filter(Boolean),
         command: cmd,
       };
-      // 仅 to 保留发送消息
-      const args = cmd === "to" ? String(m.args || "").trim() : "";
+      // 保留固定参数（send/to=发送内容；focus 等=命令参数），后端 normalize 兜底
+      const args = String(m.args || "").trim();
       if (args) entry.args = args;
       return entry;
     })
@@ -934,7 +1143,7 @@ function isRenderDirty() {
 function isInteractDirty() {
   if (state.page !== "interact") return false;
   try {
-    return isQuickOpsDirty() || isRenderDirty();
+    return isQuickOpsDirty() || isRenderDirty() || isTplDirty();
   } catch (_) {
     return false;
   }
@@ -1048,13 +1257,19 @@ async function saveAllInteractDirty() {
   if (isRenderDirty()) {
     if (!(await saveRenderSettings())) ok = false;
   }
+  if (isTplDirty()) {
+    if (!(await saveTemplates())) ok = false;
+  }
   return ok;
 }
 
 function discardInteractDraft() {
-  // 重绘会从 state.data.config 重建表单
+  // 重绘会从 state.data.config 重建表单；模板下次进入页面时从 API/mock 重新加载
+  state._ixTemplates = null;
+  state._ixTplBaseline = null;
   paintQuickSaveStatus("");
   paintRenderSaveStatus("");
+  paintSaveStatus($("#ix-tpl-save-status"), "");
 }
 
 function interactRenderState(cfg) {
@@ -1366,17 +1581,22 @@ function renderInteract() {
     state._ixKwMaps = [
       { keywords: ["stop", "停"], command: "stop", args: "" },
       { keywords: ["sw"], command: "sw", args: "" },
-      { keywords: ["cl"], command: "to", args: "1 clear" },
-      { keywords: ["继续"], command: "to", args: "1 继续" },
+      { keywords: ["cl"], command: "send", args: "/clear" },
+      { keywords: ["继续"], command: "send", args: "继续" },
+      { keywords: ["专注"], command: "focus", args: "on" },
+      { keywords: ["退出专注"], command: "focus", args: "off" },
     ];
   }
+
+  // 会话模板：live 从专用 API 拉，mock 用本地
+  if (!Array.isArray(state._ixTemplates)) state._ixTemplates = [];
 
   $("#view-interact").innerHTML = `
     <div class="card card-section">
       <div class="card-head">
         <div>
           <h2>快捷操作</h2>
-          <p class="sub">聊天侧前缀、戳一戳与快捷关键词映射。改完点右下角保存。</p>
+          <p class="sub">让聊天里的操作更省事：发消息的快捷前缀、戳一戳快速批准、指令短别名。改完记得点右下角保存。</p>
         </div>
       </div>
 
@@ -1384,7 +1604,7 @@ function renderInteract() {
         <div class="field-label-row">
           <div class="field-label">启用戳一戳快捷操作</div>
         </div>
-        <p class="field-help">仅 QQ NapCat 等支持戳一戳的适配器。关闭后戳机器人不会触发任何 hapi 动作。</p>
+        <p class="field-help">戳一下机器人就能执行下面选的动作（默认是批准全部待审批），批操作不用打字。仅 QQ NapCat 等支持戳一戳的平台可用。</p>
         <label class="switch">
           <input id="ix-poke" type="checkbox" ${cfg.poke_approve ? "checked" : ""} />
           <span class="switch-track" aria-hidden="true"></span>
@@ -1420,7 +1640,7 @@ function renderInteract() {
         <div class="field-label-row">
           <div class="field-label">快捷发送前缀</div>
         </div>
-        <p class="field-help">插件默认不接管所有消息。发送到 HAPI 需使用 <code>/hapi to</code> 或快捷发送前缀；带此前缀的消息会发往当前窗口连接的 HAPI 会话。</p>
+        <p class="field-help">聊天时在消息前加这个符号（默认 <code>&gt;</code>），就会发给当前 AI 会话而不是机器人本身。比如「<code>&gt; 帮我修个 bug</code>」。嫌加前缀麻烦可以试试 <code>/hapi focus on</code> 专注模式。</p>
         <input id="ix-prefix" class="ctrl" type="text" value="${attr(cfg.quick_prefix)}" style="max-width:220px" />
       </div>
 
@@ -1428,7 +1648,7 @@ function renderInteract() {
         <div class="field-label-row">
           <div class="field-label">快捷关键词映射</div>
         </div>
-        <p class="field-help">用快捷关键词替换命令。例如把 <code>stop</code> 映射到 <code>/hapi stop</code>；可带参命令支持「关键词 + 参数」。仅当前窗口有交互中会话时生效。</p>
+        <p class="field-help">给常用指令起短别名，不用每次打全 <code>/hapi ...</code>。比如发 <code>stop</code> 就是中断会话、发 <code>cl</code> 就是清空 AI 上下文。只在窗口里有活跃会话时生效，日常聊天不会误触。</p>
         <div id="ix-kw-list" class="kw-map-list"></div>
         <div class="kw-map-toolbar">
           <button type="button" class="btn btn-sm" id="ix-kw-add">添加映射</button>
@@ -1444,8 +1664,25 @@ function renderInteract() {
     <div class="card card-section">
       <div class="card-head">
         <div>
+          <h2>会话模板</h2>
+          <p class="sub">把常用的创建组合存成模板，聊天里 <code>/hapi create 模板名 [目录]</code> 一步创建，跳过向导。目录留空则创建时必须在命令里传。</p>
+        </div>
+      </div>
+      <div id="ix-tpl-list" class="kw-map-list"></div>
+      <div class="kw-map-toolbar">
+        <button type="button" class="btn btn-sm" id="ix-tpl-add">添加模板</button>
+      </div>
+      <div class="section-actions">
+        <span class="save-status" id="ix-tpl-save-status" data-state="" aria-live="polite"></span>
+        <button type="button" class="btn btn-primary" id="ix-tpl-save">保存模板</button>
+      </div>
+    </div>
+
+    <div class="card card-section">
+      <div class="card-head">
+        <div>
           <h2>推送呈现</h2>
-          <p class="sub">此处修改消息渲染形式（文字 / 图片）。图片渲染使用 Pillow（延迟较低）。图片渲染模式推荐和「摘要」级别的消息推送详细程度进行配合。</p>
+          <p class="sub">AI 的回复推到聊天里时，是发纯文字还是渲染成图片。代码块、表格、公式多的话，图片更好看；推送级别配合「摘要」使用效果最佳。</p>
         </div>
         <span class="tag ${engineTagCls}">${engineTag}</span>
       </div>
@@ -1602,10 +1839,10 @@ function renderInteract() {
             <div class="field">
               <div class="field-label">消息输出链路</div>
               <select id="ix-text-test-mode" class="ctrl" style="width:100%">
-                <option value="direct_window">② 直接主动发送到窗口（对照）</option>
-                <option value="bound_plain">③ 按绑定路由推送纯文本</option>
-                <option value="sse_message">④ SSE Agent 自动消息呈现</option>
-                <option value="command_reply">① /hapi msg 命令回复（plain_result）</option>
+                <option value="command_reply">① 指令回复方式（同 /hapi msg）</option>
+                <option value="direct_window">② 主动发送方式（对照用）</option>
+                <option value="bound_plain">③ 通知推送・纯文本</option>
+                <option value="sse_message">④ 通知推送・完整模拟（含图片渲染）</option>
               </select>
               <p class="field-help" id="ix-text-mode-hint"></p>
             </div>
@@ -1707,6 +1944,30 @@ function renderInteract() {
   $("#ix-save-quick") &&
     ($("#ix-save-quick").onclick = async () => {
       await saveQuickOps();
+    });
+
+  // 会话模板
+  loadTemplates();
+  $("#ix-tpl-add") &&
+    ($("#ix-tpl-add").onclick = () => {
+      if (!Array.isArray(state._ixTemplates)) state._ixTemplates = [];
+      state._ixTemplates.push({
+        name: "",
+        agent: "claude",
+        directory: "",
+        machine_id: "",
+        session_type: "simple",
+        worktree_name: "",
+        yolo: false,
+        model_reasoning_effort: "",
+      });
+      paintTplList();
+      markTplDirty();
+    });
+  $("#ix-tpl-save") &&
+    ($("#ix-tpl-save").onclick = async () => {
+      paintSaveStatus($("#ix-tpl-save-status"), "saving");
+      await saveTemplates();
     });
 
   // 渲染模式：本地立即显隐，不必先保存

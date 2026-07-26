@@ -287,7 +287,7 @@ class CreateWizard:
         if s["worktree_name"]:
             lines.append(f"  工作树名: {s['worktree_name']}")
         if s["agent"] == "codex" and s["yolo"]:
-            lines.append("\n⚠ 提醒: Codex YOLO 模式需要在.codex配置文件中设置信任文件夹，否则可能无法使用 tools:")
+            lines.append("\n⚠️ 提醒: Codex YOLO 模式需要在 .codex 配置文件中设置信任文件夹，否则可能无法使用 tools:")
             lines.append(f'  [projects."{s["directory"]}"]')
             lines.append('  trust_level = "trusted"')
         p = profile_for(s["agent"])

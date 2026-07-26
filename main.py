@@ -38,7 +38,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude / Codex / Cursor / Grok / Kimi / OpenCode / Pi vibe coding",
-          "3.1.0")
+          "3.2.0")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -109,16 +109,38 @@ class HapiConnectorPlugin(Star):
 
         self._poke_action = normalize_poke_action(self.config.get("poke_action", "approve"))
 
-        # 快捷关键词映射（默认 stop/停、sw、cl→1 clear、继续→1 继续）
-        from .chat.keyword_maps import DEFAULT_KEYWORD_MAPS, normalize_maps
+        # 快捷关键词映射（默认 stop/停、sw、cl→send /clear、继续→send 继续、专注/退出专注）
+        from .chat.keyword_maps import (
+            DEFAULT_KEYWORD_MAPS,
+            maps_to_storage,
+            migrate_legacy_maps,
+            normalize_maps,
+        )
 
         raw_kw = self.config.get("cmd_keyword_maps", None)
         maps = normalize_maps(raw_kw)
-        if not maps and (
+        fresh_config = not maps and (
             raw_kw is None
             or (isinstance(raw_kw, str) and str(raw_kw).strip() in ("", "[]"))
-        ):
+        )
+        if fresh_config:
             maps = normalize_maps(DEFAULT_KEYWORD_MAPS)
+        elif not self.config.get("kw_maps_migrated_v320", False):
+            # 一次性迁移（v3.2.0）：旧默认「to 1 /clear」「to 1 继续」→ 发到当前会话的 send。
+            maps, migrated = migrate_legacy_maps(maps)
+            if migrated:
+                try:
+                    self.config["cmd_keyword_maps"] = maps_to_storage(maps)
+                    logger.info("关键词映射已迁移：cl/继续 改为发送到当前会话（send）")
+                except Exception as e:
+                    logger.warning("关键词映射迁移落盘失败: %s", e)
+        # 无论新装还是老用户，标记只打一次；打过后用户有意配置的 to 1 xx 不再被改写
+        if not self.config.get("kw_maps_migrated_v320", False):
+            try:
+                self.config["kw_maps_migrated_v320"] = True
+                self.config.save_config()
+            except Exception as e:
+                logger.warning("迁移标记落盘失败: %s", e)
         self._cmd_keyword_maps = maps
 
         # summary 模式消息条数
@@ -126,6 +148,9 @@ class HapiConnectorPlugin(Star):
 
         # event 缓存，用于主动推送
         self.notification_mgr._event_cache = {}
+
+        # 每窗口最近一次用户发送记录 {umo: (sid, text)}，供 /hapi retry（内存，不落盘）
+        self._last_sends: dict[str, tuple[str, str]] = {}
 
         # LLM 工具集成
         from .chat.llm_integration import LLMIntegration
@@ -279,7 +304,7 @@ class HapiConnectorPlugin(Star):
             return "💤 SSE 已从休眠中唤醒，正在后台重连...\n请等待连接恢复通知后，使用 /hapi list 查看连接状态\n"
         n = self.sse_listener.conn_fail_count
         if n > 0:
-            return f"⚠ SSE 连接已连续失败 {n} 次，正在后台重连...\n"
+            return f"⚠️ SSE 连接已连续失败 {n} 次，正在后台重连...\n"
         return None
 
     @staticmethod
@@ -519,7 +544,10 @@ class HapiConnectorPlugin(Star):
             return
         if not self._is_admin(event):
             return
-        if not self._window_has_interactive_session(event):
+        # Focus 开启的窗口关键词始终生效（保证 session 停止后仍能「退出专注」）；
+        # 其余窗口沿用「有交互中会话才生效」的门禁
+        if not self.binding_mgr.get_window_focus_mode(event.unified_msg_origin) \
+                and not self._window_has_interactive_session(event):
             return
         from .chat.keyword_maps import find_mapped_command
 
@@ -552,34 +580,81 @@ class HapiConnectorPlugin(Star):
                 return True
         return False
 
+    # ──── Focus 模式判定 ────
+
+    def _focus_should_forward(self, event: AstrMessageEvent, raw: str) -> bool:
+        """Focus 模式下，判断这条消息是否应转发给当前 session。
+
+        只排除会被其它处理器接手的消息，避免消息被吞：
+        - / 开头的命令（AstrBot 指令，含 /hapi）
+        - "hapi ..." 开头（无斜杠的 hapi 调用）
+        - 关键词别名命中（如 stop / 继续 / 专注，与 keyword_map_handler 同一套匹配）
+
+        注意：裸子命令词（如单发 "list"）没有任何处理器接管，
+        故不做排除，按普通消息转发给 AI。
+        """
+        text = (raw or "").strip()
+        if not text:
+            # 无文本但可能带附件（图片等），也转发
+            from .core import file_ops
+            return bool(file_ops.extract_files_from_message(event))
+        if text.startswith("/"):
+            return False
+
+        first = text.split(None, 1)[0].lower()
+        if first == "hapi":
+            return False
+
+        # 关键词别名：匹配规则与 keyword_map_handler 一致
+        # （Focus 开启的窗口 keyword_map_handler 必定生效，见其门禁，不会漏接）
+        maps = getattr(self, "_cmd_keyword_maps", None)
+        if maps:
+            from .chat.keyword_maps import find_mapped_command
+            if find_mapped_command(maps, text):
+                return False
+        return True
+
     # ──── 快捷前缀处理器 ────
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def quick_prefix_handler(self, event: AstrMessageEvent):
-        """快捷前缀: > 消息 或 >N 消息 (仅管理员)"""
+        """快捷前缀: > 消息 或 >N 消息 (仅管理员)；Focus 模式下普通消息免前缀转发"""
         from .core import file_ops
         self.notification_mgr._event_cache[event.unified_msg_origin] = event
         prefix = self._quick_prefix
         raw = event.message_str
 
-        if not raw or not raw.startswith(prefix):
-            return  # 不匹配，不拦截
-
         if not self._is_admin(event):
             return  # 非管理员，静默忽略
 
-        await self.state_mgr.ensure_primary_session(event)
-        rest = raw[len(prefix):]
+        # Focus 模式：本窗口普通消息直接转发到当前 session（无需前缀）
+        umo = event.unified_msg_origin
+        focus_forward = False
+        rest = None
 
-        if not rest:
-            return  # 只有前缀，忽略
+        if raw and raw.startswith(prefix):
+            # 带前缀仍走原快捷前缀逻辑（Focus 下也允许 >N 指定序号）
+            rest = raw[len(prefix):]
+        elif self.binding_mgr.get_window_focus_mode(umo):
+            if not self._focus_should_forward(event, raw):
+                return
+            focus_forward = True
+            rest = raw  # 整句视为要发送的内容
+        else:
+            return  # 不匹配，不拦截
+
+        await self.state_mgr.ensure_primary_session(event)
+
+        if not rest and not focus_forward:
+            return  # 只有前缀，忽略（Focus 下允许纯附件消息，文本为空）
 
         target_sid = None
         text = None
 
         parts = rest.split(None, 1)
         target_flavor = "claude"
-        if parts[0].isdigit():
+        if not focus_forward and parts and parts[0].isdigit():
+            # 仅快捷前缀支持 >N 序号；Focus 转发把整句当内容（避免「3 个文件」被当序号）
             idx = int(parts[0])
             if len(parts) < 2:
                 return  # >N 但没有消息内容
@@ -596,7 +671,7 @@ class HapiConnectorPlugin(Star):
                 return
         else:
             text = rest.lstrip()
-            if not text:
+            if not text and not focus_forward:
                 return
             target_sid = self.state_mgr.effective_sid(event)
             target_flavor = self.state_mgr.effective_flavor(event) or "claude"
@@ -617,26 +692,18 @@ class HapiConnectorPlugin(Star):
             target_flavor = self.state_mgr.effective_flavor(event) or target_flavor
             reminder += ready_msg
 
-        # 提取文件并上传
-        files = file_ops.extract_files_from_message(event)
-        attachments = []
-
-        if files:
-            upload_msgs = []
-            for fpath in files:
-                ok, msg, attach = await file_ops.upload_file(self.client, target_sid, fpath)
-                upload_msgs.append(msg)
-                if ok and attach:
-                    attachments.append(attach)
-
-            if upload_msgs:
-                yield event.plain_result("正在上传文件...\n" + "\n".join(upload_msgs))
+        # 提取文件并统一走 upload 接口
+        attachments, upload_notice = await file_ops.upload_event_files(self.client, event, target_sid)
+        if upload_notice:
+            yield event.plain_result(upload_notice)
 
         # 发送消息（带附件）
         current_sid = self.state_mgr.current_sid(event)
         if current_sid and current_sid != target_sid:
             reminder += f"→ 发送到 [{target_flavor}] {target_sid[:8]} (当前窗口: {current_sid[:8]})\n"
 
+        if text:
+            self._last_sends[umo] = (target_sid, text)
         ok, msg = await session_ops.send_message(self.client, target_sid, text, attachments)
         await self.state_mgr.set_user_state(event)
         yield event.plain_result(reminder + msg)

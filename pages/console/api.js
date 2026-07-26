@@ -92,6 +92,11 @@ export function createApi(bridge) {
     /** 会话页可见窗口：隐藏列表存插件 KV（iframe 无 localStorage） */
     getHiddenWindows: () => get("ui/hidden-windows"),
     setHiddenWindows: (hidden) => post("ui/hidden-windows", { hidden: hidden || [] }),
+    /** 窗口 Focus 模式开关（与聊天 /hapi focus 同源） */
+    setWindowFocus: (umo, enabled) => post("windows/focus", { umo, enabled }),
+    /** 会话创建模板（与聊天 /hapi create <模板名> 同源） */
+    getSessionTemplates: () => get("ui/session-templates"),
+    setSessionTemplates: (templates) => post("ui/session-templates", { templates: templates || [] }),
     /** 推送卡片：能力元数据 / 实卡预览 / 勾选安装字体或依赖 */
     renderMeta: () => get("render/meta"),
     renderPreview: (body) => post("render/preview", body || {}),

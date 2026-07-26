@@ -193,7 +193,7 @@ function renderHelp() {
       <div class="card-head">
         <div>
           <h2>命令帮助</h2>
-          <p class="sub">与插件 /hapi help 主题一致 · 管理员可用 · 前缀默认 /hapi</p>
+          <p class="sub">在聊天里发这些指令来操控 AI 会话（仅管理员账号有效）· 和 /hapi help 内容一致</p>
         </div>
       </div>
       <div class="help-search-row">

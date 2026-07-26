@@ -16,6 +16,8 @@ class StateManager:
         self._session_owners = binding_mgr._session_owners
         # WebUI「管理可见窗口」隐藏列表（UMO 字符串），KV: webui_hidden_windows
         self._webui_hidden_windows: list[str] = []
+        # 会话创建模板，KV: session_templates（WebUI 管理，/hapi create <模板名> 使用）
+        self._session_templates: list[dict] = []
 
     # ──── 持久化 ────
 
@@ -36,14 +38,35 @@ class StateManager:
         await self.kv.put_kv_data("webui_hidden_windows", cleaned)
         return cleaned
 
+    def get_session_templates(self) -> list[dict]:
+        return [dict(t) for t in self._session_templates]
+
+    async def set_session_templates(self, raw) -> list[dict]:
+        """写入会话创建模板并落盘 KV（normalize 后全量覆盖）。"""
+        from ..chat.session_templates import normalize_templates
+
+        cleaned = normalize_templates(raw)
+        self._session_templates = cleaned
+        await self.kv.put_kv_data("session_templates", cleaned)
+        return [dict(t) for t in cleaned]
+
     async def persist_session_owners(self):
         """持久化 session -> 窗口路由"""
         await self.kv.put_kv_data("session_owners", self._session_owners)
 
     async def persist_window_state(self, umo: str):
-        """持久化单个窗口状态；不存在时删除对应 KV"""
+        """持久化单个窗口状态；不存在时删除对应 KV。同步维护 known_windows 索引，
+        保证无 session 绑定的窗口（如仅开了 Focus）重启后也能被 load_all 恢复。"""
         window_state = self.binding_mgr._window_states.get(umo)
         await self.kv.put_kv_data(f"window_state_{umo}", window_state if window_state else None)
+
+        known = [str(u) for u in await self.kv.get_kv_data("known_windows", [])]
+        if window_state and umo not in known:
+            known.append(umo)
+            await self.kv.put_kv_data("known_windows", known)
+        elif not window_state and umo in known:
+            known.remove(umo)
+            await self.kv.put_kv_data("known_windows", known)
 
     # ──── 通知窗口绑定 ────
 
@@ -323,8 +346,17 @@ class StateManager:
                     if sid not in self.binding_mgr._window_sessions[umos]:
                         self.binding_mgr._window_sessions[umos].append(sid)
 
-        # 加载窗口状态
-        for sid, umo in self._session_owners.items():
+        # 加载窗口状态：session 绑定窗口 + known_windows 索引
+        # （仅开 Focus 而无 session 绑定的窗口不在 session_owners 里，靠索引补齐）
+        umos_to_load = set(self._session_owners.values())
+        try:
+            known_windows = await self.kv.get_kv_data("known_windows", [])
+            if isinstance(known_windows, list):
+                umos_to_load.update(str(u) for u in known_windows if u)
+        except Exception as e:
+            logger.warning("load known_windows failed: %s", e)
+
+        for umo in umos_to_load:
             window_state = await self.kv.get_kv_data(f"window_state_{umo}", None)
             if window_state:
                 self.binding_mgr.set_window_state(
@@ -332,6 +364,9 @@ class StateManager:
                     window_state.get("current_session", ""),
                     window_state.get("current_flavor", "")
                 )
+                # 加载 focus_mode
+                if window_state.get("focus_mode"):
+                    self.binding_mgr.set_window_focus_mode(umo, True)
 
         # WebUI 隐藏窗口列表
         try:
@@ -345,6 +380,15 @@ class StateManager:
         except Exception as e:
             logger.warning("load webui_hidden_windows failed: %s", e)
             self._webui_hidden_windows = []
+
+        # 会话创建模板
+        try:
+            from ..chat.session_templates import normalize_templates
+            raw_tpl = await self.kv.get_kv_data("session_templates", [])
+            self._session_templates = normalize_templates(raw_tpl)
+        except Exception as e:
+            logger.warning("load session_templates failed: %s", e)
+            self._session_templates = []
 
     async def migrate_to_capture_model(self):
         """数据迁移：绑定模式 → 捕获+默认窗口模式"""

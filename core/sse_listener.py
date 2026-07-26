@@ -9,6 +9,7 @@ from collections.abc import Callable, Awaitable
 from astrbot.api import logger
 
 from .hapi_client import AsyncHapiClient, ContentTypeError
+from ..render import formatters
 from ..render.formatters import (extract_text_preview, session_label_short, format_request_detail,
                          format_agent_line, is_question_request, format_question_notification,
                          format_permission_notification)
@@ -260,7 +261,7 @@ class SSEListener:
                 self._hibernated = True
                 logger.warning("SSE 已连续失败 %d 次，达到重连上限，进入休眠。发送 /hapi list 可重新唤醒", self.conn_fail_count)
                 await self._push_notification(
-                    f"⚠ SSE 已连续失败 {self.conn_fail_count} 次，达到重连上限，已进入休眠\n"
+                    f"⚠️ SSE 已连续失败 {self.conn_fail_count} 次，达到重连上限，已进入休眠\n"
                     "发送 /hapi list 可重新唤醒并尝试重连", "")
                 return
 
@@ -572,10 +573,10 @@ class SSEListener:
 
                     index = compact_req["index"]
                     lines = [
-                        f"⚠ 上下文过长\n{label}",
-                        "  压缩上下文 (/compact)",
+                        f"⚠️ 上下文过长\n{label}",
+                        "  压缩上下文（/compact）",
                         "",
-                        f"当前总共 {total} 个待审批，当前会话共 {session_total} 个待审批，此请求审批序号 {index}",
+                        formatters.format_pending_summary_line(total, session_total, index),
                         "",
                         "审批指令:",
                         "  /hapi a        全部批准",
@@ -738,13 +739,13 @@ class SSEListener:
 
             if len(agent_texts) == 1:
                 _, text = agent_texts[0]
-                output = f"{label}\n[Message]: {text}"
+                output = f"{label}\n【消息】{text}"
                 body = text
             else:
                 lines = [f"{label}\n━━━ {len(agent_texts)} 条新消息 ━━━"]
                 body_parts = []
                 for _, text in agent_texts:
-                    lines.append(f"[Message]: {text}")
+                    lines.append(f"【消息】{text}")
                     body_parts.append(text)
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)

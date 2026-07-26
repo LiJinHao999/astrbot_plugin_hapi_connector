@@ -354,7 +354,7 @@ async function saveSettings() {
       if (res.reconnect_error || (res.reconnect_required && !res.reconnected)) {
         showAlert(
           res.message ||
-            "已保存，但自动重连未成功 — 可点概览「按配置重连 HAPI」重试。",
+            "已保存，但自动重连未成功 — 可到概览页点「重连」重试。",
         );
       }
     } else {

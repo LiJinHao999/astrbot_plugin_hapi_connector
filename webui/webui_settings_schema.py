@@ -24,7 +24,7 @@ GROUPS: list[dict[str, Any]] = [
         "id": "connection",
         "title": "连接 HAPI",
         "nav": "连接",
-        "desc": "插件要先连上 HAPI，才能列 session、收通知、发指令。连接类改完后可能自动重连 SSE。",
+        "desc": "第一步：填 HAPI 服务地址和访问令牌，连上后其它功能才能用。改动连接类配置后插件会自动重连。",
         "fields": ["hapi_endpoint", "access_token", "proxy_url"],
         "advanced": {
             "title": "高级：Cloudflare Access / 重连 / JWT",
@@ -42,7 +42,7 @@ GROUPS: list[dict[str, Any]] = [
         "id": "push",
         "title": "推送通知",
         "nav": "推送",
-        "desc": "AI 干活时聊天里推多少内容。快捷前缀与戳一戳、卡片细调见「交互优化」页。",
+        "desc": "AI 干活时，聊天里推多少内容、以什么形式显示。快捷前缀、戳一戳、图片样式细调在「交互优化」页。",
         "fields": [
             "output_level",
             "summary_msg_count",
@@ -54,7 +54,7 @@ GROUPS: list[dict[str, Any]] = [
         "id": "approve",
         "title": "权限审批与托管",
         "nav": "审批",
-        "desc": "权限申请可手动批准，也可设提醒或忙时自动放行。",
+        "desc": "AI 要跑命令、改文件前会先请求你批准。这里设置超时提醒和定时自动放行。",
         "fields": [
             "remind_pending",
             "remind_interval",
@@ -76,7 +76,7 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "access_token": {
         "label": "Access Token",
-        "help": "HAPI 访问口令，支持 token:namespace。面板内明文显示。",
+        "help": "HAPI 的访问口令（部署 HAPI 时设置的那个）。支持 token:namespace 写法。注意此处明文显示。",
         "need": True,
         "control": "text",
     },
@@ -98,18 +98,18 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "sensitive": True,
     },
     "max_reconnect_attempts": {
-        "label": "SSE 最大重连次数",
-        "help": "断线自动重连次数；达到后休眠。0 表示一直重试。可点唤醒或发 /hapi list。",
+        "label": "断线最大重连次数",
+        "help": "连接断开后自动重试的次数，用完就休眠省资源。设 0 表示一直重试。休眠后在聊天里发 /hapi list 可唤醒。",
         "control": "number",
     },
     "jwt_lifetime": {
         "label": "JWT 有效期（秒）",
-        "help": "用 Access Token 换来的短期凭证寿命。默认 900。",
+        "help": "登录凭证的有效时长，到期自动续。默认 900，一般不用改。",
         "control": "number",
     },
     "refresh_before_expiry": {
         "label": "JWT 提前刷新（秒）",
-        "help": "过期前多久换新。应小于 JWT 有效期。",
+        "help": "凭证过期前多久去换新的。要小于上面的有效期，一般不用改。",
         "control": "number",
     },
     "output_level": {
@@ -120,11 +120,11 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "option_meta": {
             "silence": {
                 "title": "静默",
-                "desc": "几乎不推正文，主要保留权限请求等关键提醒。此模式可作为 agent 完成任务 / 需要审批时的通知。",
+                "desc": "平时不打扰，只在 AI 需要你批准操作或任务完成时提醒。",
             },
-            "simple": {"title": "简洁（推荐）", "desc": "推送 AI 纯文本与系统事件，过滤工具调用细节。"},
-            "summary": {"title": "摘要", "desc": "任务收尾时，推送 LLM 最后几条消息（条数见下一项）。"},
-            "detail": {"title": "详细", "desc": "尽量实时全推，群里可能很吵。"},
+            "simple": {"title": "简洁（推荐）", "desc": "推送 AI 说的话和重要事件，不推工具调用细节。"},
+            "summary": {"title": "摘要", "desc": "AI 干完一轮活后，把最后几条回复一起推给你（条数见下一项）。"},
+            "detail": {"title": "详细", "desc": "AI 的每条输出都实时推送，信息全但很刷屏。"},
         },
     },
     "summary_msg_count": {
@@ -135,23 +135,23 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "render_mode": {
         "label": "推送渲染模式",
-        "help": "纯文本=原样文字；图片=下方类型渲成图片（需 Pillow）。保存后持久生效。卡片细调见「交互优化」。",
+        "help": "推到聊天里的内容以什么形式显示。图片模式对代码块、表格更友好（需安装 Pillow，可在「交互优化」页一键装）。",
         "need": True,
         "control": "enum_cards",
         "option_meta": {
-            "text": {"title": "纯文本", "desc": "全部文字推送。"},
-            "card": {"title": "图片", "desc": "勾选类型渲成图片；含 Agent 对话。"},
+            "text": {"title": "纯文本", "desc": "全部以文字发送，兼容性最好。"},
+            "card": {"title": "图片", "desc": "把勾选的内容类型渲染成图片发送，排版更清晰。"},
         },
     },
     "render_kinds": {
         "label": "以下类型渲成图片",
-        "help": "",
+        "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话。没勾的仍发文字。",
         "control": "kind_checks",
         "show_if": {"key": "render_mode", "eq": "card"},
     },
     "remind_pending": {
         "label": "待审批超时提醒",
-        "help": "防止缓存失效",
+        "help": "AI 的操作请求放着没批时，每隔一段时间在聊天里提醒你一次，免得忘了导致 AI 一直干等。",
         "control": "bool",
         "bool_labels": ["关闭", "开启"],
     },
@@ -162,11 +162,11 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "show_if": {"key": "remind_pending", "eq": True},
     },
     "auto_approve_enabled": {
-        "label": "忙时自动批准（托管）",
-        "help": "指定时段内权限请求自动通过。有安全风险。",
+        "label": "定时自动批准（托管）",
+        "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。",
         "control": "bool",
-        "warn": "开启后，时间窗内全部权限将自动批准。",
-        "bool_labels": ["关闭（更安全）", "开启托管"],
+        "warn": "开启后，时段内 AI 的所有操作都会自动批准，包括改文件、跑命令。请确认你信任正在跑的任务。",
+        "bool_labels": ["关闭（更安全）", "开启"],
     },
     "auto_approve_start": {
         "label": "托管开始时间",

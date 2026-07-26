@@ -28,6 +28,23 @@ class PendingManager:
             pending = self.get_pending_for_window(event, visible_sids)
         return approval_ops.flatten_pending(pending)
 
+    def get_llm_tool_future(self, sid: str, rid: str):
+        """从原始 pending 中取 LLM 工具请求的 Future（列表中的 req 可能是副本）"""
+        session_pending = self.sse_listener.pending.get(sid) or {}
+        if not isinstance(session_pending, dict):
+            return None
+        original_req = session_pending.get(rid) or {}
+        if not isinstance(original_req, dict):
+            return None
+        return original_req.get("future")
+
+    def resolve_llm_tool(self, sid: str, rid: str, approved: bool):
+        """审批 LLM 工具请求：设置 Future 结果并移除条目"""
+        future = self.get_llm_tool_future(sid, rid)
+        if future and not future.done():
+            future.set_result(approved)
+        self.remove_entry(sid, rid)
+
     def remove_entry(self, sid: str, rid: str):
         """移除单个待审批条目"""
         # 回收序号
@@ -49,14 +66,7 @@ class PendingManager:
         llm_futures = []
         for sid, rid, req in regular:
             if self.is_llm_tool_request(req):
-                # 从原始 pending 获取 Future（items 里的 req 可能是副本）
-                session_pending = self.sse_listener.pending.get(sid) or {}
-                if not isinstance(session_pending, dict):
-                    session_pending = {}
-                original_req = session_pending.get(rid) or {}
-                if not isinstance(original_req, dict):
-                    original_req = {}
-                future = original_req.get("future")
+                future = self.get_llm_tool_future(sid, rid)
                 if future:
                     llm_futures.append((sid, rid, future))
 
@@ -74,8 +84,8 @@ class PendingManager:
         success_count = sum(1 for _, _, ok in results if ok)
         fail_count = len(results) - success_count
         if fail_count > 0:
-            return f"✅ 已批准 {success_count} 项，❌ 失败 {fail_count} 项"
-        return f"✅ 已批准 {success_count} 项"
+            return f"✓ 已批准 {success_count} 项，✗ 失败 {fail_count} 项"
+        return f"✓ 已批准 {success_count} 项"
 
     async def answer_questions_interactive(self, event: AstrMessageEvent, items: list[tuple[str, str, dict]],
                                           client, session_waiter, SessionController):

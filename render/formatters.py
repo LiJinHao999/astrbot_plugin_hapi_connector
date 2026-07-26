@@ -78,7 +78,7 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype == "codex":
         return _extract_codex_block(block.get("data", {}), max_len)
 
-    # ── 事件 → [System] ──
+    # ── 事件 → 【系统】 ──
     if btype == "event":
         event_data = block.get("data", {})
         event_type = event_data.get("type", "?") if isinstance(event_data, dict) else "?"
@@ -88,13 +88,13 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
         if event_type == "message" and isinstance(event_data, dict):
             msg = event_data.get("message", "")
             if msg:
-                return f"[System]: {msg}"
-        return f"[System]: {event_type}"
+                return f"【系统】{msg}"
+        return f"【系统】{event_type}"
 
     # ── Summary（Codex 等 agent 的会话摘要）──
     if btype == "summary":
         text = block.get("summary", "")
-        return f"[Summary]: {text[:max_len]}" if text else None
+        return f"【总结】{text[:max_len]}" if text else None
 
     # ── 跳过噪音 ──
     if btype in ("token_count", "thinking"):
@@ -316,7 +316,7 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
         return None
     if dtype == "message":
         msg_text = data.get("message", "")
-        return msg_text[:max_len] if msg_text else "[消息]"
+        return msg_text[:max_len] if msg_text else "(空消息)"
     return f"[{dtype}]" if dtype else None
 
 
@@ -329,7 +329,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
             break
 
     if not session:
-        return f"sid {sid[:8]}"
+        return f"session {sid[:8]}"
 
     meta = session.get("metadata", {})
     flavor = meta.get("flavor", "?")
@@ -362,9 +362,9 @@ def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
 def format_bind_status(sessions: list[dict], session_owners: dict[str, str], window_states: dict[str, dict] = None) -> str:
     """格式化全局绑定状态（复用 session 列表格式 + 绑定信息 + 窗口状态）"""
     if not sessions:
-        return "没有任何 session"
+        return "还没有任何 session，可用 /hapi create 创建"
 
-    lines = [f"=== 全局绑定状态 ===\n共 {len(sessions)} 个 Session:"]
+    lines = [f"全局绑定状态 · 共 {len(sessions)} 个 session:"]
 
     current_path = None
     for idx, s in enumerate(sessions, 1):
@@ -394,7 +394,7 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, str], win
 
         parts = [status, f"🤖{flavor}:{model}"]
         if pending:
-            parts.append(f"⚠️ {pending}待审批")
+            parts.append(f"⚠️ {pending} 待审批")
         owner = session_owners.get(sid)
         if owner:
             owner_display = owner[:20] + "..." if len(owner) > 20 else owner
@@ -404,7 +404,7 @@ def format_bind_status(sessions: list[dict], session_owners: dict[str, str], win
         if window_states:
             active_umo = next((umo for umo, state in window_states.items() if state.get("current_session") == sid), None)
             if active_umo:
-                parts.append(f"🪟正在交互")
+                parts.append("🪟 正在交互")
 
         lines.append(" | ".join(parts))
 
@@ -419,14 +419,14 @@ def format_session_list(
 ) -> str:
     """格式化 session 列表；可选沿用全局 session 列表编号。"""
     if not sessions:
-        return "没有任何 session"
+        return "还没有任何 session，可用 /hapi create 创建"
 
     lines: list[str] = []
     if header_current_window:
         lines.append(f"当前窗口 ID: {header_current_window}")
         lines.append("")
 
-    lines.append(f"共 {len(sessions)} 个 Session:")
+    lines.append(f"共 {len(sessions)} 个 session:")
     index_by_sid: dict[str, int] = {}
     if all_sessions:
         for idx, session in enumerate(all_sessions, 1):
@@ -471,12 +471,12 @@ def format_session_list(
         # 第二行：状态 | 模型 | 待审批 | 当前
         parts = [status, f"🤖{flavor}:{model}"]
         if pending:
-            parts.append(f"⚠️ {pending}待审批")
+            parts.append(f"⚠️ {pending} 待审批")
         if current_sid and sid == current_sid:
-            parts.append("<<当前")
+            parts.append("◀ 当前")
         lines.append(" | ".join(parts))
 
-    lines.append(f"\n💡 切换会话：/hapi sw <序号或ID前缀>")
+    lines.append("\n💡 切换会话：/hapi sw <序号或ID前缀>")
     return "\n".join(lines)
 
 
@@ -549,7 +549,7 @@ def format_session_status(s: dict) -> str:
     if effort:
         lines.append(f"推理:   {effort}")
     if service_tier:
-        lines.append(f"Service: {service_tier}")
+        lines.append(f"档位:   {service_tier}")
     if collab and (collab != "default" or flavor == "codex"):
         lines.append(f"协作:   {collab}")
     if pending:
@@ -638,14 +638,14 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
-_PASSTHROUGH_PREFIXES = ("[System]:", "[Summary]:", "🛠️")
+_PASSTHROUGH_PREFIXES = ("【系统】", "【总结】", "🛠️")
 
 
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件/摘要 → 透传，普通文本 → [Message]"""
+    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件/摘要 → 透传，普通文本 → 【消息】"""
     if any(text.startswith(p) for p in _PASSTHROUGH_PREFIXES):
         return text
-    return f"[Message]: {text}"
+    return f"【消息】{text}"
 
 
 def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
@@ -661,7 +661,7 @@ def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,
         if role in ("agent", "assistant"):
             lines.append(format_agent_line(text))
         elif role == "user":
-            lines.append(f"[User Input]: {text}")
+            lines.append(f"【用户输入】{text}")
         else:
             lines.append(f"{role}: {text}")
     # 如果过滤后只剩标题行，说明该轮无可显示内容
@@ -688,7 +688,6 @@ def format_question_notification(req: dict, label: str, total: int, session_tota
     """格式化问题请求 SSE 通知（支持 AskUserQuestion 和 request_user_input）"""
     args = req.get("arguments") or {}
     questions = args.get("questions", []) if isinstance(args, dict) else []
-    is_rui = req.get("tool") == "request_user_input"
     lines = [f"❓ 问题请求 {label}"]
     for q in questions:
         header = q.get("header") or q.get("id")
@@ -699,8 +698,13 @@ def format_question_notification(req: dict, label: str, total: int, session_tota
         for i, opt in enumerate(q.get("options", []), 1):
             desc = f" — {opt['description']}" if opt.get("description") else ""
             lines.append(f"    [{i}] {opt['label']}{desc}")
-    lines += ["", f"当前总共 {total} 个待审批，当前会话共 {session_total} 个待审批，此请求审批序号 {index}", "💡 使用此命令交互式审批：/hapi answer"]
+    lines += ["", format_pending_summary_line(total, session_total, index), "💡 交互式回答：/hapi answer"]
     return "\n".join(lines)
+
+
+def format_pending_summary_line(total: int, session_total: int, index: int) -> str:
+    """统一的待审批统计行：全局数 / 本会话数 / 本条序号"""
+    return f"待审批：全局 {total} 个，本会话 {session_total} 个（此条序号 {index}）"
 
 
 def format_permission_notification(label: str, detail: str, total: int, session_total: int, index: int) -> str:
@@ -709,14 +713,14 @@ def format_permission_notification(label: str, detail: str, total: int, session_
         f"🔐 权限请求 {label}",
         f"  {detail}",
         "",
-        f"当前总共 {total} 个待审批，当前会话共 {session_total} 个待审批，此请求审批序号 {index}",
+        format_pending_summary_line(total, session_total, index),
         "",
         "审批指令:",
-        "  /hapi a        全部批准",
+        "  /hapi a             全部批准",
         "  /hapi allow <序号>  批准单个",
-        "  /hapi deny     全部拒绝",
-        "  /hapi deny <序号> 拒绝单个",
-        "  /hapi pending   查看完整列表",
+        "  /hapi deny          全部拒绝",
+        "  /hapi deny <序号>   拒绝单个",
+        "  /hapi pending       查看完整列表",
     ]
     return "\n".join(lines)
 
@@ -767,7 +771,7 @@ def format_permission_modes(modes: list[str], current: str) -> str:
     """格式化权限模式列表"""
     lines = [f"当前: {current}"]
     for i, m in enumerate(modes, 1):
-        tag = " <--" if m == current else ""
+        tag = " ◀" if m == current else ""
         lines.append(f"  [{i}] {m}{tag}")
     lines.append("\n回复序号或模式名切换")
     return "\n".join(lines)
@@ -777,7 +781,7 @@ def format_model_modes(modes: list[str], current: str) -> str:
     """格式化模型模式列表"""
     lines = [f"当前模型: {current}"]
     for i, m in enumerate(modes, 1):
-        tag = " <--" if m == current else ""
+        tag = " ◀" if m == current else ""
         lines.append(f"  [{i}] {m}{tag}")
     lines.append("\n回复序号或模式名切换")
     return "\n".join(lines)
@@ -895,11 +899,14 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "s", "status",
     "msg", "messages",
     "to",
+    "send",
+    "retry",
     "perm",
     "model",
     "effort",
     "plan",
     "fast",
+    "focus", "专注", "退出专注",
     "remote",
     "output", "out",
     "pending",
@@ -916,6 +923,7 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "delete",
     "clean",
     "bind",
+    "alias",
     "routes",
     "files", "file",
     "find",
@@ -983,9 +991,9 @@ HELP_COMMANDS = [
     },
     {
         "topic": "session",
-        "usage": "/hapi create",
-        "summary": "创建新 session",
-        "example": None,
+        "usage": "/hapi create [模板名] [目录]",
+        "summary": "创建新 session：无参进交互向导；带模板名一步创建（模板在 WebUI 管理）",
+        "example": "/hapi create 主项目",
         "home": True,
     },
     {
@@ -1063,6 +1071,20 @@ HELP_COMMANDS = [
         "usage": "/hapi to <序号> <内容>",
         "summary": "发送到指定 session",
         "example": "/hapi to 2 继续上一个任务",
+        "home": False,
+    },
+    {
+        "topic": "chat",
+        "usage": "/hapi send <内容>",
+        "summary": "发送到当前会话（适合做关键词映射，如 cl → send /clear）",
+        "example": "/hapi send /clear",
+        "home": False,
+    },
+    {
+        "topic": "chat",
+        "usage": "/hapi retry",
+        "summary": "重发本窗口上一条发出的消息（AI 无响应时使用）",
+        "example": None,
         "home": False,
     },
     {
@@ -1159,7 +1181,7 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi plan",
-        "summary": "切换 Plan 模式（toggle）。Claude 切换 permissionMode，Codex 切换 collaborationMode。再次执行关闭。",
+        "summary": "开关 Plan 模式（再次执行切换回来）",
         "example": None,
         "home": False,
     },
@@ -1173,7 +1195,7 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi effort [值]",
-        "summary": "查看或切换推理强度。Claude：auto/low/medium/high/xhigh/max；Codex/OpenCode：inherit/none/…/max；Pi：off/minimal/…/max",
+        "summary": "查看或切换推理强度（可选值随 agent 不同，直接执行可查看列表）",
         "example": "/hapi effort high",
         "home": False,
     },
@@ -1182,6 +1204,27 @@ HELP_COMMANDS = [
         "usage": "/hapi fast [on|off]",
         "summary": "查看或切换 Codex Fast mode（service tier: fast/standard）",
         "example": "/hapi fast on",
+        "home": False,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi focus [on|off]",
+        "summary": "开启/关闭 Focus 模式（自动发送所有消息到当前 session）",
+        "example": "/hapi focus on",
+        "home": True,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi 专注",
+        "summary": "开启 Focus 模式快捷指令",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "config",
+        "usage": "/hapi 退出专注",
+        "summary": "关闭 Focus 模式快捷指令",
+        "example": None,
         "home": False,
     },
     {
@@ -1237,7 +1280,7 @@ def format_unknown_command_help(command: str) -> str:
 
     normalized = command.strip().lower()
     if normalized == "reset":
-        return "命令已调整为: /hapi bind reset"
+        return "该命令已并入 bind，请使用 /hapi bind reset 重置窗口路由"
     lines = [
         f"未知命令: /hapi {command}",
         "",
@@ -1264,7 +1307,7 @@ def format_unknown_command_help(command: str) -> str:
 
 
 def export_help_data() -> dict:
-    """Structured help payload for WebUI (single source with HELP_* constants)."""
+    """导出结构化帮助数据给 WebUI（与 HELP_* 常量同源）"""
     # HELP_TOPICS uses Chinese names; map to English topic ids used by HELP_COMMANDS
     zh_to_id = {
         "会话": "session",

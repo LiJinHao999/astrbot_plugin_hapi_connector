@@ -243,6 +243,29 @@ async def _read_upload_source(source: dict[str, Any]) -> tuple[bytes, str, str]:
     return raw, filename, mime_type
 
 
+async def upload_event_files(client: AsyncHapiClient, event: Any,
+                             sid: str) -> tuple[list[dict], str]:
+    """从消息中提取附件并全部上传到 session。
+
+    返回 (attachments, 上传过程说明)。无附件时返回 ([], "")。
+    供快捷前缀 / Focus 转发链路使用：图片、文件经 /upload 接口
+    转为 attachments 随消息发出。指令类路径（send/to）不自动捎带附件。
+    """
+    files = extract_files_from_message(event)
+    if not files:
+        return [], ""
+
+    attachments: list[dict] = []
+    msgs: list[str] = []
+    for fpath in files:
+        ok, msg, attach = await upload_file(client, sid, fpath)
+        msgs.append(msg)
+        if ok and attach:
+            attachments.append(attach)
+    notice = "正在上传文件...\n" + "\n".join(msgs) if msgs else ""
+    return attachments, notice
+
+
 def extract_files_from_message(event: Any) -> list[dict[str, Any]]:
     """Extract uploadable attachment sources from AstrBot message components."""
     files: list[dict[str, Any]] = []
@@ -298,7 +321,7 @@ async def upload_file(client: AsyncHapiClient, sid: str, source: Any) -> tuple[b
     """Upload a local path or remote URL attachment to HAPI."""
     normalized = _normalize_upload_source(source)
     if not normalized:
-        return False, f"Unsupported upload source: {source}", None
+        return False, f"不支持的上传来源: {source}", None
 
     try:
         raw, filename, mime_type = await _read_upload_source(normalized)
@@ -309,7 +332,7 @@ async def upload_file(client: AsyncHapiClient, sid: str, source: Any) -> tuple[b
             or normalized.get("url")
             or "attachment"
         )
-        return False, f"Failed to read {display_name}: {exc}", None
+        return False, f"读取 {display_name} 失败: {exc}", None
 
     payload = {
         "filename": filename,
@@ -321,12 +344,12 @@ async def upload_file(client: AsyncHapiClient, sid: str, source: Any) -> tuple[b
     try:
         if not resp.ok:
             body = await resp.text()
-            return False, f"Upload failed {filename}: {resp.status} {body[:200]}", None
+            return False, f"上传 {filename} 失败: {resp.status} {body[:200]}", None
 
         data = await resp.json()
         if not data.get("success") or not data.get("path"):
-            error = data.get("error") or data.get("message") or "unknown error"
-            return False, f"Upload failed {filename}: {error}", None
+            error = data.get("error") or data.get("message") or "未知错误"
+            return False, f"上传 {filename} 失败: {error}", None
 
         attachment = {
             "id": str(uuid.uuid4()),
@@ -335,7 +358,7 @@ async def upload_file(client: AsyncHapiClient, sid: str, source: Any) -> tuple[b
             "size": len(raw),
             "path": data["path"],
         }
-        return True, f"Uploaded: {filename}", attachment
+        return True, f"已上传: {filename}", attachment
     finally:
         resp.release()
 
@@ -346,13 +369,13 @@ async def delete_uploaded_file(client: AsyncHapiClient, sid: str, path: str) -> 
     try:
         if not resp.ok:
             body = await resp.text()
-            return False, f"Delete failed: {resp.status} {body[:200]}"
+            return False, f"删除失败: {resp.status} {body[:200]}"
 
         data = await resp.json()
         if data.get("success") or data.get("ok"):
-            return True, f"Deleted: {path}"
+            return True, f"已删除: {path}"
 
-        error = data.get("error") or data.get("message") or "unknown error"
-        return False, f"Delete failed: {error}"
+        error = data.get("error") or data.get("message") or "未知错误"
+        return False, f"删除失败: {error}"
     finally:
         resp.release()

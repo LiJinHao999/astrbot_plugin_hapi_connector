@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目定位
 
-AstrBot 插件：**HAPI Vibe Coding 遥控器**。通过聊天指令（QQ / 微信 / Telegram 等）远程操控 [HAPI](https://github.com/tiann/hapi) 上的 Claude / Codex / Cursor / Grok / Kimi / OpenCode / Pi 等会话。
+AstrBot 插件：**HAPI 编程助手遥控器**。通过聊天指令（QQ / 微信 / Telegram 等）远程操控 [HAPI](https://github.com/tiann/hapi) 上的 Claude / Codex / Cursor / Grok / Kimi / OpenCode / Pi 等 AI 编程会话。
 
 - 运行环境：AstrBot 3.4+（插件 API），Python 3.10+
 - 许可证：AGPLv3
-- 版本以 `metadata.yaml` 与 `main.py` 的 `@register(..., "x.y.z")` 为准（当前 v3.0.0；Web 管理面板起为大版本）
+- 版本以 `metadata.yaml` 与 `main.py` 的 `@register(..., "x.y.z")` 为准（当前 v3.2.0）
 - 后端：HAPI Hub（默认 `http://127.0.0.1:3006`），部署说明见 `docs/install.md`
 
 本仓库是**纯插件包**，无独立 build / lint / test 脚本；依赖由 AstrBot 按 `requirements.txt` 自动安装。
@@ -54,14 +54,14 @@ python -m py_compile *.py
             StateManager + BindingManager（窗口隔离与路由，KV 持久化）
 ```
 
-### 源码目录（3.0 版本后对py文件进行了分包）
+### 源码目录（3.0 版本后对 py 文件进行了分包）
 
 | 目录 | 职责 |
 |------|------|
 | `main.py` / `constants.py` | 插件入口与兼容常量 |
-| `core/` | HAPI 客户端、SSE、绑定/状态、session/file/approval ops |
+| `core/` | HAPI 客户端、SSE、绑定 / 状态、session / file / approval ops |
 | `chat/` | 指令处理、创建向导、关键词、戳一戳、LLM 工具、flavor 能力表 |
-| `render/` | 文案 formatters、卡片/字体/出图、UMO 展示 |
+| `render/` | 文案 formatters、卡片 / 字体 / 出图、UMO 展示 |
 | `webui/` | Plugin Pages API 与设置 schema |
 | `pages/console/` | Web 管理面板静态资源（扫描路径仍为根级 `pages/`） |
 
@@ -72,19 +72,19 @@ python -m py_compile *.py
 | `main.py` | 插件入口 `HapiConnectorPlugin(Star)`：组装依赖、生命周期、`/hapi` 命令、LLM 工具代理、戳一戳、快捷前缀；注册 WebUI `register_pages`；含 AstrBot File 组件 setattr 兼容补丁 |
 | `chat/command_handlers.py` | 所有 `/hapi` 子命令路由与实现（最大业务文件） |
 | `chat/llm_integration.py` | Function Calling：可见性裁剪、操作类工具审批、工具实现 |
-| `core/hapi_client.py` | 异步 HTTP：JWT 获取/缓存/刷新、401 重试、代理、`/api/events` SSE |
+| `core/hapi_client.py` | 异步 HTTP：JWT 获取 / 缓存 / 刷新、401 重试、代理、`/api/events` SSE |
 | `core/cf_access.py` | Cloudflare Zero Trust Service Token 请求头 |
-| `core/sse_listener.py` | 后台 SSE：权限请求、消息推送级别、自动审批时段、重连/休眠、待审批序号池；`get_connection_status` / `pending_counts` 供 WebUI |
+| `core/sse_listener.py` | 后台 SSE：权限请求、消息推送级别、自动审批时段、重连 / 休眠、待审批序号池；`get_connection_status` / `pending_counts` 供 WebUI |
 | `core/notification_manager.py` | 按路由推送到 UMO 窗口；去重；长消息分片；被动回复 fallback |
-| `core/binding_manager.py` | 内存绑定：`session → 唯一窗口`、`窗口 → 多 session`、窗口当前 session/flavor |
-| `core/state_manager.py` | 用户状态 + 通知路由策略 + AstrBot KV 持久化/迁移 |
-| `core/pending_manager.py` | 待审批扁平化、批准/拒绝、question 交互式问答、LLM 工具假权限请求 |
-| `core/session_ops.py` | HAPI session REST 封装（列表、发消息、resume、权限/模型/effort 等） |
-| `core/file_ops.py` | 远端列目录/搜索/上传/下载；从聊天消息抽附件 |
+| `core/binding_manager.py` | 内存绑定：`session → 唯一窗口`、`窗口 → 多 session`、窗口当前 session / flavor |
+| `core/state_manager.py` | 用户状态 + 通知路由策略 + AstrBot KV 持久化 / 迁移 |
+| `core/pending_manager.py` | 待审批扁平化、批准 / 拒绝、question 交互式问答、LLM 工具假权限请求 |
+| `core/session_ops.py` | HAPI session REST 封装（列表、发消息、resume、权限 / 模型 / effort 等） |
+| `core/file_ops.py` | 远端列目录 / 搜索 / 上传 / 下载；从聊天消息抽附件 |
 | `core/approval_ops.py` | 审批 API 调用封装 |
 | `chat/create_wizard.py` | `/hapi create` 交互向导（按 profile 动态步骤，如 reasoning effort） |
-| `render/formatters.py` | 用户可见文案、帮助、session 标题 `get_session_title`、审批/列表格式；`export_help_data` 供 WebUI |
-| `chat/flavor_profiles.py` | Agent flavor 能力表：权限/模型/effort/plan/可创建；未知类型降级；`export_profiles_meta` 供 WebUI |
+| `render/formatters.py` | 用户可见文案、帮助、session 标题 `get_session_title`、审批 / 列表格式；`export_help_data` 供 WebUI |
+| `chat/flavor_profiles.py` | AI 代理 flavor 能力表：权限 / 模型 / effort / plan / 可创建；未知类型降级；`export_profiles_meta` 供 WebUI |
 | `webui/web_api.py` | AstrBot Plugin Pages 后端：`register_pages`、配置落盘、snapshot、会话运维、路由写、重连、docs 读盘、render 预览 |
 | `pages/console/` | Web 管理面板静态资源（`index.html` / `app.js` / `api.js` / `style.css` 等） |
 | `constants.py` | 兼容导出 + `SESSION_TYPES` |
@@ -124,7 +124,7 @@ KV 键（经 `Star.put_kv_data` / `get_kv_data`）：`known_users`、`user_state
 - 可选 CF Access 头；SSE 校验 `Content-Type: text/event-stream`，否则 `ContentTypeError`。
 - 响应使用后需 `resp.release()`（见 `session_ops` 模式）。
 
-### 支持的 Agent（flavor）
+### 支持的 AI 代理（flavor）
 
 能力与权限模式集中在 `chat/flavor_profiles.py`（`constants.py` 仅做兼容导出），不要硬编码散落：
 
@@ -138,20 +138,20 @@ KV 键（经 `Star.put_kv_data` / `get_kv_data`）：`known_users`、`user_state
 | 路径 | 内容 |
 |------|------|
 | `README.md` | 功能、配置项、Web 管理面板、完整指令、SSE 级别、插件结构 |
-| `CHANGELOG.md` | 版本行为变更（WebUI、resume、plan/effort、FC 工具、隔离模型） |
+| `CHANGELOG.md` | 版本行为变更（WebUI、resume、plan / effort、FC 工具、隔离模型） |
 | `docs/install.md` | HAPI Hub 安装与连接 |
 | `docs/session-isolation.md` | 多窗口隔离规则 |
 | `docs/cf_access_guide.md` | Cloudflare Access 配置 |
 | `dev-docs/plugin-pages.md` | AstrBot 插件页面 API |
 | `dev-docs/webui开发计划.md` | WebUI 信息架构与 API checklist |
-| `dev-docs/web-api.md` | HAPI Hub REST/SSE 协议对照 |
+| `dev-docs/web-api.md` | HAPI Hub REST / SSE 协议对照 |
 
 ## 修改时注意
 
 - **版本号**：同时改 `metadata.yaml` 的 `version` 与 `main.py` `@register` 第四参；重要变更写 `CHANGELOG.md`。  
-- **管理员门禁**：新指令/新事件处理器必须保留 `_is_admin` 检查。  
+- **管理员门禁**：新指令 / 新事件处理器必须保留 `_is_admin` 检查。  
 - **窗口路由**：改绑定或推送逻辑时对照 `visible_sessions_for_window` / `select_notification_targets`，避免跨窗口串通知。  
 - **文案**：用户可见输出集中在 `render/formatters.py`；session 展示标题用 `get_session_title`。  
 - **中英混用**：部分 `session_ops.send_message` 等返回串为英文，命令层提示多为中文；新增用户可见消息优先中文并与现有风格一致。  
 - **WebUI**：新 Page API 放 `webui/web_api.py`；同步 `api.js` 封装；敏感配置与落盘策略见开发计划 §4.2。  
-- **无自动化测试**：改审批、SSE 完成态、resume、绑定路由、Web snapshot 等路径时，按场景做手动联调（active/inactive、question vs 普通权限、多窗口、面板改配置后重载仍生效）。
+- **无自动化测试**：改审批、SSE 完成态、resume、绑定路由、Web snapshot 等路径时，按场景做手动联调（active / inactive、question vs 普通权限、多窗口、面板改配置后重载仍生效）。
