@@ -51,6 +51,42 @@ class CommandHandlers:
         method = ROUTE_HANDLERS.get(subcommand)
         return getattr(self, method, None) if method else None
 
+    # ──── 公共 helper ────
+
+    def _require_sid(self, event: AstrMessageEvent, cmd: str = "") -> tuple[str | None, str | None]:
+        """获取当前窗口选中的 session ID；未选中时返回统一提示文案 (sid, err)"""
+        sid = self.state_mgr.effective_sid(event)
+        if sid:
+            return sid, None
+        hint = "请先用 /hapi sw <序号> 选择一个 session"
+        if cmd:
+            hint += f"，或使用 /hapi {cmd} <序号>"
+        return None, hint
+
+    def _visible_sids(self, event: AstrMessageEvent) -> set[str]:
+        """当前窗口可见的 session ID 集合（含窗口自身 ID，覆盖 LLM 工具请求）"""
+        sids = {
+            s.get("id")
+            for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache)
+            if s.get("id")
+        }
+        sids.add(event.unified_msg_origin)
+        return sids
+
+    def _resolve_target_verbose(self, target: str) -> tuple[str | None, str | None]:
+        """解析序号或 ID 前缀为 session ID；返回 (sid, 错误提示)，多个匹配时列出候选"""
+        if target.isdigit():
+            idx = int(target)
+            if 1 <= idx <= len(self.sessions_cache):
+                return self.sessions_cache[idx - 1]["id"], None
+        matches = [s for s in self.sessions_cache if s.get("id", "").startswith(target)]
+        if len(matches) == 1:
+            return matches[0]["id"], None
+        if len(matches) > 1:
+            labels = "\n".join(f"  {s['id'][:8]}..." for s in matches)
+            return None, f"匹配到 {len(matches)} 个 session，请输入更长的 ID 前缀:\n{labels}"
+        return None, f"未找到匹配「{target}」的 session"
+
     # ──── 路由 ────
 
     async def cmd_hapi_router(self, event: AstrMessageEvent, raw: str = ""):
@@ -188,29 +224,11 @@ class CommandHandlers:
 
         await self.plugin._refresh_sessions()
 
-        chosen = None
-        if target.isdigit():
-            index = int(target)
-            if 1 <= index <= len(self.sessions_cache):
-                chosen = self.sessions_cache[index - 1]
-
-        if chosen is None:
-            # 按 session ID 前缀匹配
-            matches = [s for s in self.sessions_cache
-                       if s.get("id", "").startswith(target)]
-            if len(matches) == 1:
-                chosen = matches[0]
-            elif len(matches) > 1:
-                labels = [f"  {s['id'][:8]}..." for s in matches]
-                yield event.plain_result(
-                    f"匹配到 {len(matches)} 个 session，请更精确:\n"
-                    + "\n".join(labels))
-                return
-
-        if chosen is None:
-            yield event.plain_result(
-                f"未找到匹配的 session，共 {len(self.sessions_cache)} 个")
+        chosen_sid, err = self._resolve_target_verbose(target)
+        if err:
+            yield event.plain_result(err)
             return
+        chosen = next(s for s in self.sessions_cache if s.get("id") == chosen_sid)
 
         sid = chosen["id"]
         flavor = chosen.get("metadata", {}).get("flavor", "claude")
@@ -225,9 +243,9 @@ class CommandHandlers:
         """查看当前 session 状态（出卡优先）"""
         await self.state_mgr.ensure_primary_session(event)
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
         try:
             detail = await session_ops.fetch_session_detail(self.client, sid)
@@ -248,9 +266,9 @@ class CommandHandlers:
         from astrbot.api import logger
         logger.debug(f"[cmd_msg] 收到参数 rounds='{rounds}', type={type(rounds)}")
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
         rounds_int = int(rounds) if rounds.isdigit() and int(rounds) >= 1 else 1
         logger.debug(f"[cmd_msg] 解析后 rounds_int={rounds_int}")
@@ -288,7 +306,7 @@ class CommandHandlers:
 
         await self.plugin._refresh_sessions()
         if idx < 1 or idx > len(self.sessions_cache):
-            yield event.plain_result(f"无效序号，共 {len(self.sessions_cache)} 个 session")
+            yield event.plain_result(f"✗ 无效序号，当前共 {len(self.sessions_cache)} 个 session")
             return
 
         target = self.sessions_cache[idx - 1]
@@ -309,9 +327,62 @@ class CommandHandlers:
         if current_sid and current_sid != target_sid:
             reminder += f"→ 发送到 [{target_flavor}] {target_sid[:8]} (当前窗口: {current_sid[:8]})\n"
 
+        self.plugin._last_sends[event.unified_msg_origin] = (target_sid, text)
         ok, msg = await session_ops.send_message(self.client, target_sid, text)
         await self.state_mgr.set_user_state(event)
         yield event.plain_result(reminder + msg)
+
+    # ── send（发送到当前会话） ──
+
+    async def cmd_send(self, event: AstrMessageEvent, text: str = ""):
+        """发消息到当前窗口选中的 session: /hapi send <内容>"""
+        content = (text or "").strip()
+        if not content:
+            yield event.plain_result("格式: /hapi send <内容>（发送到当前会话；附件请用快捷前缀或 /hapi upload）")
+            return
+
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
+            return
+
+        ok_ready, ready_sid, ready_msg = await self.plugin.ensure_session_for_send(event, sid)
+        if not ok_ready:
+            yield event.plain_result(f"发送前恢复 session 失败: {ready_msg}")
+            return
+
+        self.plugin._last_sends[event.unified_msg_origin] = (ready_sid, content)
+        ok, msg = await session_ops.send_message(self.client, ready_sid, content)
+        await self.state_mgr.set_user_state(event)
+        yield event.plain_result((ready_msg or "") + msg)
+
+    # ── retry（重发上一条） ──
+
+    async def cmd_retry(self, event: AstrMessageEvent):
+        """重发本窗口上一条发出的消息: /hapi retry"""
+        record = self.plugin._last_sends.get(event.unified_msg_origin)
+        if not record:
+            yield event.plain_result("本窗口还没有可重发的消息（插件重启后记录会清空）")
+            return
+
+        sid, text = record
+        await self.plugin._refresh_sessions()
+        if not any(s.get("id") == sid for s in self.sessions_cache):
+            yield event.plain_result(
+                f"上一条消息的目标会话 [{sid[:8]}] 已不存在，"
+                "请用 /hapi sw 选择会话后手动发送"
+            )
+            return
+
+        ok_ready, ready_sid, ready_msg = await self.plugin.ensure_session_for_send(event, sid)
+        if not ok_ready:
+            yield event.plain_result(f"发送前恢复 session 失败: {ready_msg}")
+            return
+
+        preview = text if len(text) <= 40 else text[:40] + "..."
+        ok, msg = await session_ops.send_message(self.client, ready_sid, text)
+        await self.state_mgr.set_user_state(event)
+        yield event.plain_result(f"🔁 重发「{preview}」\n{(ready_msg or '')}{msg}")
 
     # ── perm ──
 
@@ -325,9 +396,9 @@ class CommandHandlers:
             profile_for,
         )
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
 
         flavor = self.state_mgr.effective_flavor(event) or "claude"
@@ -345,7 +416,7 @@ class CommandHandlers:
             if mode.isdigit() and modes and 1 <= int(mode) <= len(modes):
                 target = modes[int(mode) - 1]
             if not passthrough and not is_permission_mode_allowed(flavor, target):
-                yield event.plain_result(f"❌ 无效模式: {mode}\n可用: {', '.join(modes)}")
+                yield event.plain_result(f"✗ 无效模式: {mode}\n可用: {', '.join(modes)}")
                 return
             ok, msg = await session_ops.set_permission_mode(self.client, sid, target)
             yield event.plain_result(msg)
@@ -375,7 +446,7 @@ class CommandHandlers:
                 if reply.isdigit() and modes and 1 <= int(reply) <= len(modes):
                     target = modes[int(reply) - 1]
                 if not passthrough and not is_permission_mode_allowed(flavor, target):
-                    await ev.send(ev.plain_result(f"无效模式，可用: {', '.join(modes)}"))
+                    await ev.send(ev.plain_result(f"✗ 无效模式，可用: {', '.join(modes)}"))
                 else:
                     ok, msg = await session_ops.set_permission_mode(self.client, sid, target)
                     await ev.send(ev.plain_result(msg))
@@ -394,16 +465,16 @@ class CommandHandlers:
         """查看/切换模型: /hapi model [模式名]"""
         from .flavor_profiles import flavor_label, model_modes_for, profile_for, supports_model_change
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
 
         flavor = self.state_mgr.effective_flavor(event) or "claude"
         if not supports_model_change(flavor):
             yield event.plain_result(
-                f"当前 session ({flavor_label(flavor)}) 未声明模型切换能力；"
-                "若 HAPI 支持，可直接 /hapi model <模型名> 尝试透传"
+                f"当前 session（{flavor_label(flavor)}）暂不确定是否支持切换模型；"
+                "若 HAPI 支持，可直接 /hapi model <模型名> 尝试"
             )
             # 仍允许透传任意模型名（自适应）
             if not mode:
@@ -417,7 +488,7 @@ class CommandHandlers:
             if mode.isdigit() and modes and 1 <= int(mode) <= len(modes):
                 target = modes[int(mode) - 1]
             if modes and target not in modes and not freeform:
-                yield event.plain_result(f"❌ 无效模式: {mode}\n可用: {', '.join(modes)}")
+                yield event.plain_result(f"✗ 无效模式: {mode}\n可用: {', '.join(modes)}")
                 return
             ok, msg = await session_ops.set_model_mode(self.client, sid, target)
             yield event.plain_result(msg)
@@ -450,7 +521,7 @@ class CommandHandlers:
                 if reply.isdigit() and modes and 1 <= int(reply) <= len(modes):
                     target = modes[int(reply) - 1]
                 if modes and target not in modes and not freeform:
-                    await ev.send(ev.plain_result(f"无效模式，可用: {', '.join(modes)}"))
+                    await ev.send(ev.plain_result(f"✗ 无效模式，可用: {', '.join(modes)}"))
                 else:
                     ok, msg = await session_ops.set_model_mode(self.client, sid, target)
                     await ev.send(ev.plain_result(msg))
@@ -479,9 +550,9 @@ class CommandHandlers:
             supports_reasoning_effort,
         )
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
 
         flavor = self.state_mgr.effective_flavor(event) or "claude"
@@ -513,7 +584,7 @@ class CommandHandlers:
                 and not freeform
             ):
                 yield event.plain_result(
-                    f"❌ 无效值: {effort}\n可用: {none_label}, {', '.join(valid_values)}"
+                    f"✗ 无效值: {effort}\n可用: {none_label}, {', '.join(valid_values)}"
                 )
                 return
             ok, msg = await _apply(target)
@@ -557,7 +628,7 @@ class CommandHandlers:
                 else:
                     await ev.send(
                         ev.plain_result(
-                            f"无效值，可用: {none_label}, {', '.join(valid_values)}"
+                            f"✗ 无效值，可用: {none_label}, {', '.join(valid_values)}"
                         )
                     )
                     controller.stop()
@@ -579,9 +650,9 @@ class CommandHandlers:
         """切换 Plan 模式（toggle）: permissionMode 或 collaborationMode，按 flavor profile"""
         from .flavor_profiles import flavor_label, profile_for, supports_plan
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
 
         flavor = self.state_mgr.effective_flavor(event) or "claude"
@@ -620,7 +691,7 @@ class CommandHandlers:
         action = "已开启" if target == "plan" else "已关闭"
         if ok:
             label = formatters.session_label_short(sid, self.sessions_cache)
-            yield event.plain_result(f"{label}\n此窗口 Plan 模式{action}")
+            yield event.plain_result(f"{label}\n该 session 的 Plan 模式{action}")
         else:
             yield event.plain_result(msg)
 
@@ -635,9 +706,9 @@ class CommandHandlers:
             supports_service_tier,
         )
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
 
         flavor = self.state_mgr.effective_flavor(event) or "claude"
@@ -663,7 +734,7 @@ class CommandHandlers:
             tier = normalize_service_tier(mode)
             if tier is None:
                 yield event.plain_result(
-                    f"❌ 无效值: {mode}\n可用: on/off、fast/standard"
+                    f"✗ 无效值: {mode}\n可用: on/off、fast/standard"
                 )
                 return
             ok, msg = await _apply(tier)
@@ -697,7 +768,7 @@ class CommandHandlers:
             else:
                 tier = normalize_service_tier(reply)
             if tier is None:
-                await ev.send(ev.plain_result("无效值，可用: on/off、fast/standard"))
+                await ev.send(ev.plain_result("✗ 无效值，可用: on/off、fast/standard"))
                 controller.stop()
                 return
             ok, msg = await _apply(tier)
@@ -711,14 +782,101 @@ class CommandHandlers:
         finally:
             event.stop_event()
 
+    # ── focus (专注模式) ──
+
+    async def cmd_focus(self, event: AstrMessageEvent, mode: str = ""):
+        """开启/关闭 Focus 模式: /hapi focus [on|off]"""
+        await self.state_mgr.set_user_state(event)
+        umo = event.unified_msg_origin
+
+        # 中文子命令直呼（/hapi 专注）时补默认参数；已带显式参数（如关键词映射）不覆盖
+        if not mode:
+            raw_cmd = self.plugin._extract_hapi_remainder(event).strip().lower()
+            if raw_cmd == "专注":
+                mode = "on"
+            elif raw_cmd == "退出专注":
+                mode = "off"
+
+        current_focus = self.binding_mgr.get_window_focus_mode(umo)
+
+        if not mode:
+            status = "开启" if current_focus else "关闭"
+            sid = self.state_mgr.effective_sid(event)
+            if not sid:
+                yield event.plain_result(
+                    f"Focus 模式当前: {status}\n"
+                    "请先用 /hapi sw 选择一个 session，然后用 /hapi focus on 开启"
+                )
+                return
+
+            session = next((s for s in self.sessions_cache if s.get("id") == sid), None)
+            title = formatters.get_session_title(session) if session else sid[:8]
+
+            yield event.plain_result(
+                f"Focus 模式当前: {status}\n"
+                f"目标 session: {title}\n\n"
+                "回复 on 或 off："
+            )
+
+            @session_waiter(timeout=30, record_history_chains=False)
+            async def focus_waiter(controller: SessionController, ev: AstrMessageEvent):
+                reply = ev.message_str.strip().lower()
+                if not reply:
+                    controller.keep(timeout=30, reset_timeout=True)
+                    return
+                if reply not in ("on", "off", "开启", "关闭"):
+                    await ev.send(ev.plain_result("✗ 请回复 on 或 off"))
+                    controller.stop()
+                    return
+                enabled = reply in ("on", "开启")
+                self.binding_mgr.set_window_focus_mode(umo, enabled)
+                await self.state_mgr.persist_window_state(umo)
+                status_text = "已开启" if enabled else "已关闭"
+                await ev.send(ev.plain_result(
+                    f"Focus 模式{status_text}\n"
+                    + (f"当前窗口所有消息将自动发送到 {title}" if enabled else "")
+                ))
+                controller.stop()
+
+            try:
+                await focus_waiter(event)
+            except TimeoutError:
+                yield event.plain_result("操作超时，已取消")
+            finally:
+                event.stop_event()
+            return
+
+        normalized = mode.lower()
+        if normalized not in ("on", "off", "开启", "关闭"):
+            yield event.plain_result("✗ 参数错误，用法: /hapi focus [on|off]")
+            return
+
+        enabled = normalized in ("on", "开启")
+
+        if enabled:
+            sid = self.state_mgr.effective_sid(event)
+            if not sid:
+                yield event.plain_result("✗ 请先用 /hapi sw 选择一个 session")
+                return
+            session = next((s for s in self.sessions_cache if s.get("id") == sid), None)
+            title = formatters.get_session_title(session) if session else sid[:8]
+
+        self.binding_mgr.set_window_focus_mode(umo, enabled)
+        await self.state_mgr.persist_window_state(umo)
+
+        if enabled:
+            yield event.plain_result(f"Focus 模式已开启\n当前窗口所有消息将自动发送到 {title}")
+        else:
+            yield event.plain_result("Focus 模式已关闭")
+
     # ── remote ──
 
     async def cmd_remote(self, event: AstrMessageEvent):
         """切换当前 session 到 remote 远程托管模式"""
         await self.state_mgr.set_user_state(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
         ok, msg = await session_ops.switch_to_remote(self.client, sid)
         yield event.plain_result(msg)
@@ -741,7 +899,7 @@ class CommandHandlers:
         if not level:
             lines = [f"当前 SSE 推送级别: {current}"]
             for i, (lvl, desc) in enumerate(self._OUTPUT_LEVELS.items(), 1):
-                tag = " <--" if lvl == current else ""
+                tag = " ◀" if lvl == current else ""
                 lines.append(f"  [{i}] {lvl}{tag} — {desc}")
             lines.append("\n回复序号或级别名切换")
             yield event.plain_result("\n".join(lines))
@@ -756,7 +914,7 @@ class CommandHandlers:
                 if reply.isdigit() and 1 <= int(reply) <= len(levels):
                     t = levels[int(reply) - 1]
                 if t not in self._OUTPUT_LEVELS:
-                    await ev.send(ev.plain_result(f"❌ 无效级别: {reply}\n可用: {', '.join(levels)}"))
+                    await ev.send(ev.plain_result(f"✗ 无效级别: {reply}\n可用: {', '.join(levels)}"))
                 else:
                     self.sse_listener.output_level = t
                     self.plugin.config["output_level"] = t
@@ -777,7 +935,7 @@ class CommandHandlers:
         if level.isdigit() and 1 <= int(level) <= len(levels):
             target = levels[int(level) - 1]
         if target not in self._OUTPUT_LEVELS:
-            lines = [f"❌ 无效级别: {level}\n", "可用:"]
+            lines = [f"✗ 无效级别: {level}\n", "可用:"]
             for i, (lvl, desc) in enumerate(self._OUTPUT_LEVELS.items(), 1):
                 lines.append(f"  [{i}] {lvl} — {desc}")
             yield event.plain_result("\n".join(lines))
@@ -794,9 +952,7 @@ class CommandHandlers:
     async def cmd_pending(self, event: AstrMessageEvent):
         """查看待审批请求列表: /hapi pending"""
         await self.state_mgr.set_user_state(event)
-        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
-        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
-        pending = self.plugin.pending_mgr.get_pending_for_window(event, visible_sids)
+        pending = self.plugin.pending_mgr.get_pending_for_window(event, self._visible_sids(event))
         text = formatters.format_pending_requests(pending, self.sessions_cache)
         from ..render import output_present
         payload = output_present.build_pending_payload(pending, self.sessions_cache)
@@ -810,9 +966,7 @@ class CommandHandlers:
     async def cmd_approve(self, event: AstrMessageEvent):
         """批准所有权限请求，再交互式回答 question: /hapi a"""
         await self.state_mgr.set_user_state(event)
-        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
-        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
-        items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
+        items = self.plugin.pending_mgr.flatten_pending(event, self._visible_sids(event))
         if not items:
             yield event.plain_result("没有待审批的请求")
             return
@@ -828,7 +982,7 @@ class CommandHandlers:
                 yield event.plain_result(result)
 
         if questions:
-            yield event.plain_result(f"还有 {len(questions)} 个问题需要回答:")
+            yield event.plain_result(f"还有 {len(questions)} 个问题需要回答：")
             await self.plugin.pending_mgr.answer_questions_interactive(
                 event, questions, self.client, session_waiter, SessionController)
 
@@ -839,9 +993,7 @@ class CommandHandlers:
     async def cmd_allow(self, event: AstrMessageEvent, target: str = ""):
         """批准权限请求（跳过 question）: /hapi allow [序号]"""
         await self.state_mgr.set_user_state(event)
-        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
-        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
-        items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
+        items = self.plugin.pending_mgr.flatten_pending(event, self._visible_sids(event))
         regular = [(sid, rid, req) for sid, rid, req in items
                    if not formatters.is_question_request(req)]
 
@@ -855,31 +1007,21 @@ class CommandHandlers:
             # 根据 index 查找，而不是列表索引
             found = [(sid, rid, req) for sid, rid, req in regular if req.get("index") == n]
             if not found:
-                yield event.plain_result(f"无效序号 {n}")
+                yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             sid, rid, req = found[0]
             if is_compact_request(req):
                 ok, _ = await session_ops.send_message(self.client, sid, "/compact")
                 self.plugin.pending_mgr.remove_entry(sid, rid)
-                yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: /compact")
+                yield event.plain_result("✓ 已批准: /compact" if ok else "✗ 批准失败: /compact 发送未成功")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
-                # 从原始 pending 获取 Future
-                session_pending = self.sse_listener.pending.get(sid) or {}
-                if not isinstance(session_pending, dict):
-                    session_pending = {}
-                original_req = session_pending.get(rid) or {}
-                if not isinstance(original_req, dict):
-                    original_req = {}
-                future = original_req.get("future")
-                if future and not future.done():
-                    future.set_result(True)
-                self.plugin.pending_mgr.remove_entry(sid, rid)
+                self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=True)
                 tool = req.get("tool", "?")
                 yield event.plain_result(f"✓ 已批准: {tool}")
             else:
                 ok, _ = await session_ops.approve_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
-                yield event.plain_result(f"{'✓' if ok else '✗'} 已批准: {tool}")
+                yield event.plain_result(f"✓ 已批准: {tool}" if ok else f"✗ 批准失败: {tool}")
         else:
             result = await self.plugin.pending_mgr.approve_items(regular, self.client)
             if result:
@@ -890,9 +1032,7 @@ class CommandHandlers:
     async def cmd_answer(self, event: AstrMessageEvent, target: str = ""):
         """交互式回答 question 请求: /hapi answer [序号]"""
         await self.state_mgr.set_user_state(event)
-        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
-        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
-        items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
+        items = self.plugin.pending_mgr.flatten_pending(event, self._visible_sids(event))
         q_items = [(sid, rid, req) for sid, rid, req in items
                    if formatters.is_question_request(req)]
 
@@ -906,7 +1046,7 @@ class CommandHandlers:
             # 根据 index 查找
             found = [(sid, rid, req) for sid, rid, req in q_items if req.get("index") == n]
             if not found:
-                yield event.plain_result(f"无效序号 {n}")
+                yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             q_items = [found[0]]
 
@@ -919,9 +1059,7 @@ class CommandHandlers:
     async def cmd_deny(self, event: AstrMessageEvent, target: str = ""):
         """拒绝审批请求: /hapi deny 全部拒绝, /hapi deny <序号> 拒绝单个"""
         await self.state_mgr.set_user_state(event)
-        visible_sids = {s.get("id") for s in self.state_mgr.visible_sessions_for_window(event, self.sessions_cache) if s.get("id")}
-        visible_sids.add(event.unified_msg_origin)  # 包含当前窗口 ID（LLM 工具请求）
-        items = self.plugin.pending_mgr.flatten_pending(event, visible_sids)
+        items = self.plugin.pending_mgr.flatten_pending(event, self._visible_sids(event))
         if not items:
             yield event.plain_result("没有待审批的请求")
             return
@@ -933,25 +1071,20 @@ class CommandHandlers:
             # 根据 index 查找
             found = [(sid, rid, req) for sid, rid, req in items if req.get("index") == n]
             if not found:
-                yield event.plain_result(f"无效序号 {n}")
+                yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             sid, rid, req = found[0]
             if is_compact_request(req):
                 self.plugin.pending_mgr.remove_entry(sid, rid)
                 yield event.plain_result("✓ 已取消压缩: /compact")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
-                # 从原始 pending 获取 Future
-                original_req = self.sse_listener.pending.get(sid, {}).get(rid, {})
-                future = original_req.get("future")
-                if future and not future.done():
-                    future.set_result(False)
-                self.plugin.pending_mgr.remove_entry(sid, rid)
+                self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=False)
                 tool = req.get("tool", "?")
                 yield event.plain_result(f"✓ 已拒绝: {tool}")
             else:
                 ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
-                yield event.plain_result(f"{'✓' if ok else '✗'} 已拒绝: {tool}")
+                yield event.plain_result(f"✓ 已拒绝: {tool}" if ok else f"✗ 拒绝失败: {tool}")
         else:
             # 全部拒绝
             results = []
@@ -960,27 +1093,109 @@ class CommandHandlers:
                     self.plugin.pending_mgr.remove_entry(sid, rid)
                     results.append("✓ /compact (已取消)")
                 elif self.plugin.pending_mgr.is_llm_tool_request(req):
-                    # 从原始 pending 获取 Future
-                    original_req = self.sse_listener.pending.get(sid, {}).get(rid, {})
-                    future = original_req.get("future")
-                    if future and not future.done():
-                        future.set_result(False)
-                    self.plugin.pending_mgr.remove_entry(sid, rid)
+                    self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=False)
                     tool = req.get("tool", "?")
                     results.append(f"✓ {tool}")
                 else:
                     ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
                     results.append(f"{'✓' if ok else '✗'} {tool}")
-            yield event.plain_result(f"已全部拒绝 ({len(items)} 个):\n" + "\n".join(results))
+            yield event.plain_result(f"已全部拒绝（{len(items)} 个，✗ 表示操作失败）:\n" + "\n".join(results))
 
     # ── create ──
 
-    async def cmd_create(self, event: AstrMessageEvent):
-        """创建新 session (5 步向导)"""
+    async def _spawn_and_capture(self, event: AstrMessageEvent, spec: dict) -> str:
+        """按 spec 创建 session 并绑定当前窗口，返回结果文案（向导与模板两路共用）。"""
+        ok, msg, new_sid = await session_ops.spawn_session(
+            self.client,
+            machine_id=spec["machine_id"],
+            directory=spec["directory"],
+            agent=spec["agent"],
+            session_type=spec.get("session_type", "simple"),
+            yolo=spec.get("yolo", False),
+            worktree_name=spec.get("worktree_name", ""),
+            model_reasoning_effort=spec.get("model_reasoning_effort") or None,
+        )
+        await self.plugin._refresh_sessions()
+        if ok and new_sid:
+            flavor = spec["agent"]
+            await self.state_mgr.capture_window(new_sid, event.unified_msg_origin, flavor)
+            msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
+        return msg
+
+    async def _create_from_template(self, event: AstrMessageEvent, arg: str):
+        """模板一步创建: /hapi create <模板名> [目录]"""
+        from .session_templates import describe_template, find_template, format_templates_list
+
+        templates = self.state_mgr.get_session_templates()
+        parts = arg.split(None, 1)
+        tpl_name = parts[0]
+        dir_override = parts[1].strip() if len(parts) > 1 else ""
+
+        tpl = find_template(templates, tpl_name)
+        if not tpl:
+            yield event.plain_result(
+                f"未找到模板「{tpl_name}」\n\n可用模板:\n{format_templates_list(templates)}\n\n"
+                "不带参数的 /hapi create 会进入交互向导"
+            )
+            return
+
+        directory = dir_override or tpl.get("directory") or ""
+        if not directory:
+            yield event.plain_result(
+                f"模板「{tpl['name']}」未设置默认目录，请在命令中指定:\n"
+                f"/hapi create {tpl['name']} <目录>"
+            )
+            return
+
+        # 机器解析：模板指定且在线 → 用之；未指定且仅一台在线 → 自动选
+        try:
+            machines = await session_ops.fetch_machines(self.client)
+        except Exception as e:
+            yield event.plain_result(f"获取机器列表失败: {e}")
+            return
+        if not machines:
+            yield event.plain_result("没有在线的机器")
+            return
+
+        machine_id = tpl.get("machine_id") or ""
+        if machine_id:
+            if not any(m.get("id") == machine_id for m in machines):
+                yield event.plain_result(
+                    f"模板指定的机器（{machine_id[:12]}...）当前不在线，"
+                    "请在 WebUI 更新模板或改用交互向导"
+                )
+                return
+        elif len(machines) == 1:
+            machine_id = machines[0]["id"]
+        else:
+            yield event.plain_result(
+                f"当前有 {len(machines)} 台在线机器，模板未指定用哪台。\n"
+                "请在 WebUI「交互优化 → 会话模板」为模板选择机器"
+            )
+            return
+
+        spec = dict(tpl)
+        spec["machine_id"] = machine_id
+        spec["directory"] = directory
+
+        yield event.plain_result(f"按模板创建 Session:\n{describe_template(spec)}\n\n正在创建 ...")
+        msg = await self._spawn_and_capture(event, spec)
+        yield event.plain_result(msg)
+
+    async def cmd_create(self, event: AstrMessageEvent, arg: str = ""):
+        """创建新 session: 无参进向导，带参走模板（/hapi create [模板名] [目录]）"""
         from .create_wizard import CreateWizard
+        from .session_templates import format_templates_list
         await self.state_mgr.ensure_primary_session(event)
         await self.state_mgr.set_user_state(event)
+
+        arg = (arg or "").strip()
+        if arg:
+            async for result in self._create_from_template(event, arg):
+                yield result
+            return
+
         try:
             machines = await session_ops.fetch_machines(self.client)
         except Exception as e:
@@ -990,6 +1205,14 @@ class CommandHandlers:
         if not machines:
             yield event.plain_result("没有在线的机器")
             return
+
+        # 有模板时提示一步创建入口
+        templates = self.state_mgr.get_session_templates()
+        if templates:
+            yield event.plain_result(
+                "💡 可用模板（/hapi create <模板名> [目录] 一步创建）:\n"
+                + format_templates_list(templates)
+            )
 
         labels = []
         for m in machines:
@@ -1040,23 +1263,7 @@ class CommandHandlers:
             # 用户确认创建
             if r.confirmed:
                 await ev.send(ev.plain_result(r.prompt))
-                s = wiz.state
-                ok, msg, new_sid = await session_ops.spawn_session(
-                    self.client,
-                    machine_id=s["machine_id"],
-                    directory=s["directory"],
-                    agent=s["agent"],
-                    session_type=s["session_type"],
-                    yolo=s["yolo"],
-                    worktree_name=s["worktree_name"],
-                    model_reasoning_effort=s.get("model_reasoning_effort"),
-                )
-                await self.plugin._refresh_sessions()
-                if ok and new_sid:
-                    flavor = s["agent"]
-                    umo = ev.unified_msg_origin
-                    await self.state_mgr.capture_window(new_sid, umo, flavor)
-                    msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
+                msg = await self._spawn_and_capture(ev, wiz.state)
                 await ev.send(ev.plain_result(msg))
                 controller.stop()
                 return
@@ -1080,29 +1287,14 @@ class CommandHandlers:
         await self.plugin._refresh_sessions()
 
         if not target:
-            sid = self.state_mgr.effective_sid(event)
-            if not sid:
-                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+            sid, err = self._require_sid(event, cmd="abort")
+            if err:
+                yield event.plain_result(err)
                 return
         else:
-            sid = None
-            if target.isdigit():
-                idx = int(target)
-                if 1 <= idx <= len(self.sessions_cache):
-                    sid = self.sessions_cache[idx - 1]["id"]
-            if sid is None:
-                matches = [s for s in self.sessions_cache
-                           if s.get("id", "").startswith(target)]
-                if len(matches) == 1:
-                    sid = matches[0]["id"]
-                elif len(matches) > 1:
-                    labels = [f"  {s['id'][:8]}..." for s in matches]
-                    yield event.plain_result(
-                        f"匹配到 {len(matches)} 个 session，请更精确:\n"
-                        + "\n".join(labels))
-                    return
-            if sid is None:
-                yield event.plain_result(f"未找到匹配的 session")
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
                 return
 
         ok, msg = await session_ops.abort_session(self.client, sid)
@@ -1118,17 +1310,17 @@ class CommandHandlers:
 
         if target:
             await self.plugin._refresh_sessions()
-            sid = self._resolve_target(target)
-            if not sid:
-                yield event.plain_result(f"未找到匹配的 session: {target}")
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
                 return
         else:
-            sid = self.state_mgr.effective_sid(event)
-            if not sid:
-                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi archive <序号>")
+            sid, err = self._require_sid(event, cmd="archive")
+            if err:
+                yield event.plain_result(err)
                 return
 
-        yield event.plain_result(f"确认归档 session [{sid[:8]}]?\n回复 y 确认")
+        yield event.plain_result(f"确认归档 session [{sid[:8]}]？\n回复 y 确认，其他任意内容取消")
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def archive_waiter(controller: SessionController, ev: AstrMessageEvent):
@@ -1152,15 +1344,6 @@ class CommandHandlers:
         finally:
             event.stop_event()
 
-    def _resolve_target(self, target: str) -> str | None:
-        """解析序号或ID前缀为 session ID"""
-        if target.isdigit():
-            idx = int(target)
-            if 1 <= idx <= len(self.sessions_cache):
-                return self.sessions_cache[idx - 1]["id"]
-        matches = [s for s in self.sessions_cache if s.get("id", "").startswith(target)]
-        return matches[0]["id"] if len(matches) == 1 else None
-
     # ── resume ──
 
     async def cmd_resume(self, event: AstrMessageEvent, target: str = ""):
@@ -1169,9 +1352,9 @@ class CommandHandlers:
         await self.plugin._refresh_sessions()
 
         if not target:
-            sid = self.state_mgr.effective_sid(event)
-            if not sid:
-                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi resume <序号>")
+            sid, err = self._require_sid(event, cmd="resume")
+            if err:
+                yield event.plain_result(err)
                 return
             exact = next((s for s in self.sessions_cache if s.get("id") == sid), None)
             if exact is None:
@@ -1183,32 +1366,17 @@ class CommandHandlers:
                 elif len(matches) > 1:
                     labels = [f"  {s['id'][:8]}..." for s in matches]
                     yield event.plain_result(
-                        f"当前窗口保存的 session 前缀匹配到 {len(matches)} 个 session，请使用 /hapi resume <序号或更长ID前缀>\n"
+                        f"当前窗口记录的 session 匹配到 {len(matches)} 个，请改用 /hapi resume <序号或更长 ID 前缀>\n"
                         + "\n".join(labels))
                     return
                 else:
                     yield event.plain_result(
-                        f"当前窗口保存的 session [{sid[:8]}] 已不在列表中，请使用 /hapi sw <序号> 重新选择")
+                        f"当前窗口记录的 session [{sid[:8]}] 已不在列表中，请用 /hapi sw <序号> 重新选择")
                     return
         else:
-            sid = None
-            if target.isdigit():
-                idx = int(target)
-                if 1 <= idx <= len(self.sessions_cache):
-                    sid = self.sessions_cache[idx - 1]["id"]
-            if sid is None:
-                matches = [s for s in self.sessions_cache
-                           if s.get("id", "").startswith(target)]
-                if len(matches) == 1:
-                    sid = matches[0]["id"]
-                elif len(matches) > 1:
-                    labels = [f"  {s['id'][:8]}..." for s in matches]
-                    yield event.plain_result(
-                        f"匹配到 {len(matches)} 个 session，请更精确:\n"
-                        + "\n".join(labels))
-                    return
-            if sid is None:
-                yield event.plain_result("未找到匹配的 session")
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
                 return
 
         # 状态预检查
@@ -1216,7 +1384,8 @@ class CommandHandlers:
         if target_session:
             state = _session_resume_state(target_session)
             if state != "inactive":
-                yield event.plain_result(f"Session [{sid[:8]}] 当前状态为 {state}，只能恢复 inactive 状态的 session")
+                yield event.plain_result(
+                    f"Session [{sid[:8]}] 当前状态为 {state}，只有已停止（inactive）的 session 才能恢复")
                 return
 
         ok, resumed_sid, msg = await self.plugin.ensure_session_for_send(event, sid)
@@ -1237,34 +1406,14 @@ class CommandHandlers:
         await self.plugin._refresh_sessions()
 
         if not target:
-            sid = self.state_mgr.effective_sid(event)
-            if not sid:
-                yield event.plain_result(
-                    "请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi reopen <序号>"
-                )
+            sid, err = self._require_sid(event, cmd="reopen")
+            if err:
+                yield event.plain_result(err)
                 return
         else:
-            sid = None
-            if target.isdigit():
-                idx = int(target)
-                if 1 <= idx <= len(self.sessions_cache):
-                    sid = self.sessions_cache[idx - 1]["id"]
-            if sid is None:
-                matches = [
-                    s for s in self.sessions_cache
-                    if s.get("id", "").startswith(target)
-                ]
-                if len(matches) == 1:
-                    sid = matches[0]["id"]
-                elif len(matches) > 1:
-                    labels = [f"  {s['id'][:8]}..." for s in matches]
-                    yield event.plain_result(
-                        f"匹配到 {len(matches)} 个 session，请更精确:\n"
-                        + "\n".join(labels)
-                    )
-                    return
-            if sid is None:
-                yield event.plain_result("未找到匹配的 session")
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
                 return
 
         target_session = next(
@@ -1274,7 +1423,7 @@ class CommandHandlers:
             state = _session_resume_state(target_session)
             if state != "inactive":
                 yield event.plain_result(
-                    f"Session [{sid[:8]}] 当前状态为 {state}，只能恢复 inactive 状态的 session"
+                    f"Session [{sid[:8]}] 当前状态为 {state}，只有已停止（inactive）的 session 才能恢复"
                 )
                 return
 
@@ -1307,17 +1456,17 @@ class CommandHandlers:
 
         if target:
             await self.plugin._refresh_sessions()
-            sid = self._resolve_target(target)
-            if not sid:
-                yield event.plain_result(f"未找到匹配的 session: {target}")
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
                 return
         else:
-            sid = self.state_mgr.effective_sid(event)
-            if not sid:
-                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi rename <序号>")
+            sid, err = self._require_sid(event, cmd="rename")
+            if err:
+                yield event.plain_result(err)
                 return
 
-        yield event.plain_result(f"请输入 session [{sid[:8]}] 的新名称:")
+        yield event.plain_result(f"请输入 session [{sid[:8]}] 的新名称：")
 
         @session_waiter(timeout=60, record_history_chains=False)
         async def rename_waiter(controller: SessionController, ev: AstrMessageEvent):
@@ -1347,14 +1496,14 @@ class CommandHandlers:
         # 支持传入序号或 ID 前缀
         if target:
             await self.plugin._refresh_sessions()
-            sid = self._resolve_target(target)
-            if not sid:
-                yield event.plain_result(f"未找到匹配的 session: {target}")
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
                 return
         else:
-            sid = self.state_mgr.effective_sid(event)
-            if not sid:
-                yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session，或使用 /hapi delete <序号>")
+            sid, err = self._require_sid(event, cmd="delete")
+            if err:
+                yield event.plain_result(err)
                 return
 
         # 检查是否处于 active 状态
@@ -1365,10 +1514,10 @@ class CommandHandlers:
 
         if is_active:
             yield event.plain_result(
-                f"⚠ session [{sid[:8]}] 当前处于 ACTIVE 状态，将先归档再删除\n"
-                "输入 delete 确认:")
+                f"⚠️ session [{sid[:8]}] 正在运行，将先归档再删除\n"
+                "输入 delete 确认，其他任意内容取消：")
         else:
-            yield event.plain_result(f"即将删除 session [{sid[:8]}]\n输入 delete 确认删除:")
+            yield event.plain_result(f"即将删除 session [{sid[:8]}]\n输入 delete 确认，其他任意内容取消：")
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def delete_waiter(controller: SessionController, ev: AstrMessageEvent):
@@ -1430,7 +1579,7 @@ class CommandHandlers:
 
         # 使用 formatters 格式化列表
         summary = formatters.format_session_list(targets, current_sid=None)
-        yield event.plain_result(f"{warning}\n将删除以下 inactive sessions:\n\n{summary}\n\n输入 yes 确认:")
+        yield event.plain_result(f"{warning}\n将删除以下已停止的 session:\n\n{summary}\n\n输入 yes 确认，其他任意内容取消：")
 
         @session_waiter(timeout=30, record_history_chains=False)
         async def clean_waiter(controller: SessionController, ev: AstrMessageEvent):
@@ -1444,7 +1593,7 @@ class CommandHandlers:
                     ok, _ = await session_ops.delete_session(self.client, s["id"])
                     if ok:
                         success += 1
-                await ev.send(ev.plain_result(f"清理完成: {success}/{len(targets)}\n\n💡 列表编号已更新，请用 /hapi ls 查看最新编号"))
+                await ev.send(ev.plain_result(f"清理完成: {success}/{len(targets)}\n\n💡 列表编号已更新，可用 /hapi list 查看"))
                 if success > 0:
                     await self.plugin._refresh_sessions()
             else:
@@ -1466,9 +1615,9 @@ class CommandHandlers:
         await self.state_mgr.set_user_state(event)
         if w := self.plugin._conn_warning():
             yield event.plain_result(w)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
         # 解析 -l 参数
         parts = path.split()
@@ -1491,9 +1640,9 @@ class CommandHandlers:
         await self.state_mgr.set_user_state(event)
         if w := self.plugin._conn_warning():
             yield event.plain_result(w)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
         if not query:
             yield event.plain_result("用法: /hapi find <关键词>\n示例: /hapi find main.py")
@@ -1517,9 +1666,9 @@ class CommandHandlers:
         await self.state_mgr.set_user_state(event)
         if w := self.plugin._conn_warning():
             yield event.plain_result(w)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
         if not path:
             yield event.plain_result("用法: /hapi download <文件路径>\n示例: /hapi dl README.md")
@@ -1561,9 +1710,9 @@ class CommandHandlers:
         """上传文件到当前 session: /hapi upload [cancel]"""
         from ..core import file_ops
         await self.state_mgr.ensure_primary_session(event)
-        sid = self.state_mgr.effective_sid(event)
-        if not sid:
-            yield event.plain_result("请先用 /hapi sw <序号> 选择一个 session")
+        sid, err = self._require_sid(event)
+        if err:
+            yield event.plain_result(err)
             return
 
         # cancel 子命令：删除所有已上传文件
@@ -1649,7 +1798,7 @@ class CommandHandlers:
                 controller.stop()
                 return
 
-            await ev.send(ev.plain_result("未检测到文件，请重新发送"))
+            await ev.send(ev.plain_result("未检测到文件，请重新发送；输入 done 完成、cancel 取消"))
             controller.keep(timeout=120, reset_timeout=True)
 
         try:
@@ -1693,7 +1842,7 @@ class CommandHandlers:
         else:
             examples = format_bind_flavor_examples()
             yield event.plain_result(
-                f"❌ 无效参数: {action}\n\n"
+                f"✗ 无效参数: {action}\n\n"
                 "用法:\n"
                 "  /hapi bind              设置当前窗口为默认\n"
                 f"  /hapi bind <flavor>     设置当前窗口为某 agent 默认（如 {examples}）\n"
@@ -1845,4 +1994,4 @@ class CommandHandlers:
 
         await self.plugin._refresh_sessions()
 
-        yield event.plain_result("✓ 已重置所有状态\n捕获关系和窗口状态已清空，默认窗口和 flavor 默认路由已保留")
+        yield event.plain_result("✓ 已重置所有状态\n捕获关系、窗口状态（含 Focus 模式）已清空，默认窗口和 flavor 默认路由已保留")

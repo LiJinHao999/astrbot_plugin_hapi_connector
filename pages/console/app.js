@@ -122,7 +122,7 @@ async function boot() {
       }
     } catch (e) {
       console.error("bridge init failed", e);
-      showAlert("Bridge 初始化失败: " + (e.message || e));
+      showAlert("面板与 AstrBot 的连接初始化失败，请刷新页面重试: " + (e.message || e));
       setLiveApi(null, false);
     }
   }
@@ -131,7 +131,7 @@ async function boot() {
     state.data = await fetchSnapshot();
   } catch (e) {
     console.error(e);
-    showAlert("加载数据失败: " + (e.message || e) + "（请查 AstrBot 日志中的 WebUI *failed）");
+    showAlert("加载数据失败: " + (e.message || e) + "（刷新试试；反复出现可查看 AstrBot 日志）");
     state.data = {
       connection: {
         sse_status: "disconnected",

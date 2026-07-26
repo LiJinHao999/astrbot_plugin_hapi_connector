@@ -10,14 +10,26 @@ import { isLive, getApi } from "../live.js?v=3.0.1";
 
 const FALLBACK_DOCS = [
   { id: "install", file: "install.md", title: "HAPI 安装与启动指南" },
+  { id: "usage-guide", file: "usage-guide.md", title: "插件使用指南" },
   { id: "session-isolation", file: "session-isolation.md", title: "多窗口会话隔离特性说明" },
   { id: "cf-access", file: "cf_access_guide.md", title: "Cloudflare Zero Trust Access 配置指南" },
 ];
+
+/** tab 副标题：一句话说明这篇文档解决什么问题（比显示文件名有用） */
+const DOC_TAB_SUBS = {
+  install: "第一次用？从这里开始部署",
+  "usage-guide": "指令用法与日常操作技巧",
+  "session-isolation": "多个群聊/私聊怎么互不干扰",
+  "cf-access": "HAPI 暴露公网时的安全认证",
+};
 
 const FALLBACK_MD = {
   install: `本文档说明如何安装并启动 [HAPI](https://github.com/tiann/hapi) 服务，以便配合本插件使用。
 
 本地预览模式下无法读取仓库 docs/。请通过 AstrBot 插件页打开管理面板，或直接查看仓库 \`docs/install.md\`。`,
+  "usage-guide": `从上手流程、Focus 模式、审批到通知路由的完整使用说明。
+
+本地预览模式下无法读取仓库 docs/。请通过 AstrBot 打开管理面板，或查看仓库 \`docs/usage-guide.md\`。`,
   "session-isolation": `**在不同 AstrBot 会话中管理的不同 session 将会互相独立。**
 
 本地预览模式下无法读取完整文档与截图。请通过 AstrBot 打开管理面板，或查看仓库 \`docs/session-isolation.md\`。`,
@@ -78,7 +90,7 @@ function paintDocTabs() {
       (d) =>
         `<button type="button" class="help-tab ${d.id === active ? "is-active" : ""}" data-doc="${attr(d.id)}">${esc(
           d.title,
-        )}<span class="help-tab-sub">${esc(d.file)}</span></button>`,
+        )}<span class="help-tab-sub">${esc(DOC_TAB_SUBS[d.id] || d.file)}</span></button>`,
     )
     .join("");
   $$("#docs-tabs .help-tab").forEach((b) => {

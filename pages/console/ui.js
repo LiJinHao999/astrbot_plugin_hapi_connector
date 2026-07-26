@@ -68,7 +68,7 @@ function renderAlert() {
   } else if (c.sse_status === "disconnected") {
     el.hidden = false;
     el.innerHTML = `<div class="alert alert-danger">
-      <span>插件 SSE 未启动${c.conn_error ? " · " + esc(c.conn_error) : "（插件可能未完成 initialize，或配置未连上 HAPI）"}。可点「按配置重连 HAPI」或重载插件。</span>
+      <span>还没连上 HAPI 服务${c.conn_error ? " · " + esc(c.conn_error) : "（可能是插件刚启动还没连好，或「设置」里的服务地址 / 令牌不对）"}。可以点概览页的「重连」按钮，或在 AstrBot 里重载插件。</span>
     </div>`;
   } else if (state.data?.error) {
     el.hidden = false;

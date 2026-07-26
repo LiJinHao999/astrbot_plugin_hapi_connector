@@ -7,7 +7,7 @@ class BindingManager:
     def __init__(self):
         self._session_owners: dict[str, str] = {}  # {session_id: umo} 一个session只能绑定一个窗口
         self._window_sessions: dict[str, list[str]] = {}  # {umo: [session_ids]} 一个窗口可以绑定多个session
-        self._window_states: dict[str, dict] = {}  # {umo: {current_session, current_flavor}}
+        self._window_states: dict[str, dict] = {}  # {umo: {current_session, current_flavor, focus_mode}}
         self._window_message_ids: dict[str, str] = {}  # {umo: message_id} 存储每个窗口的最后消息ID
 
     def bind_window(self, session_id: str, umo: str, flavor: str):
@@ -66,8 +66,12 @@ class BindingManager:
         return result
 
     def set_window_state(self, umo: str, session_id: str, flavor: str):
-        """设置窗口活跃状态（不影响通知绑定）"""
-        self._window_states[umo] = {"current_session": session_id, "current_flavor": flavor}
+        """设置窗口活跃状态（不影响通知绑定；保留 focus_mode 等附加状态）"""
+        prev = self._window_states.get(umo) or {}
+        state = {"current_session": session_id, "current_flavor": flavor}
+        if prev.get("focus_mode"):
+            state["focus_mode"] = True
+        self._window_states[umo] = state
 
     def set_window_message_id(self, umo: str, message_id: str):
         """存储窗口的最后消息ID（用于QQ官渠回复）"""
@@ -85,6 +89,23 @@ class BindingManager:
     def get_window_flavor(self, umo: str) -> str | None:
         """获取窗口的当前 flavor"""
         return self._window_states.get(umo, {}).get("current_flavor")
+
+    def set_window_focus_mode(self, umo: str, enabled: bool):
+        """设置窗口的 focus 模式；关闭时移除键，状态空了就整体清掉"""
+        if enabled:
+            if umo not in self._window_states:
+                self._window_states[umo] = {}
+            self._window_states[umo]["focus_mode"] = True
+            return
+        state = self._window_states.get(umo)
+        if state:
+            state.pop("focus_mode", None)
+            if not any(state.values()):
+                del self._window_states[umo]
+
+    def get_window_focus_mode(self, umo: str) -> bool:
+        """获取窗口的 focus 模式状态"""
+        return self._window_states.get(umo, {}).get("focus_mode", False)
 
     def clear_window_state(self, umo: str):
         """清理窗口状态"""

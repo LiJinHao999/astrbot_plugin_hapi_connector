@@ -131,6 +131,9 @@ def register_pages(plugin) -> None:
         (f"{prefix}/routes/flavor", api.routes_flavor, ["POST"], "WebUI set flavor route"),
         (f"{prefix}/ui/hidden-windows", api.get_hidden_windows, ["GET"], "WebUI hidden windows"),
         (f"{prefix}/ui/hidden-windows", api.post_hidden_windows, ["POST"], "WebUI save hidden windows"),
+        (f"{prefix}/ui/session-templates", api.get_session_templates, ["GET"], "WebUI session templates"),
+        (f"{prefix}/ui/session-templates", api.post_session_templates, ["POST"], "WebUI save session templates"),
+        (f"{prefix}/windows/focus", api.post_window_focus, ["POST"], "WebUI toggle window focus mode"),
         (f"{prefix}/hub/launch", api.hub_launch, ["GET"], "WebUI HAPI Web launch URL"),
         (f"{prefix}/render/meta", api.render_meta, ["GET"], "WebUI render meta"),
         (f"{prefix}/render/preview", api.render_preview, ["POST"], "WebUI card preview"),
@@ -1142,6 +1145,97 @@ class WebApi:
             "message": f"已隐藏 {len(hidden)} 个窗口" if hidden else "已全部显示",
         })
 
+    async def get_session_templates(self):
+        """会话创建模板列表（读 AstrBot KV，聊天 /hapi create <模板名> 同源）。"""
+        from astrbot.api.web import json_response
+
+        sm = getattr(self.plugin, "state_mgr", None)
+        templates = []
+        if sm is not None:
+            try:
+                templates = sm.get_session_templates()
+            except Exception:
+                templates = list(getattr(sm, "_session_templates", None) or [])
+        return json_response({"templates": templates})
+
+    async def post_session_templates(self):
+        """保存会话创建模板（全量覆盖，normalize 后落盘并返回清洗结果）。"""
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        raw = payload.get("templates")
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list):
+            return error_response("templates 须为对象数组", status_code=400)
+
+        sm = getattr(self.plugin, "state_mgr", None)
+        if sm is None:
+            return error_response("StateManager 未初始化", status_code=503)
+        try:
+            templates = await sm.set_session_templates(raw)
+        except Exception as e:
+            logger.exception("save session_templates failed")
+            return error_response(f"保存失败: {type(e).__name__}: {e}", status_code=500)
+
+        dropped = len(raw) - len(templates)
+        msg = f"已保存 {len(templates)} 个模板"
+        if dropped > 0:
+            msg += f"（{dropped} 条因名称为空/重复或代理不可创建被忽略）"
+        return json_response({"ok": True, "templates": templates, "message": msg})
+
+    async def post_window_focus(self):
+        """切换某窗口的 Focus 模式（与聊天 /hapi focus on|off 同源状态）。"""
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        umo = str(payload.get("umo") or "").strip()
+        if not umo:
+            return error_response("缺少 umo", status_code=400)
+        enabled = bool(payload.get("enabled"))
+
+        binding = getattr(self.plugin, "binding_mgr", None)
+        sm = getattr(self.plugin, "state_mgr", None)
+        if binding is None or sm is None:
+            return error_response("插件尚未初始化完成", status_code=503)
+
+        if enabled and not binding.get_window_session(umo):
+            return error_response(
+                "该窗口还没有选中的 session。请先在该聊天窗口里 /hapi sw 选择"
+                "（或直接发 /hapi focus on，聊天侧支持回退默认窗口的 session）",
+                status_code=409,
+            )
+
+        # 关闭一个本就无状态的窗口：直接返回，避免创建垃圾 window_state
+        if not enabled and umo not in getattr(binding, "_window_states", {}):
+            return json_response({"ok": True, "umo": umo, "enabled": False,
+                                  "message": "Focus 模式已关闭"})
+
+        try:
+            binding.set_window_focus_mode(umo, enabled)
+            await sm.persist_window_state(umo)
+        except Exception as e:
+            logger.exception("set window focus failed")
+            return error_response(f"保存失败: {type(e).__name__}: {e}", status_code=500)
+
+        result = {
+            "ok": True,
+            "umo": umo,
+            "enabled": enabled,
+            "message": "Focus 模式已开启，该窗口消息将直接发给当前 session"
+            if enabled
+            else "Focus 模式已关闭",
+        }
+        try:
+            result["snapshot"] = build_sessions_snapshot(self.plugin)
+        except Exception:
+            pass
+        return json_response(result)
+
     async def connection_reconnect(self):
         from astrbot.api.web import error_response, json_response
 
@@ -1692,7 +1786,7 @@ def public_config(plugin) -> dict[str, Any]:
 
         raw_maps = out.get("cmd_keyword_maps")
         maps = normalize_maps(raw_maps)
-        # 未配置或仍是空数组：使用内置默认（stop/停、sw、cl、继续）
+        # 未配置或仍是空数组：使用内置默认（stop/停、sw、cl、继续、专注/退出专注）
         if not maps and (
             raw_maps is None
             or (isinstance(raw_maps, str) and raw_maps.strip() in ("", "[]"))
@@ -2450,6 +2544,13 @@ def build_sessions_snapshot(plugin) -> dict:
         except Exception:
             hidden_windows = list(getattr(sm, "_webui_hidden_windows", None) or [])
 
+    # Focus 模式开启的窗口列表（供会话管理页展示与切换）
+    focus_windows: list[str] = []
+    if binding is not None:
+        for umo, ws in (getattr(binding, "_window_states", {}) or {}).items():
+            if isinstance(ws, dict) and ws.get("focus_mode"):
+                focus_windows.append(str(umo))
+
     return {
         "connection": conn,
         "metrics": {
@@ -2466,6 +2567,7 @@ def build_sessions_snapshot(plugin) -> dict:
         "defaults": defaults,
         "window_options": window_options,
         "hidden_windows": list(hidden_windows or []),
+        "focus_windows": focus_windows,
         "config": cfg_view,
         "plugin_version": _plugin_version(plugin),
         "cache": {

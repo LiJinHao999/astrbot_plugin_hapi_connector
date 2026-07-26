@@ -64,8 +64,8 @@ function renderRoutePanel() {
     <div class="route-panel-inner">
       <div class="route-panel-head">
         <div>
-          <div class="route-panel-title">推送设置</div>
-          <p class="route-panel-sub">优先按 Agent 类型推送消息；未设置则推送到默认推送窗口${subExtra}</p>
+          <div class="route-panel-title">通知发到哪</div>
+          <p class="route-panel-sub">没有专属窗口的会话按这里的规则投递：先看代理类型对应的窗口，再兜底到默认窗口${subExtra}</p>
         </div>
       </div>
       <div class="route-row">
@@ -150,6 +150,9 @@ function renderWindowList() {
       const key = col.umo || "__none__";
       const on = state.focusWindow === key;
       const tags = [];
+      if (col.umo && (state.data?.focus_windows || []).includes(col.umo)) {
+        tags.push(`<span class="tag tag-layer-session_bind">Focus</span>`);
+      }
       if (col.is_primary) {
         tags.push(`<span class="tag tag-muted">默认推送窗口</span>`);
       }
@@ -177,7 +180,7 @@ function renderWindowList() {
   const btnVis = $("#btn-win-vis");
   if (btnVis) {
     const hiddenN = loadHiddenWindows().size;
-    btnVis.textContent = hiddenN ? `管理可见窗口（已藏 ${hiddenN}）` : "管理可见窗口";
+    btnVis.textContent = hiddenN ? `管理可见窗口（已隐藏 ${hiddenN} 个）` : "管理可见窗口";
     btnVis.onclick = () => openWindowVisibilityDialog();
   }
 }
@@ -225,7 +228,7 @@ function openWindowVisibilityDialog() {
   const dlg = $("#dlg");
   dlg?.classList.add("dlg-win-vis");
   $("#dlg-body").innerHTML = `
-    <p class="field-help win-vis-help">勾选的窗口会出现在本页左侧列表和推送下拉框里。按 Bot 分组；默认全部显示。设置只存在本浏览器。右侧「绑/投递/运行」为本窗口 session 数。</p>
+    <p class="field-help win-vis-help">不想在列表里看到的窗口可以取消勾选（只影响面板显示，不影响通知推送）。右侧数字是该窗口的会话统计：绑定数 / 投递数 / 运行中数。</p>
     <div class="win-vis-toolbar">
       <button type="button" class="btn btn-sm" id="vis-all">全部显示</button>
       <button type="button" class="btn btn-sm" id="vis-none">全部隐藏</button>
@@ -350,10 +353,52 @@ function openWindowVisibilityDialog() {
 }
 
 
+function isFocusOn(umo) {
+  return Boolean(umo) && (state.data?.focus_windows || []).includes(umo);
+}
+
+function renderFocusToggle(col) {
+  const slot = $("#focus-mode-slot");
+  if (!slot) return;
+  // 「未投递」列没有真实窗口，不显示开关
+  if (!col || !col.umo) {
+    slot.innerHTML = "";
+    return;
+  }
+  const on = isFocusOn(col.umo);
+  slot.innerHTML = `
+    <label class="tb-check focus-toggle" title="开启后：该聊天窗口里发的普通消息会直接转发给当前 session，不用再加快捷前缀。与聊天指令 /hapi focus 同步。">
+      <input type="checkbox" id="focus-mode-chk" ${on ? "checked" : ""} />
+      <span>Focus 模式${on ? " · 开" : ""}</span>
+    </label>`;
+  const chk = $("#focus-mode-chk");
+  if (chk) chk.onchange = async () => {
+    const enabled = chk.checked;
+    try {
+      if (isLive() && getApi()) {
+        const res = await getApi().setWindowFocus(col.umo, enabled);
+        toast(res.message || (enabled ? "Focus 模式已开启" : "Focus 模式已关闭"));
+        if (!applySnapFromResult(res)) await refresh();
+        else { renderTopConn(); renderSessions(); }
+        return;
+      }
+      // mock：直接改本地状态
+      const list = new Set(state.data.focus_windows || []);
+      enabled ? list.add(col.umo) : list.delete(col.umo);
+      state.data.focus_windows = [...list];
+      renderSessions();
+    } catch (err) {
+      toast("Focus 切换失败: " + (err.message || err));
+      chk.checked = !enabled;
+    }
+  };
+}
+
 function renderSessPanel() {
   const key = state.focusWindow || "__none__";
   const col = state.data.columns.find((c) => (c.umo || "__none__") === key);
-  $("#focus-title").textContent = col ? `推到「${col.title}」` : "Sessions";
+  $("#focus-title").textContent = col ? `推送到「${col.title}」` : "会话列表";
+  renderFocusToggle(col);
 
   const rows = filteredSessions();
   const visibleIds = rows.map((s) => s.id);
@@ -362,7 +407,8 @@ function renderSessPanel() {
   const someOn = selectedVisible.length > 0 && !allOn;
 
   if (!rows.length) {
-    $("#sess-panel").innerHTML = `<div class="empty">这个窗口下没有 session</div>`;
+    $("#sess-panel").innerHTML = `<div class="empty">这个窗口下还没有会话。
+      在对应聊天窗口发 <code>/hapi create</code> 新建，或发 <code>/hapi sw &lt;序号&gt;</code> 把已有会话接管过来。</div>`;
     return;
   }
 
@@ -434,6 +480,7 @@ function renderSessPanel() {
           <tbody>${body}</tbody>
         </table>
       </div>
+      <p class="muted xs" style="margin:6px 10px">提示：双击任意一行可查看会话详情、恢复 / 归档 / 删除单个会话</p>
     </div>`;
 
   wireTable(visibleIds);
@@ -555,9 +602,9 @@ function wireTable(visibleIds) {
       const labels = { resume: "恢复", archive: "归档", delete: "删除" };
       const label = labels[action] || action;
       const confirmMsgs = {
-        delete: `删除 ${ids.length} 个 session？不可恢复。`,
-        archive: `归档 ${ids.length} 个 session？`,
-        resume: `恢复 ${ids.length} 个？可能得到新 session id。`,
+        delete: `删除 ${ids.length} 个会话？删了就找不回来了。`,
+        archive: `归档 ${ids.length} 个会话？`,
+        resume: `恢复 ${ids.length} 个会话？恢复后 ID 可能变化，绑定关系会自动跟过去。`,
       };
       if (confirmMsgs[action]) {
         const ok = await askConfirm(confirmMsgs[action], {
@@ -630,10 +677,10 @@ function openDetail(id) {
   const s = state.data.sessions.find((x) => x.id === id);
   if (!s) return;
   const why = {
-    session_bind: "已绑定聊天会话，通知优先推到这里（创建 session 时插件会默认绑定）。",
-    flavor_default: "未单独绑定，按当前 Agent 的推送设置落到此窗口。",
-    primary: "未单独绑定，且该 Agent 未设推送窗口，落到默认推送窗口。",
-    none: "会话绑定、Agent 对应推送窗口、默认推送窗口都没有，通知发不出去。",
+    session_bind: "这个会话已经「认」了一个聊天窗口（你在那里创建或操作过它），通知会一直发到那里。",
+    flavor_default: "这个会话没有专属窗口，按它的 AI 代理类型（如 claude/codex）发到对应的默认窗口。",
+    primary: "这个会话没有专属窗口，它的代理类型也没设默认窗口，所以发到总的默认推送窗口。",
+    none: "找不到任何可发的窗口，它的通知你会错过。在上方「通知投递」给它选一个窗口即可。",
   }[s.layer];
 
   $("#dlg-title").textContent = s.title;
@@ -716,8 +763,8 @@ function openDetail(id) {
       const labels = { resume: "恢复", archive: "归档", delete: "删除" };
       const label = labels[action] || action;
       const confirmMsgs = {
-        delete: "确定删除？不可恢复。",
-        resume: "恢复后可能得到新 session id，继续？",
+        delete: "确定删除这个会话？删了就找不回来了。",
+        resume: "恢复后会话 ID 可能变化（绑定关系会自动跟过去），继续？",
         archive: "确定归档？",
       };
       if (confirmMsgs[action]) {

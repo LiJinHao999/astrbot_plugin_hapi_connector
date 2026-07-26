@@ -205,11 +205,12 @@ function machinesSectionHtml(machines) {
       <div class="card-head">
         <div>
           <h2>机器负载</h2>
-          <p class="sub">来自 HAPI 在线 Machines（需 runner 上报）</p>
+          <p class="sub">跑 AI 会话的那些电脑现在忙不忙</p>
         </div>
       </div>
       <div class="empty mh-empty">
-        暂无在线机器。请在目标机执行 <code>hapi runner start</code>，并确认插件已连上同一 Hub / namespace。
+        还没有电脑连上来。在你跑代码的那台电脑上执行 <code>hapi runner start</code>，
+        它就会出现在这里（注意要连的是同一个 HAPI 服务和 namespace）。
       </div>
     </div>`;
   }
@@ -217,9 +218,9 @@ function machinesSectionHtml(machines) {
     <div class="card-head">
       <div>
         <h2>机器负载</h2>
-        <p class="sub">${list.length} 台在线 · CPU / 内存 / 负载 · 悬停卡片看详情</p>
+        <p class="sub">${list.length} 台在线 · 鼠标悬停可看 CPU / 内存详情</p>
       </div>
-      <span class="tag tag-muted">${list.filter((m) => m.active).length} active</span>
+      <span class="tag tag-muted">${list.filter((m) => m.active).length} 台活跃</span>
     </div>
     <div class="mh-grid">
       ${list.map(machineCard).join("")}
@@ -285,28 +286,28 @@ function renderOverview() {
 
   $("#view-overview").innerHTML = `
     <div class="metric-grid">
-      <div class="metric ${ok ? "ok" : "danger"}">
+      <div class="metric ${ok ? "ok" : "danger"}" title="插件与 HAPI 服务的连接状态，断开时收不到任何推送">
         <div class="label">连接</div>
         <div class="value" style="font-size:1.1rem">${esc(label)}</div>
       </div>
-      <div class="metric">
+      <div class="metric" title="正在运行的 AI 会话数">
         <div class="label">运行中</div>
         <div class="value">${m.active ?? 0}</div>
       </div>
-      <div class="metric">
+      <div class="metric" title="AI 正在生成回复的会话数">
         <div class="label">思考中</div>
         <div class="value">${m.thinking ?? 0}</div>
       </div>
-      <div class="metric ${m.pending ? "warn" : ""}">
+      <div class="metric ${m.pending ? "warn" : ""}" title="AI 在等你批准的操作。聊天里发 /hapi a 一键批准">
         <div class="label">待审批</div>
         <div class="value">${m.pending ?? 0}</div>
       </div>
-      <div class="metric ${m.unrouted ? "danger" : ""}">
-        <div class="label">未投递</div>
+      <div class="metric ${m.unrouted ? "danger" : ""}" title="这些会话的通知找不到聊天窗口可发，你会错过消息。去「会话管理」为它们设置推送窗口">
+        <div class="label">收不到通知</div>
         <div class="value">${m.unrouted ?? 0}</div>
       </div>
-      <div class="metric">
-        <div class="label">机器</div>
+      <div class="metric" title="连接到 HAPI 的在线电脑数">
+        <div class="label">在线机器</div>
         <div class="value">${machines.length}</div>
       </div>
     </div>
@@ -317,7 +318,7 @@ function renderOverview() {
       <div class="card-head">
         <div>
           <h2>常用设置</h2>
-          <p class="sub">改完立即写入插件配置；完整项在「设置」</p>
+          <p class="sub">改完立刻生效，不用点保存；更多选项在「设置」页</p>
         </div>
         <button type="button" class="linkish" data-go="settings">全部设置 →</button>
       </div>
@@ -343,21 +344,21 @@ function renderOverview() {
           </label>
         </div>
         <div class="qs-field qs-bool">
-          <span class="qs-label">忙时托管审批</span>
+          <span class="qs-label">定时自动批准</span>
           <label class="switch">
             <input id="qs-auto" type="checkbox" ${cfg.auto_approve_enabled ? "checked" : ""} />
             <span class="switch-track" aria-hidden="true"></span>
-            <span class="switch-text">${cfg.auto_approve_enabled ? "开启托管" : "关闭"}</span>
+            <span class="switch-text">${cfg.auto_approve_enabled ? "开启" : "关闭"}</span>
           </label>
         </div>
         <label class="qs-field">
-          <span class="qs-label">托管开始</span>
+          <span class="qs-label">自动批准 从</span>
           <input id="qs-auto-start" class="ctrl mono" type="text" inputmode="numeric" autocomplete="off"
             spellcheck="false" placeholder="23:00" maxlength="5"
             value="${attr(cfg.auto_approve_start || "23:00")}" title="整段输入 HH:MM，如 23:00" />
         </label>
         <label class="qs-field">
-          <span class="qs-label">托管结束</span>
+          <span class="qs-label">自动批准 到</span>
           <input id="qs-auto-end" class="ctrl mono" type="text" inputmode="numeric" autocomplete="off"
             spellcheck="false" placeholder="07:00" maxlength="5"
             value="${attr(cfg.auto_approve_end || "07:00")}" title="整段输入 HH:MM，如 07:00" />
@@ -366,8 +367,8 @@ function renderOverview() {
           <span class="qs-label">说明</span>
           <span class="qs-note-text">${
             cfg.auto_approve_enabled
-              ? "时段内权限请求将自动批准，可跨午夜（如 23:00–07:00）"
-              : "开启托管后，该时段内权限请求将自动批准"
+              ? "这段时间内 AI 的操作请求会自动放行（适合睡觉时挂机），支持跨午夜"
+              : "开启后，设定时段内 AI 的操作请求自动放行，不用你半夜起来批"
           }</span>
         </div>
       </div>
@@ -377,7 +378,7 @@ function renderOverview() {
       <div class="card-head">
         <div>
           <h2>连接信息</h2>
-          <p class="sub">插件当前配置与 SSE 状态</p>
+          <p class="sub">插件连的是哪个 HAPI 服务、连得怎么样</p>
         </div>
         <div class="card-head-actions">
           <button type="button" class="btn btn-sm" id="btn-reconnect">重连</button>
@@ -385,15 +386,16 @@ function renderOverview() {
         </div>
       </div>
       <dl class="kv">
-        <dt>Endpoint</dt><dd>${esc(cfg.hapi_endpoint || c.endpoint || c.endpoint_host || "—")}</dd>
-        <dt>Token</dt><dd class="mono break">${esc(cfg.access_token || "—")}</dd>
+        <dt>服务地址</dt><dd>${esc(cfg.hapi_endpoint || c.endpoint || c.endpoint_host || "—")}</dd>
+        <dt>访问令牌</dt><dd class="mono break">${esc(cfg.access_token || "—")}</dd>
         <dt>HAPI 网页</dt>
         <dd>${
           cfg.hapi_web_url
-            ? `<a class="ext-link mono break" href="${attr(cfg.hapi_web_url)}" target="_blank" rel="noopener noreferrer">${esc(cfg.hapi_web_url)}</a>`
+            ? `<a class="ext-link mono break" href="${attr(cfg.hapi_web_url)}" target="_blank" rel="noopener noreferrer">${esc(cfg.hapi_web_url_safe || cfg.hapi_web_url)}</a>
+               <span class="muted xs">点击可免登录打开，链接含访问令牌，别转发给他人</span>`
             : `<span class="muted">未配置地址</span>`
         }</dd>
-        <dt>插件 SSE</dt><dd>${esc(label)}${c.stream_live ? " · 流活跃" : ""}${c.task_running === false ? " · 任务未运行" : ""}</dd>
+        <dt>实时推送</dt><dd>${esc(label)}${c.stream_live ? " · 流活跃" : ""}${c.task_running === false ? " · 任务未运行" : ""}</dd>
         <dt>推送级别</dt><dd>${esc(cfg.output_level || "—")}</dd>
         <dt>默认推送窗口</dt>
         <dd class="kv-stack">
@@ -442,7 +444,7 @@ function renderOverview() {
     ($("#qs-auto").onchange = () => {
       const on = $("#qs-auto").checked;
       const txt = $("#qs-auto").closest(".switch")?.querySelector(".switch-text");
-      if (txt) txt.textContent = on ? "开启托管" : "关闭";
+      if (txt) txt.textContent = on ? "开启" : "关闭";
       applyQuick({ auto_approve_enabled: on });
     });
   const normalizeHm = (raw, fallback) => {

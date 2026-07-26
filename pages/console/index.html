@@ -36,7 +36,7 @@
             <span class="side-ico" aria-hidden="true">⚙</span>设置
           </button>
           <button type="button" class="side-link" data-page="docs">
-            <span class="side-ico" aria-hidden="true">§</span>部署文档
+            <span class="side-ico" aria-hidden="true">§</span>使用文档
           </button>
         </nav>
 
@@ -52,7 +52,7 @@
             <button type="button" class="icon-btn only-mobile" id="btn-menu" aria-label="打开菜单">☰</button>
             <div>
               <h1 class="page-title" id="page-title">概览</h1>
-              <p class="page-desc" id="page-desc">连接状态与需要处理的事项</p>
+              <p class="page-desc" id="page-desc">一眼看清连接是否正常、有没有事情等你处理</p>
             </div>
           </div>
           <div class="topnav-right">
@@ -71,6 +71,7 @@
               <aside class="win-pane">
                 <div class="pane-head">
                   <div class="pane-title">聊天窗口</div>
+                  <p class="pane-sub muted xs">和机器人聊过 hapi 的每个私聊/群聊</p>
                 </div>
                 <div id="window-list" class="win-list"></div>
                 <div class="pane-foot win-pane-foot">
@@ -83,6 +84,8 @@
                   <div>
                     <div class="pane-title" id="focus-title">Sessions</div>
                   </div>
+                  <span class="spacer"></span>
+                  <span id="focus-mode-slot"></span>
                 </div>
 
                 <div id="route-panel" class="route-panel"></div>

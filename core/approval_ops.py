@@ -43,7 +43,7 @@ async def approve_all(client: AsyncHapiClient,
             tool = req.get("tool", "?")
             results.append(f"{'✓' if ok else '✗'} {tool}")
 
-    return f"已全部批准 ({len(regular)} 个):\n" + "\n".join(results)
+    return f"已全部批准（{len(regular)} 个）:\n" + "\n".join(results)
 
 
 def build_question_prompt(q_items: list, qi_idx: int, qi: int,
@@ -66,9 +66,7 @@ def build_question_prompt(q_items: list, qi_idx: int, qi: int,
     for i, opt in enumerate(opts, 1):
         desc = f" — {opt['description']}" if opt.get("description") else ""
         lines.append(f"  [{i}] {opt['label']}{desc}")
-    if is_rui:
-        pass
-    else:
+    if not is_rui:
         lines.append(f"  [{len(opts) + 1}] 其他（自定义输入）")
     return "\n".join(lines)
 

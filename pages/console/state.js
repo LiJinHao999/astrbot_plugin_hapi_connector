@@ -107,8 +107,10 @@ function createStore() {
     cmd_keyword_maps_list: [
       { keywords: ["stop", "停"], command: "stop", args: "" },
       { keywords: ["sw"], command: "sw", args: "" },
-      { keywords: ["cl"], command: "to", args: "1 /clear" },
-      { keywords: ["继续"], command: "to", args: "1 继续" },
+      { keywords: ["cl"], command: "send", args: "/clear" },
+      { keywords: ["继续"], command: "send", args: "继续" },
+      { keywords: ["专注"], command: "focus", args: "on" },
+      { keywords: ["退出专注"], command: "focus", args: "off" },
       { keywords: ["hapi指令别名"], command: "alias", args: "" },
     ],
     render_kinds_list: String(CONFIG_SCHEMA_FALLBACK.defaults.render_kinds || "")

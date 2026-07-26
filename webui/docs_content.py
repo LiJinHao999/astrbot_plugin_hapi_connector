@@ -25,6 +25,7 @@ DOCS_DIR = _PLUGIN_ROOT / "docs"
 # 仅暴露白名单文档；顺序即帮助页 tab 顺序（install 优先）
 DOC_CATALOG: tuple[dict[str, str], ...] = (
     {"id": "install", "file": "install.md"},
+    {"id": "usage-guide", "file": "usage-guide.md"},
     {"id": "session-isolation", "file": "session-isolation.md"},
     {"id": "cf-access", "file": "cf_access_guide.md"},
 )

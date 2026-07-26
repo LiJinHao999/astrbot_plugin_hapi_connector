@@ -138,7 +138,7 @@ function renderSettings() {
   if (!groups.length) {
     $("#settings-nav").innerHTML = "";
     $("#settings-form").innerHTML =
-      `<p class="desc">设置 schema 未加载。请刷新页面；本地预览应有 fallback。</p>`;
+      `<p class="desc">设置表单没加载出来，请刷新页面重试。</p>`;
     return;
   }
 

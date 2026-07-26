@@ -7,7 +7,7 @@
 匹配：
 - 无参命令：整句严格匹配关键词
 - 可带参命令：关键词整句，或「关键词 + 空白 + 参数」
-- 映射可带固定 args（如 cl → to + 1 /clear）；有固定 args 时仅整句匹配关键词
+- 映射可带固定 args（如 cl → send /clear，发到当前会话）；有固定 args 时仅整句匹配关键词
 """
 
 from __future__ import annotations
@@ -19,10 +19,38 @@ from typing import Any
 DEFAULT_KEYWORD_MAPS: list[dict[str, Any]] = [
     {"keywords": ["stop", "停"], "command": "stop", "args": ""},
     {"keywords": ["sw"], "command": "sw", "args": ""},
-    {"keywords": ["cl"], "command": "to", "args": "1 /clear"},
-    {"keywords": ["继续"], "command": "to", "args": "1 继续"},
+    {"keywords": ["cl"], "command": "send", "args": "/clear"},
+    {"keywords": ["继续"], "command": "send", "args": "继续"},
+    {"keywords": ["专注"], "command": "focus", "args": "on"},
+    {"keywords": ["退出专注"], "command": "focus", "args": "off"},
     {"keywords": ["hapi指令别名"], "command": "alias", "args": ""},
 ]
+
+# 旧默认（to + 固定序号 1）→ 新默认（send 当前会话）迁移表
+_LEGACY_TO_SEND = {
+    ("to", "1 /clear"): ("send", "/clear"),
+    ("to", "1 继续"): ("send", "继续"),
+}
+
+
+def migrate_legacy_maps(maps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    """把旧默认映射「to 1 xx」（写死发给 1 号 session）迁移为「send xx」（发给当前会话）。
+
+    只迁移与旧默认完全一致的条目；用户自定义的其它 to 映射保持不动。
+    返回 (迁移后的列表, 是否有改动)。
+    """
+    changed = False
+    out: list[dict[str, Any]] = []
+    for item in maps:
+        cmd = str(item.get("command") or "")
+        args = str(item.get("args") or "").strip()
+        new = _LEGACY_TO_SEND.get((cmd, args))
+        if new:
+            item = dict(item)
+            item["command"], item["args"] = new
+            changed = True
+        out.append(item)
+    return out, changed
 
 
 def default_maps_storage() -> str:
@@ -119,12 +147,25 @@ def normalize_maps(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         return []
 
+    # 中文子命令别名归一化为「英文命令 + 固定参数」，避免执行路径依赖原始消息文本
+    canonical_cn = {
+        "专注": ("focus", "on"),
+        "退出专注": ("focus", "off"),
+        "帮助": ("help", ""),
+    }
+
     valid_ids = _catalog_ids()
     out: list[dict[str, Any]] = []
     for item in data:
         if not isinstance(item, dict):
             continue
         cmd = str(item.get("command") or item.get("cmd") or "").strip().lower()
+        if cmd in canonical_cn:
+            canon_cmd, canon_args = canonical_cn[cmd]
+            item = dict(item)
+            item["command"] = cmd = canon_cmd
+            if canon_args and not str(item.get("args") or "").strip():
+                item["args"] = canon_args
         if not cmd or (valid_ids and cmd not in valid_ids):
             continue
         kws_raw = item.get("keywords") or item.get("keys") or []
@@ -139,7 +180,7 @@ def normalize_maps(raw: Any) -> list[dict[str, Any]]:
                 keywords.append(t)
         if not keywords:
             continue
-        # 固定发送消息（仅 to 等可带参命令；如 to → 1 /clear）
+        # 固定发送消息（仅 send/to 等可带参命令；如 send → /clear）
         args = str(item.get("args") or item.get("argument") or "").strip()
         entry: dict[str, Any] = {"keywords": keywords, "command": cmd}
         if args:
@@ -244,9 +285,10 @@ def _what_it_does(cmd: str, fixed_args: str, takes_arg: bool) -> str:
         usage_short = usage_short[len("/hapi ") :]
 
     if fixed_args:
-        # 固定消息：说明会发出去什么
+        # 固定参数：send/to 是发送内容，其它命令是命令参数
         base = summary or f"执行 /hapi {cmd}"
-        return f"{base}；固定发送：{fixed_args}"
+        label = "固定发送" if cmd in ("send", "to") else "固定参数"
+        return f"{base}；{label}：{fixed_args}"
     if takes_arg:
         # 可带参：功能 + 参数位从帮助 usage 来
         # 例：sw <序号|ID前缀> → 切换 session，可跟序号或 ID 前缀

@@ -104,18 +104,19 @@ class LLMIntegration:
 
         # 发送通知到当前窗口
         args_str = ", ".join(f"{k}={v}" for k, v in args.items())
-        msg = f"""🤖 Astrbot 工具调用请求
+        summary_line = f"待审批：全局 {total} 个，本窗口 {window_total} 个（此条序号 {index}）"
+        msg = f"""🤖 AstrBot 工具调用请求
   {tool_name}
   参数: {args_str}
 
-当前总共 {total} 个待审批，当前对话窗口共 {window_total} 个待审批，此请求审批序号 {index}
+{summary_line}
 
 审批指令:
-  /hapi a        全部批准
+  /hapi a             全部批准
   /hapi allow <序号>  批准单个
-  /hapi deny     全部拒绝
-  /hapi deny <序号> 拒绝单个
-  /hapi pending   查看完整列表"""
+  /hapi deny          全部拒绝
+  /hapi deny <序号>   拒绝单个
+  /hapi pending       查看完整列表"""
 
         notification_sent = False
         try:
@@ -328,6 +329,7 @@ quick_prefix (快捷前缀): {quick_prefix}
             return
 
         # 执行发送
+        self.plugin._last_sends[event.unified_msg_origin] = (ready_sid, message)
         ok, result = await session_ops.send_message(self.client, ready_sid, message)
         if ready_msg:
             result = ready_msg + result
