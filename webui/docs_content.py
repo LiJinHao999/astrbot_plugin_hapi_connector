@@ -22,12 +22,14 @@ except Exception:  # 本地无 AstrBot 时降级
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = _PLUGIN_ROOT / "docs"
 
-# 仅暴露白名单文档；顺序即帮助页 tab 顺序（install 优先）
+# 仅暴露白名单文档；顺序即帮助页 tab 顺序（install 优先）。
+# base="root" 表示文件在插件根目录（如 CHANGELOG.md），默认在 docs/ 下。
 DOC_CATALOG: tuple[dict[str, str], ...] = (
     {"id": "install", "file": "install.md"},
     {"id": "usage-guide", "file": "usage-guide.md"},
     {"id": "session-isolation", "file": "session-isolation.md"},
     {"id": "cf-access", "file": "cf_access_guide.md"},
+    {"id": "changelog", "file": "CHANGELOG.md", "base": "root"},
 )
 
 DEFAULT_DOC_ID = "install"
@@ -144,7 +146,8 @@ def _load_raw(doc_id: str) -> tuple[str, str] | None:
     meta = next((d for d in DOC_CATALOG if d["id"] == doc_id), None)
     if not meta:
         return None
-    path = DOCS_DIR / meta["file"]
+    base = _PLUGIN_ROOT if meta.get("base") == "root" else DOCS_DIR
+    path = base / meta["file"]
     if not path.is_file():
         logger.warning("docs missing: %s", path)
         return None

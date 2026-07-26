@@ -13,6 +13,7 @@ const FALLBACK_DOCS = [
   { id: "usage-guide", file: "usage-guide.md", title: "插件使用指南" },
   { id: "session-isolation", file: "session-isolation.md", title: "多窗口会话隔离特性说明" },
   { id: "cf-access", file: "cf_access_guide.md", title: "Cloudflare Zero Trust Access 配置指南" },
+  { id: "changelog", file: "CHANGELOG.md", title: "更新日志" },
 ];
 
 /** tab 副标题：一句话说明这篇文档解决什么问题（比显示文件名有用） */
@@ -21,6 +22,7 @@ const DOC_TAB_SUBS = {
   "usage-guide": "指令用法与日常操作技巧",
   "session-isolation": "多个群聊/私聊怎么互不干扰",
   "cf-access": "HAPI 暴露公网时的安全认证",
+  changelog: "每个版本改了什么、新功能怎么用",
 };
 
 const FALLBACK_MD = {
@@ -36,6 +38,9 @@ const FALLBACK_MD = {
   "cf-access": `本文档记录如何为 HAPI 服务配置 Cloudflare Zero Trust Access 认证。
 
 本地预览模式下无法读取完整文档与截图。请通过 AstrBot 打开管理面板，或查看仓库 \`docs/cf_access_guide.md\`。`,
+  changelog: `每个版本的功能变化与修复记录。
+
+本地预览模式下无法读取仓库文件。请通过 AstrBot 打开管理面板，或查看仓库 \`CHANGELOG.md\`。`,
 };
 
 function docsCatalog() {
