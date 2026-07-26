@@ -823,15 +823,17 @@ function paintKwMapList() {
 
 const TPL_AGENTS = ["claude", "codex", "cursor", "grok", "kimi", "opencode", "pi"];
 const TPL_REASONING_AGENTS = ["codex", "opencode"];
+const TPL_EFFORTS = ["", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function tplMachineOptions(selected) {
+  // snapshot.machines 是 normalize_machine 视图：顶层 label / host / platform_label
   const machines = state.data?.machines || [];
-  const opts = [`<option value="">自动（单机时）</option>`];
+  const opts = [`<option value="">自动（只有一台机器时可留空）</option>`];
   for (const m of machines) {
-    const meta = m.metadata || {};
-    const label = `${meta.host || "unknown"} (${meta.platform || "?"})`;
+    const name = m.label || m.host || (m.id ? m.id.slice(0, 8) : "?");
+    const plat = m.platform_label || m.platform || "";
     opts.push(
-      `<option value="${attr(m.id)}" ${selected === m.id ? "selected" : ""}>${esc(label)}</option>`,
+      `<option value="${attr(m.id)}" ${selected === m.id ? "selected" : ""}>${esc(plat ? `${name} · ${plat}` : name)}</option>`,
     );
   }
   // 模板存的机器已不在线时仍显示，避免静默丢配置
@@ -841,6 +843,7 @@ function tplMachineOptions(selected) {
   return opts.join("");
 }
 
+/** 每个模板一张卡片：首行 名称+删除；代理单选段；目录整行；机器/类型/思考深度/YOLO 一行 */
 function paintTplList() {
   const host = $("#ix-tpl-list");
   if (!host) return;
@@ -851,63 +854,78 @@ function paintTplList() {
   }
   host.innerHTML = rows
     .map((t, i) => {
-      const agentOpts = TPL_AGENTS.map(
-        (a) => `<option value="${a}" ${t.agent === a ? "selected" : ""}>${a}</option>`,
-      ).join("");
       const showReasoning = TPL_REASONING_AGENTS.includes(t.agent || "");
-      return `<div class="kw-map-row has-msg" data-idx="${i}">
-        <label class="kw-map-field">
-          <span class="kw-map-label">模板名</span>
-          <input type="text" class="ctrl js-tpl-name" data-idx="${i}" value="${attr(t.name || "")}" placeholder="如 主项目" />
-        </label>
-        <label class="kw-map-field">
-          <span class="kw-map-label">代理</span>
-          <select class="ctrl js-tpl-agent" data-idx="${i}">${agentOpts}</select>
-        </label>
-        <label class="kw-map-field kw-map-args">
-          <span class="kw-map-label">默认目录（可空）</span>
-          <input type="text" class="ctrl js-tpl-dir" data-idx="${i}" value="${attr(t.directory || "")}" placeholder="留空则 create 时传参" />
-        </label>
-        <label class="kw-map-field">
-          <span class="kw-map-label">机器</span>
-          <select class="ctrl js-tpl-machine" data-idx="${i}">${tplMachineOptions(t.machine_id || "")}</select>
-        </label>
-        <label class="kw-map-field">
-          <span class="kw-map-label">类型</span>
-          <select class="ctrl js-tpl-type" data-idx="${i}">
-            <option value="simple" ${t.session_type !== "worktree" ? "selected" : ""}>simple</option>
-            <option value="worktree" ${t.session_type === "worktree" ? "selected" : ""}>worktree</option>
-          </select>
-        </label>
-        ${
-          showReasoning
-            ? `<label class="kw-map-field">
-          <span class="kw-map-label">思考深度</span>
-          <input type="text" class="ctrl js-tpl-effort" data-idx="${i}" value="${attr(t.model_reasoning_effort || "")}" placeholder="空=继承，如 high" style="max-width:120px" />
-        </label>`
-            : ""
-        }
-        <label class="kw-map-field" style="flex:0 0 auto">
-          <span class="kw-map-label">YOLO</span>
-          <input type="checkbox" class="js-tpl-yolo" data-idx="${i}" ${t.yolo ? "checked" : ""} title="跳过审批（危险）" />
-        </label>
-        <button type="button" class="btn btn-sm btn-danger js-tpl-del" data-idx="${i}" title="删除">删</button>
+      const agentSeg = TPL_AGENTS.map(
+        (a) =>
+          `<label class="tpl-agent-opt ${t.agent === a ? "is-on" : ""}">
+            <input type="radio" name="tpl-agent-${i}" class="js-tpl-agent" data-idx="${i}" value="${a}" ${t.agent === a ? "checked" : ""} />${a}</label>`,
+      ).join("");
+      const effortOpts = TPL_EFFORTS.map(
+        (v) =>
+          `<option value="${v}" ${(t.model_reasoning_effort || "") === v ? "selected" : ""}>${v || "继承默认"}</option>`,
+      ).join("");
+      return `<div class="tpl-card" data-idx="${i}">
+        <div class="tpl-card-head">
+          <input type="text" class="ctrl tpl-name-input js-tpl-name" data-idx="${i}" value="${attr(t.name || "")}"
+            placeholder="模板名，如：主项目" />
+          <span class="tpl-usage mono">/hapi create ${esc(t.name || "…")}</span>
+          <button type="button" class="btn btn-sm btn-danger js-tpl-del" data-idx="${i}">删除</button>
+        </div>
+        <div class="tpl-field">
+          <span class="kw-map-label">AI 代理</span>
+          <div class="tpl-agent-seg">${agentSeg}</div>
+        </div>
+        <div class="tpl-field">
+          <span class="kw-map-label">默认工作目录</span>
+          <input type="text" class="ctrl mono js-tpl-dir" data-idx="${i}" value="${attr(t.directory || "")}"
+            placeholder="如 /home/me/proj；留空则创建时在命令里传：/hapi create ${attr(t.name || "模板名")} <目录>" />
+        </div>
+        <div class="tpl-grid">
+          <label class="kw-map-field">
+            <span class="kw-map-label">机器</span>
+            <select class="ctrl js-tpl-machine" data-idx="${i}">${tplMachineOptions(t.machine_id || "")}</select>
+          </label>
+          <label class="kw-map-field">
+            <span class="kw-map-label">会话类型</span>
+            <select class="ctrl js-tpl-type" data-idx="${i}">
+              <option value="simple" ${t.session_type !== "worktree" ? "selected" : ""}>simple — 直接用该目录</option>
+              <option value="worktree" ${t.session_type === "worktree" ? "selected" : ""}>worktree — 建新工作树</option>
+            </select>
+          </label>
+          ${
+            showReasoning
+              ? `<label class="kw-map-field">
+            <span class="kw-map-label">思考深度</span>
+            <select class="ctrl js-tpl-effort" data-idx="${i}">${effortOpts}</select>
+          </label>`
+              : ""
+          }
+          <label class="kw-map-field tpl-yolo-field">
+            <span class="kw-map-label">YOLO（跳过审批，危险）</span>
+            <label class="switch">
+              <input type="checkbox" class="js-tpl-yolo" data-idx="${i}" ${t.yolo ? "checked" : ""} />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text">${t.yolo ? "开启" : "关闭"}</span>
+            </label>
+          </label>
+        </div>
       </div>`;
     })
     .join("");
 
-  const bind = (sel, key, transform) => {
+  const bind = (sel, key) => {
     $$(sel).forEach((el) => {
-      const evName = el.tagName === "SELECT" || el.type === "checkbox" ? "onchange" : "oninput";
-      el[evName === "onchange" ? "onchange" : "oninput"] = () => {
+      const handler = () => {
         const i = Number(el.dataset.idx);
         if (!state._ixTemplates?.[i]) return;
         const val = el.type === "checkbox" ? el.checked : String(el.value || "").trim();
-        state._ixTemplates[i][key] = transform ? transform(val) : val;
-        // agent 变化影响思考深度输入框显隐
-        if (key === "agent") paintTplList();
+        state._ixTemplates[i][key] = val;
+        // 代理 / 名称 / YOLO 变化影响卡片内联展示，需要重绘
+        if (key === "agent" || key === "yolo") paintTplList();
         markTplDirty();
       };
+      if (el.tagName === "SELECT" || el.type === "checkbox" || el.type === "radio") el.onchange = handler;
+      else el.oninput = handler;
     });
   };
   bind("#ix-tpl-list .js-tpl-name", "name");
@@ -917,6 +935,14 @@ function paintTplList() {
   bind("#ix-tpl-list .js-tpl-type", "session_type");
   bind("#ix-tpl-list .js-tpl-effort", "model_reasoning_effort");
   bind("#ix-tpl-list .js-tpl-yolo", "yolo");
+
+  // 名称改动时同步内联 usage 提示（不整卡重绘，避免打断输入）
+  $$("#ix-tpl-list .js-tpl-name").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const usage = inp.closest(".tpl-card-head")?.querySelector(".tpl-usage");
+      if (usage) usage.textContent = `/hapi create ${String(inp.value || "").trim() || "…"}`;
+    });
+  });
 
   $$("#ix-tpl-list .js-tpl-del").forEach((btn) => {
     btn.onclick = () => {
@@ -929,11 +955,38 @@ function paintTplList() {
   });
 }
 
+/** 脏基线：进入页面 / 保存成功时记录，切页时比较 */
+function tplSnapshot() {
+  return stableJson(
+    (state._ixTemplates || []).map((t) => ({
+      name: t.name || "",
+      agent: t.agent || "",
+      directory: t.directory || "",
+      machine_id: t.machine_id || "",
+      session_type: t.session_type || "simple",
+      worktree_name: t.worktree_name || "",
+      yolo: Boolean(t.yolo),
+      model_reasoning_effort: t.model_reasoning_effort || "",
+    })),
+  );
+}
+
+function isTplDirty() {
+  if (!Array.isArray(state._ixTemplates)) return false;
+  return tplSnapshot() !== (state._ixTplBaseline || tplSnapshot());
+}
+
 function markTplDirty() {
-  paintSaveStatus($("#ix-tpl-save-status"), "dirty");
+  paintSaveStatus($("#ix-tpl-save-status"), isTplDirty() ? "dirty" : "");
 }
 
 async function loadTemplates() {
+  // 有未保存编辑时不从远端覆盖（重绘场景），只重画现有内存数据
+  if (Array.isArray(state._ixTemplates) && isTplDirty()) {
+    paintTplList();
+    markTplDirty();
+    return;
+  }
   if (isLive() && getApi()) {
     try {
       const res = await getApi().getSessionTemplates();
@@ -944,6 +997,7 @@ async function loadTemplates() {
   } else {
     state._ixTemplates = Array.isArray(state._mockTemplates) ? state._mockTemplates : [];
   }
+  state._ixTplBaseline = tplSnapshot();
   paintTplList();
 }
 
@@ -961,11 +1015,14 @@ async function saveTemplates() {
       state._ixTemplates = state._mockTemplates;
       toast("模板已保存（本地预览）");
     }
+    state._ixTplBaseline = tplSnapshot();
     paintTplList();
     paintSaveStatus($("#ix-tpl-save-status"), "saved");
+    return true;
   } catch (err) {
     toast("保存模板失败: " + (err.message || err));
     paintSaveStatus($("#ix-tpl-save-status"), "error");
+    return false;
   }
 }
 
@@ -1086,7 +1143,7 @@ function isRenderDirty() {
 function isInteractDirty() {
   if (state.page !== "interact") return false;
   try {
-    return isQuickOpsDirty() || isRenderDirty();
+    return isQuickOpsDirty() || isRenderDirty() || isTplDirty();
   } catch (_) {
     return false;
   }
@@ -1200,13 +1257,19 @@ async function saveAllInteractDirty() {
   if (isRenderDirty()) {
     if (!(await saveRenderSettings())) ok = false;
   }
+  if (isTplDirty()) {
+    if (!(await saveTemplates())) ok = false;
+  }
   return ok;
 }
 
 function discardInteractDraft() {
-  // 重绘会从 state.data.config 重建表单
+  // 重绘会从 state.data.config 重建表单；模板下次进入页面时从 API/mock 重新加载
+  state._ixTemplates = null;
+  state._ixTplBaseline = null;
   paintQuickSaveStatus("");
   paintRenderSaveStatus("");
+  paintSaveStatus($("#ix-tpl-save-status"), "");
 }
 
 function interactRenderState(cfg) {
