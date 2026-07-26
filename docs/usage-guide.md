@@ -167,7 +167,7 @@ AI 要执行敏感操作（跑命令、写文件等）时会推送权限请求�
 | `/hapi model [名称]` | 切模型 |
 | `/hapi effort [值]` | 推理强度（不带参数可看可选列表） |
 | `/hapi plan` | 开关 Plan 模式 |
-| `/hapi fast [on\|off]` | Codex Fast 模式 |
+| `/hapi fast [on/off]` | Codex Fast 模式 |
 | `/hapi remote` | 把会话切到 remote 托管 |
 
 不带参数执行会列出可选项，回复序号即可，不用记枚举值。

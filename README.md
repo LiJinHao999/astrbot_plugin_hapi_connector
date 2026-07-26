@@ -231,11 +231,11 @@ hapi codex    # OpenAI Codex
 | 指令 | 说明 |
 |------|------|
 | `/hapi create` | 创建新会话（交互向导；Codex 为 6 步，其他为 5 步） |
-| `/hapi abort [序号|ID前缀]` | 中断会话，默认当前（别名 `stop`） |
+| `/hapi abort [序号\|ID前缀]` | 中断会话，默认当前（别名 `stop`） |
 | `/hapi remote` | 切换当前会话到 remote 远程托管模式 |
 | `/hapi archive` | 归档当前会话 |
-| `/hapi resume [序号|ID前缀]` | 恢复已停掉的会话 |
-| `/hapi reopen [序号|ID前缀]` | 恢复已停掉的会话（resume 备用接口） |
+| `/hapi resume [序号\|ID前缀]` | 恢复已停掉的会话 |
+| `/hapi reopen [序号\|ID前缀]` | 恢复已停掉的会话（resume 备用接口） |
 | `/hapi rename` | 重命名当前会话 |
 | `/hapi delete` | 删除当前会话 |
 | `/hapi clean [路径前缀]` | 批量清理 inactive session |
@@ -272,7 +272,7 @@ hapi codex    # OpenAI Codex
 | `/hapi plan` | 切换 Plan 模式（toggle；Claude/Cursor 等走 permissionMode，Codex 走 collaborationMode） |
 | `/hapi model [模式]` | 查看/切换模型（Claude 含 sonnet/opus/fable 等预设；其它 flavor 可自由输入） |
 | `/hapi effort [值]` | 查看/切换推理强度（Claude/Pi 走 `/effort`；Codex/OpenCode 走 reasoning effort） |
-| `/hapi fast [on|off]` | 查看/切换 Codex Fast mode（service tier: fast/standard） |
+| `/hapi fast [on\|off]` | 查看/切换 Codex Fast mode（service tier: fast/standard） |
 | `/hapi output [级别]` | 查看/切换 SSE 推送级别（别名 `out`） |
 | `/hapi help [主题]` | 显示帮助信息，主题可选：会话 / 对话 / 审批 / 通知 / 文件 / 配置 |
 
