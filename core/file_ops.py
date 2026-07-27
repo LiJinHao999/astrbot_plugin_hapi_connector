@@ -316,8 +316,7 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
 
         content_key = hashlib.sha256(raw).hexdigest()
         if content_key in seen_content:
-            msgs.append(f"已跳过重复附件: {filename}")
-            continue
+            continue  # 静默去重，不向用户啰嗦
         seen_content.add(content_key)
 
         # 已读字节经 _preloaded 回传，避免 upload_file 再读一遍磁盘/URL

@@ -888,9 +888,7 @@ class HapiConnectorPlugin(Star):
     @staticmethod
     def _format_staged_attachments(bucket: dict) -> str:
         atts = bucket.get("attachments") or []
-        lines = [
-            f"📎 已暂存 {len(atts)} 个附件（尚未发给 AI）",
-        ]
+        lines = [f"📎 已暂存 {len(atts)} 个附件"]
         for att in atts:
             name = att.get("filename") or att.get("path") or "file"
             size = att.get("size")
@@ -904,7 +902,4 @@ class HapiConnectorPlugin(Star):
                 lines.append(f"  · {name}（{size_s}）")
             else:
                 lines.append(f"  · {name}")
-        lines.append(
-            "再发一条文字即可连同暂存一并送出；关闭 Focus 会清空暂存。"
-        )
         return "\n".join(lines)

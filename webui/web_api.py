@@ -1231,11 +1231,11 @@ class WebApi:
             "umo": umo,
             "enabled": enabled,
             "message": (
-                "Focus 模式已开启：文字直接发给当前 session；"
-                "纯图片/文件会先暂存，配上文字后再一并送出"
+                "此聊天窗口的 Focus 模式已开启。"
+                "当前窗口文字消息、附件、图片等消息将会自动发送到 Hapi agent。"
             )
             if enabled
-            else "Focus 模式已关闭（暂存附件已清空）",
+            else "Focus 模式已关闭",
         }
         try:
             result["snapshot"] = build_sessions_snapshot(self.plugin)

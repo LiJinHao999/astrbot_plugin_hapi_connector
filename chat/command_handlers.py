@@ -833,16 +833,13 @@ class CommandHandlers:
                 await self.state_mgr.persist_window_state(umo)
                 if not enabled:
                     self.plugin._clear_staged_attachments(umo)
-                status_text = "已开启" if enabled else "已关闭"
-                extra = ""
                 if enabled:
-                    extra = (
-                        f"当前窗口文字消息将自动发送到 {title}\n"
-                        "纯图片/文件会先暂存，配上文字后再一并送出"
-                    )
-                await ev.send(ev.plain_result(
-                    f"Focus 模式{status_text}\n" + extra
-                ))
+                    await ev.send(ev.plain_result(
+                        "此聊天窗口的 Focus 模式已开启。\n"
+                        "当前窗口文字消息、附件、图片等消息将会自动发送到 Hapi agent。"
+                    ))
+                else:
+                    await ev.send(ev.plain_result("Focus 模式已关闭"))
                 controller.stop()
 
             try:
@@ -865,21 +862,18 @@ class CommandHandlers:
             if not sid:
                 yield event.plain_result("✗ 请先用 /hapi sw 选择一个 session")
                 return
-            session = next((s for s in self.sessions_cache if s.get("id") == sid), None)
-            title = formatters.get_session_title(session) if session else sid[:8]
 
         self.binding_mgr.set_window_focus_mode(umo, enabled)
         await self.state_mgr.persist_window_state(umo)
 
         if enabled:
             yield event.plain_result(
-                f"Focus 模式已开启\n"
-                f"当前窗口文字消息将自动发送到 {title}\n"
-                "纯图片/文件会先暂存，配上文字后再一并送出"
+                "此聊天窗口的 Focus 模式已开启。\n"
+                "当前窗口文字消息、附件、图片等消息将会自动发送到 Hapi agent。"
             )
         else:
             self.plugin._clear_staged_attachments(umo)
-            yield event.plain_result("Focus 模式已关闭（暂存附件已清空）")
+            yield event.plain_result("Focus 模式已关闭")
 
     # ── remote ──
 
