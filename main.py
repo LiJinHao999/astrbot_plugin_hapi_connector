@@ -38,7 +38,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude / Codex / Cursor / Grok / Kimi / OpenCode / Pi vibe coding",
-          "3.2.1")
+          "3.2.2")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -783,7 +783,7 @@ class HapiConnectorPlugin(Star):
             target_flavor = self.state_mgr.effective_flavor(event) or target_flavor
             reminder += ready_msg
 
-        # 提取文件并统一走 upload 接口（内容哈希去重，避免同一图双缓存各传一次）
+        # 提取文件并上传（双缓存留更大 + 内容哈希去重，避免同一图各传一次）
         attachments, upload_notice = await file_ops.upload_event_files(self.client, event, target_sid)
         if upload_notice:
             yield event.plain_result(upload_notice)
