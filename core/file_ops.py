@@ -4,6 +4,7 @@ import base64
 import hashlib
 import mimetypes
 import os
+import re
 import tempfile
 import uuid
 from typing import Any
@@ -16,6 +17,10 @@ from .hapi_client import AsyncHapiClient
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 ATTACHMENT_COMPONENT_TYPES = {"file", "image"}
+# AstrBot 二次落盘常见名：download.png / 123-download.jpg
+_DOWNLOAD_CACHE_NAME_RE = re.compile(
+    r"(?:^|[-_])download\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE
+)
 LOCAL_PATH_ATTRS = (
     "file",
     "file_",
@@ -284,6 +289,91 @@ def _source_display_name(source: Any) -> str:
     return str(source) if source else "attachment"
 
 
+def _path_byte_size(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def _is_local_image_source(source: dict[str, Any]) -> bool:
+    if source.get("kind") != "path":
+        return False
+    if str(source.get("componentType") or "").lower() == "image":
+        return True
+    path = str(source.get("path") or "")
+    name = str(source.get("name") or path)
+    ext = os.path.splitext(name)[1].lower() or os.path.splitext(path)[1].lower()
+    return ext in IMAGE_EXTS
+
+
+def _is_download_cache_name(path_or_name: str) -> bool:
+    """AstrBot 二次缓存文件名，如 download.png / 1785-download.jpg。"""
+    base = os.path.basename(path_or_name or "").strip()
+    if not base:
+        return False
+    return bool(_DOWNLOAD_CACHE_NAME_RE.search(base))
+
+
+def _dedupe_astrbot_image_dual_cache(
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """同条消息里 AstrBot 常把一张图落成两份本地缓存（如 media_image_*.jpg
+    与 download.png）：路径不同、编码也不同，内容哈希去不掉。
+
+    策略尽量简单：识别到这种双缓存时，只保留字节数更大的那一份；
+    非图片附件、以及无法判断为双缓存的多图原样保留。
+    """
+    if len(sources) < 2:
+        return sources
+
+    path_images: list[dict[str, Any]] = []
+    others: list[dict[str, Any]] = []
+    for source in sources:
+        if _is_local_image_source(source):
+            path_images.append(source)
+        else:
+            others.append(source)
+
+    if len(path_images) < 2:
+        return sources
+
+    downloads: list[dict[str, Any]] = []
+    primaries: list[dict[str, Any]] = []
+    for source in path_images:
+        label = str(source.get("name") or source.get("path") or "")
+        path = str(source.get("path") or "")
+        if _is_download_cache_name(label) or _is_download_cache_name(path):
+            downloads.append(source)
+        else:
+            primaries.append(source)
+
+    # 典型双缓存：一边是 download.*，一边是 media_image_* 等主缓存
+    if not downloads:
+        return sources
+
+    if primaries:
+        # 单主图 + 若干 download → 整组只留字节更大的那份
+        # 多主图 + download 副缓存 → 丢掉 download，主图全留
+        if len(primaries) == 1:
+            best = max(
+                primaries + downloads,
+                key=lambda s: _path_byte_size(str(s.get("path") or "")),
+            )
+            return others + [best]
+        return others + primaries
+
+    # 只有 download 命名的多份图：仍可能是双缓存重编码，留最大
+    if len(downloads) >= 2:
+        best = max(
+            downloads,
+            key=lambda s: _path_byte_size(str(s.get("path") or "")),
+        )
+        return others + [best]
+
+    return sources
+
+
 async def upload_event_files(client: AsyncHapiClient, event: Any,
                              sid: str) -> tuple[list[dict], str]:
     """从消息中提取附件并全部上传到 session。
@@ -292,9 +382,8 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
     供快捷前缀 / Focus 转发链路使用：图片、文件经 /upload 接口
     转为 attachments 随消息发出。指令类路径（send/to）不自动捎带附件。
 
-    上传前按文件内容 SHA-256 去重：AstrBot 常把同一张图落成
-    media_image_*.jpg 与 download.jpg 两个本地缓存，路径去重挡不住，
-    必须读内容后、调 HAPI /upload 之前丢掉重复项。
+    提取阶段已按「双缓存留更大」去掉 AstrBot 的 media/download 重复图；
+    上传前再按内容 SHA-256 去重，挡住路径不同但字节完全相同的副本。
     """
     files = extract_files_from_message(event)
     if not files:
@@ -347,7 +436,7 @@ def extract_files_from_message(event: Any) -> list[dict[str, Any]]:
         seen.add(key)
         files.append(source)
 
-    return files
+    return _dedupe_astrbot_image_dual_cache(files)
 
 
 async def get_file_size(client: AsyncHapiClient, sid: str, path: str) -> int:
