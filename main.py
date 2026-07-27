@@ -38,7 +38,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude / Codex / Cursor / Grok / Kimi / OpenCode / Pi vibe coding",
-          "3.2.0")
+          "3.2.1")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -151,6 +151,13 @@ class HapiConnectorPlugin(Star):
 
         # 每窗口最近一次用户发送记录 {umo: (sid, text)}，供 /hapi retry（内存，不落盘）
         self._last_sends: dict[str, tuple[str, str]] = {}
+
+        # Focus 纯附件暂存：{umo: {"sid": str, "attachments": [dict, ...]}}
+        # 无文字时只 upload 不 send；下一条带文字的 Focus/快捷前缀消息一并送出（内存，不落盘）
+        self._pending_attachments: dict[str, dict] = {}
+
+        # 每 session 斜杠命令缓存 {sid: (monotonic_ts, {name,...})}，Focus 判定用（TTL 5min）
+        self._slash_cmd_cache: dict[str, tuple[float, set[str]]] = {}
 
         # LLM 工具集成
         from .chat.llm_integration import LLMIntegration
@@ -582,11 +589,20 @@ class HapiConnectorPlugin(Star):
 
     # ──── Focus 模式判定 ────
 
-    def _focus_should_forward(self, event: AstrMessageEvent, raw: str) -> bool:
-        """Focus 模式下，判断这条消息是否应转发给当前 session。
+    async def _focus_forward_text(self, event: AstrMessageEvent, raw: str) -> str | None:
+        """Focus 模式下，决定这条消息是否转发给当前 session。
 
-        只排除会被其它处理器接手的消息，避免消息被吞：
-        - / 开头的命令（AstrBot 指令，含 /hapi）
+        返回要发送的文本（"" 表示纯附件消息）；返回 None 表示不转发、放行给其它处理器。
+
+        斜杠消息的处理（注意 AstrBot 的 WakingCheckStage 在插件处理器之前就会剥离
+        唤醒前缀，默认 "/"，此时 event.message_str 已不含前缀，须回看
+        message_obj.message_str 原文判断）：
+        - 原文以 "/" 开头且命中当前会话的斜杠命令表（实时从 HAPI 拉取，失败回退
+          内置表）→ 还原斜杠、原样转发给 agent（如 Claude 的 /clear、Codex 的 /model）
+        - /hapi 永远归插件，其余未命中的 "/" 命令放行给 AstrBot
+        - 自定义唤醒前缀（如 "!"）开头视为 AstrBot 指令，不转发
+
+        其余排除项：
         - "hapi ..." 开头（无斜杠的 hapi 调用）
         - 关键词别名命中（如 stop / 继续 / 专注，与 keyword_map_handler 同一套匹配）
 
@@ -597,13 +613,40 @@ class HapiConnectorPlugin(Star):
         if not text:
             # 无文本但可能带附件（图片等），也转发
             from .core import file_ops
-            return bool(file_ops.extract_files_from_message(event))
+            return "" if file_ops.extract_files_from_message(event) else None
+
+        # 还原用户输入的斜杠原文（唤醒前缀可能已被 AstrBot 提前剥离）
+        slash_text = None
         if text.startswith("/"):
-            return False
+            slash_text = text
+        else:
+            try:
+                original = (getattr(event.message_obj, "message_str", "") or "").strip()
+            except Exception:
+                original = ""
+            if original.startswith("/"):
+                slash_text = original
+            elif self._original_text_has_wake_prefix(event):
+                # 非 "/" 的自定义唤醒前缀（如 "!"）：是 AstrBot 指令，放行
+                return None
+
+        if slash_text is not None:
+            body = slash_text[1:].strip()
+            name = body.split(None, 1)[0].lower() if body else ""
+            if not name or name == "hapi":
+                return None
+            sid = self.state_mgr.effective_sid(event)
+            if not sid:
+                return None  # 无目标会话，放行给 AstrBot
+            flavor = self.state_mgr.effective_flavor(event)
+            commands = await self._get_session_slash_commands(sid, flavor)
+            if name in commands:
+                return slash_text  # agent 内置/自定义命令：带斜杠原样转发
+            return None
 
         first = text.split(None, 1)[0].lower()
         if first == "hapi":
-            return False
+            return None
 
         # 关键词别名：匹配规则与 keyword_map_handler 一致
         # （Focus 开启的窗口 keyword_map_handler 必定生效，见其门禁，不会漏接）
@@ -611,8 +654,55 @@ class HapiConnectorPlugin(Star):
         if maps:
             from .chat.keyword_maps import find_mapped_command
             if find_mapped_command(maps, text):
-                return False
-        return True
+                return None
+        return text
+
+    async def _get_session_slash_commands(self, sid: str, flavor: str | None) -> set[str]:
+        """当前会话可用斜杠命令名集合（小写、不带 /），带 TTL 缓存。
+
+        优先 GET /api/sessions/:id/slash-commands（含用户/项目/插件自定义命令）；
+        拉取失败或为空时回退 flavor 内置表。
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        cached = self._slash_cmd_cache.get(sid)
+        if cached and now - cached[0] < 300:
+            return cached[1]
+        names: set[str] = set()
+        try:
+            cmds = await session_ops.fetch_slash_commands(self.client, sid)
+            names = {
+                str(c.get("name", "")).strip().lstrip("/").lower()
+                for c in cmds if isinstance(c, dict)
+            }
+            names.discard("")
+        except Exception as e:
+            logger.debug("拉取 session %s 斜杠命令失败，回退内置表: %s", sid[:8], e)
+        if not names:
+            from .chat.flavor_profiles import builtin_slash_commands_for
+            names = set(builtin_slash_commands_for(flavor))
+        self._slash_cmd_cache[sid] = (now, names)
+        return names
+
+    def _original_text_has_wake_prefix(self, event: AstrMessageEvent) -> bool:
+        """原始消息文本是否以 AstrBot 唤醒前缀开头。
+
+        WakingCheckStage 在插件处理器之前执行，命中唤醒前缀时会把
+        event.message_str 剥离前缀（"/help" → "help"），但 message_obj.message_str
+        保留原文；据此还原「用户输入的是一条指令」这一事实。
+        """
+        try:
+            original = (getattr(event.message_obj, "message_str", "") or "").strip()
+        except Exception:
+            return False
+        if not original:
+            return False
+        try:
+            prefixes = self.context.get_config(event.unified_msg_origin).get("wake_prefix", ["/"]) or ["/"]
+        except Exception:
+            prefixes = ["/"]
+        return any(p and original.startswith(str(p)) for p in prefixes)
 
     # ──── 快捷前缀处理器 ────
 
@@ -636,10 +726,11 @@ class HapiConnectorPlugin(Star):
             # 带前缀仍走原快捷前缀逻辑（Focus 下也允许 >N 指定序号）
             rest = raw[len(prefix):]
         elif self.binding_mgr.get_window_focus_mode(umo):
-            if not self._focus_should_forward(event, raw):
+            forward_text = await self._focus_forward_text(event, raw)
+            if forward_text is None:
                 return
             focus_forward = True
-            rest = raw  # 整句视为要发送的内容
+            rest = forward_text  # 整句（含还原的斜杠命令）视为要发送的内容
         else:
             return  # 不匹配，不拦截
 
@@ -692,19 +783,123 @@ class HapiConnectorPlugin(Star):
             target_flavor = self.state_mgr.effective_flavor(event) or target_flavor
             reminder += ready_msg
 
-        # 提取文件并统一走 upload 接口
+        # 提取文件并统一走 upload 接口（内容哈希去重，避免同一图双缓存各传一次）
         attachments, upload_notice = await file_ops.upload_event_files(self.client, event, target_sid)
         if upload_notice:
             yield event.plain_result(upload_notice)
+
+        send_text = (text or "").strip()
+
+        # Focus 纯附件：只暂存到「发送区」，不立刻发给 AI（等下一条文字一并送出）
+        if focus_forward and not send_text:
+            if not attachments:
+                yield event.plain_result(
+                    reminder + "✗ 未提取到可暂存的附件（或上传全部失败）"
+                )
+                event.stop_event()
+                return
+            staged = self._stage_focus_attachments(umo, target_sid, attachments)
+            yield event.plain_result(reminder + self._format_staged_attachments(staged))
+            event.stop_event()
+            return
+
+        # 带文字发送：合并本窗口针对该 session 的暂存附件
+        staged_atts = self._peek_staged_attachments(umo, target_sid)
+        merged = self._merge_attachment_lists(staged_atts, attachments)
+
+        if not send_text and not merged:
+            yield event.plain_result(
+                reminder + "✗ 未提取到可发送的附件（或上传全部失败），已取消发送"
+            )
+            event.stop_event()
+            return
 
         # 发送消息（带附件）
         current_sid = self.state_mgr.current_sid(event)
         if current_sid and current_sid != target_sid:
             reminder += f"→ 发送到 [{target_flavor}] {target_sid[:8]} (当前窗口: {current_sid[:8]})\n"
 
-        if text:
-            self._last_sends[umo] = (target_sid, text)
-        ok, msg = await session_ops.send_message(self.client, target_sid, text, attachments)
+        if send_text:
+            self._last_sends[umo] = (target_sid, send_text)
+        ok, msg = await session_ops.send_message(
+            self.client, target_sid, send_text, merged or None
+        )
+        if ok and staged_atts:
+            self._clear_staged_attachments(umo, target_sid)
+            msg += f"（含暂存附件 ×{len(staged_atts)}）"
         await self.state_mgr.set_user_state(event)
         yield event.plain_result(reminder + msg)
         event.stop_event()
+
+    # ──── Focus 附件暂存（发送区） ────
+
+    def _stage_focus_attachments(
+        self, umo: str, sid: str, attachments: list[dict]
+    ) -> dict:
+        """把已 upload 的附件放入本窗口发送区；切换 session 时丢弃旧暂存。"""
+        bucket = self._pending_attachments.get(umo)
+        if not bucket or bucket.get("sid") != sid:
+            bucket = {"sid": sid, "attachments": []}
+        existing_paths = {
+            a.get("path") for a in bucket["attachments"] if a.get("path")
+        }
+        for att in attachments:
+            path = att.get("path")
+            if path and path in existing_paths:
+                continue
+            bucket["attachments"].append(att)
+            if path:
+                existing_paths.add(path)
+        self._pending_attachments[umo] = bucket
+        return bucket
+
+    def _peek_staged_attachments(self, umo: str, sid: str) -> list[dict]:
+        """读取本窗口针对 sid 的暂存附件（不清除）。sid 不一致则忽略旧暂存。"""
+        bucket = self._pending_attachments.get(umo)
+        if not bucket or bucket.get("sid") != sid:
+            return []
+        return list(bucket.get("attachments") or [])
+
+    def _clear_staged_attachments(self, umo: str, sid: str | None = None) -> None:
+        """清空本窗口暂存。sid 给定时仅在匹配时清除。"""
+        bucket = self._pending_attachments.get(umo)
+        if not bucket:
+            return
+        if sid is not None and bucket.get("sid") != sid:
+            return
+        self._pending_attachments.pop(umo, None)
+
+    @staticmethod
+    def _merge_attachment_lists(
+        staged: list[dict], current: list[dict]
+    ) -> list[dict]:
+        """暂存在前、本条在后；按 path 去重。"""
+        merged: list[dict] = []
+        seen: set[str] = set()
+        for att in (staged or []) + (current or []):
+            path = att.get("path") or att.get("id") or ""
+            if path and path in seen:
+                continue
+            if path:
+                seen.add(path)
+            merged.append(att)
+        return merged
+
+    @staticmethod
+    def _format_staged_attachments(bucket: dict) -> str:
+        atts = bucket.get("attachments") or []
+        lines = [f"📎 已暂存 {len(atts)} 个附件"]
+        for att in atts:
+            name = att.get("filename") or att.get("path") or "file"
+            size = att.get("size")
+            if isinstance(size, int) and size > 0:
+                if size < 1024:
+                    size_s = f"{size}B"
+                elif size < 1024 * 1024:
+                    size_s = f"{size / 1024:.1f}KB"
+                else:
+                    size_s = f"{size / (1024 * 1024):.1f}MB"
+                lines.append(f"  · {name}（{size_s}）")
+            else:
+                lines.append(f"  · {name}")
+        return "\n".join(lines)

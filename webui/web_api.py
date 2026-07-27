@@ -1218,6 +1218,10 @@ class WebApi:
         try:
             binding.set_window_focus_mode(umo, enabled)
             await sm.persist_window_state(umo)
+            if not enabled:
+                clear_fn = getattr(self.plugin, "_clear_staged_attachments", None)
+                if callable(clear_fn):
+                    clear_fn(umo)
         except Exception as e:
             logger.exception("set window focus failed")
             return error_response(f"保存失败: {type(e).__name__}: {e}", status_code=500)
@@ -1226,7 +1230,10 @@ class WebApi:
             "ok": True,
             "umo": umo,
             "enabled": enabled,
-            "message": "Focus 模式已开启，该窗口消息将直接发给当前 session"
+            "message": (
+                "此聊天窗口的 Focus 模式已开启。"
+                "当前窗口文字消息、附件、图片等消息将会自动发送到 Hapi agent。"
+            )
             if enabled
             else "Focus 模式已关闭",
         }

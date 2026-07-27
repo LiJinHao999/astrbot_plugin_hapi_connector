@@ -223,6 +223,25 @@ _FLAVOR_PROFILES: dict[str, FlavorProfile] = {
 }
 
 
+# 内置斜杠命令兜底表（对齐 shared/src/slashCommands.ts BUILTIN_SLASH_COMMANDS）
+# 仅存名字（不带 /）；实时列表优先走 GET /api/sessions/:id/slash-commands
+BUILTIN_SLASH_COMMANDS: dict[str, tuple[str, ...]] = {
+    "claude": ("clear", "compact", "context", "cost", "doctor", "plan", "stats", "status"),
+    "codex": ("agent", "clear", "compact", "goal", "help", "plan", "default", "execute",
+              "status", "model", "reasoning", "effort", "permissions", "permission"),
+    "gemini": ("about", "clear", "compress", "stats"),
+    "grok": ("compact", "context", "session-info", "goal", "always-approve", "auto"),
+    "opencode": ("help", "status", "plan", "default", "init"),
+    "cursor": ("compress",),
+}
+
+
+def builtin_slash_commands_for(flavor: str | None) -> tuple[str, ...]:
+    """内置斜杠命令名（无 /）；未知 flavor 对齐上游 getBuiltinSlashCommands 回退 claude。"""
+    key = normalize_flavor(flavor)
+    return BUILTIN_SLASH_COMMANDS.get(key, BUILTIN_SLASH_COMMANDS["claude"])
+
+
 def normalize_flavor(flavor: str | None) -> str:
     """标准化 flavor 字符串。"""
     return (flavor or "").strip().lower()

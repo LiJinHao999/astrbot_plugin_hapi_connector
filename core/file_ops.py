@@ -1,6 +1,7 @@
 """Helpers for file extraction, upload, download, and cleanup."""
 
 import base64
+import hashlib
 import mimetypes
 import os
 import tempfile
@@ -98,36 +99,59 @@ def _first_component_value(component: Any, keys: tuple[str, ...]) -> str | None:
     return None
 
 
-def _get_message_components(event: Any) -> list[Any]:
-    components: list[Any] = []
-
+def _components_from_get_messages(event: Any) -> list[Any]:
     getter = getattr(event, "get_messages", None)
-    if callable(getter):
-        try:
-            result = getter()
-            if result:
-                components.extend(list(result))
-        except Exception:
-            pass
+    if not callable(getter):
+        return []
+    try:
+        result = getter()
+    except Exception:
+        return []
+    return list(result) if result else []
 
+
+def _components_from_message_obj(event: Any) -> list[Any]:
     message_obj = getattr(event, "message_obj", None)
     message_components = getattr(message_obj, "message", None)
-    if message_components:
-        components.extend(list(message_components))
+    return list(message_components) if message_components else []
 
+
+def _components_from_raw_message(event: Any) -> list[Any]:
+    message_obj = getattr(event, "message_obj", None)
     raw_message = getattr(message_obj, "raw_message", None)
-    if isinstance(raw_message, dict):
-        raw_components = raw_message.get("message")
-        if isinstance(raw_components, list):
-            for item in raw_components:
-                if not isinstance(item, dict):
-                    continue
-                item_type = item.get("type")
-                data = item.get("data")
-                if not isinstance(data, dict):
-                    continue
-                components.append({"type": item_type, **data})
+    if not isinstance(raw_message, dict):
+        return []
 
+    raw_components = raw_message.get("message")
+    if not isinstance(raw_components, list):
+        return []
+
+    components: list[Any] = []
+    for item in raw_components:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        components.append({"type": item_type, **data})
+    return components
+
+
+def _get_message_components(event: Any) -> list[Any]:
+    """合并 AstrBot 同一消息的多路组件表示。
+
+    常见三路（本地缓存 / 解析后组件 / 平台原始包）会指向同一附件的不同
+    path 或 url。此处仍合并全部来源以保证不漏附件；真正的去重在
+    extract（path/url）与 upload_event_files（内容哈希）两层完成。
+    """
+    components: list[Any] = []
+    for loader in (
+        _components_from_get_messages,
+        _components_from_message_obj,
+        _components_from_raw_message,
+    ):
+        components.extend(loader(event))
     return components
 
 
@@ -165,8 +189,14 @@ def _build_upload_source(component: Any) -> dict[str, Any] | None:
 
 
 def _source_key(source: dict[str, Any]) -> str:
+    """路径尽量 realpath，降低同一文件不同相对/符号路径的重复。"""
     if source.get("kind") == "path":
-        return f"path:{source.get('path', '')}"
+        path = source.get("path", "") or ""
+        try:
+            path = os.path.realpath(path)
+        except OSError:
+            pass
+        return f"path:{path}"
     return f"url:{source.get('url', '')}"
 
 
@@ -243,6 +273,17 @@ async def _read_upload_source(source: dict[str, Any]) -> tuple[bytes, str, str]:
     return raw, filename, mime_type
 
 
+def _source_display_name(source: Any) -> str:
+    if isinstance(source, dict):
+        return (
+            source.get("name")
+            or source.get("path")
+            or source.get("url")
+            or "attachment"
+        )
+    return str(source) if source else "attachment"
+
+
 async def upload_event_files(client: AsyncHapiClient, event: Any,
                              sid: str) -> tuple[list[dict], str]:
     """从消息中提取附件并全部上传到 session。
@@ -250,6 +291,10 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
     返回 (attachments, 上传过程说明)。无附件时返回 ([], "")。
     供快捷前缀 / Focus 转发链路使用：图片、文件经 /upload 接口
     转为 attachments 随消息发出。指令类路径（send/to）不自动捎带附件。
+
+    上传前按文件内容 SHA-256 去重：AstrBot 常把同一张图落成
+    media_image_*.jpg 与 download.jpg 两个本地缓存，路径去重挡不住，
+    必须读内容后、调 HAPI /upload 之前丢掉重复项。
     """
     files = extract_files_from_message(event)
     if not files:
@@ -257,8 +302,27 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
 
     attachments: list[dict] = []
     msgs: list[str] = []
-    for fpath in files:
-        ok, msg, attach = await upload_file(client, sid, fpath)
+    seen_content: set[str] = set()
+    for source in files:
+        normalized = _normalize_upload_source(source)
+        if not normalized:
+            msgs.append(f"不支持的上传来源: {_source_display_name(source)}")
+            continue
+        try:
+            raw, filename, mime_type = await _read_upload_source(normalized)
+        except Exception as exc:
+            msgs.append(f"读取 {_source_display_name(normalized)} 失败: {exc}")
+            continue
+
+        content_key = hashlib.sha256(raw).hexdigest()
+        if content_key in seen_content:
+            continue  # 静默去重，不向用户啰嗦
+        seen_content.add(content_key)
+
+        # 已读字节经 _preloaded 回传，避免 upload_file 再读一遍磁盘/URL
+        ok, msg, attach = await upload_file(
+            client, sid, {**normalized, "_preloaded": (raw, filename, mime_type)}
+        )
         msgs.append(msg)
         if ok and attach:
             attachments.append(attach)
@@ -319,20 +383,28 @@ async def download_to_tmp(client: AsyncHapiClient, sid: str, path: str) -> tuple
 
 async def upload_file(client: AsyncHapiClient, sid: str, source: Any) -> tuple[bool, str, dict | None]:
     """Upload a local path or remote URL attachment to HAPI."""
-    normalized = _normalize_upload_source(source)
-    if not normalized:
-        return False, f"不支持的上传来源: {source}", None
+    preloaded = None
+    if isinstance(source, dict):
+        preloaded = source.get("_preloaded")
+        # 不把内部字段传给 normalize
+        source = {k: v for k, v in source.items() if k != "_preloaded"}
 
-    try:
-        raw, filename, mime_type = await _read_upload_source(normalized)
-    except Exception as exc:
-        display_name = (
-            normalized.get("name")
-            or normalized.get("path")
-            or normalized.get("url")
-            or "attachment"
-        )
-        return False, f"读取 {display_name} 失败: {exc}", None
+    if preloaded is not None:
+        raw, filename, mime_type = preloaded
+    else:
+        normalized = _normalize_upload_source(source)
+        if not normalized:
+            return False, f"不支持的上传来源: {source}", None
+        try:
+            raw, filename, mime_type = await _read_upload_source(normalized)
+        except Exception as exc:
+            display_name = (
+                normalized.get("name")
+                or normalized.get("path")
+                or normalized.get("url")
+                or "attachment"
+            )
+            return False, f"读取 {display_name} 失败: {exc}", None
 
     payload = {
         "filename": filename,
