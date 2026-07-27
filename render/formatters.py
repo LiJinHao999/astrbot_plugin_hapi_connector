@@ -1209,7 +1209,7 @@ HELP_COMMANDS = [
     {
         "topic": "config",
         "usage": "/hapi focus [on|off]",
-        "summary": "开启/关闭 Focus 模式（自动发送所有消息到当前 session）",
+        "summary": "开启/关闭 Focus 模式（文字直发当前 session；纯附件暂存）",
         "example": "/hapi focus on",
         "home": True,
     },

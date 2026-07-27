@@ -831,10 +831,17 @@ class CommandHandlers:
                 enabled = reply in ("on", "开启")
                 self.binding_mgr.set_window_focus_mode(umo, enabled)
                 await self.state_mgr.persist_window_state(umo)
+                if not enabled:
+                    self.plugin._clear_staged_attachments(umo)
                 status_text = "已开启" if enabled else "已关闭"
+                extra = ""
+                if enabled:
+                    extra = (
+                        f"当前窗口文字消息将自动发送到 {title}\n"
+                        "纯图片/文件会先暂存，配上文字后再一并送出"
+                    )
                 await ev.send(ev.plain_result(
-                    f"Focus 模式{status_text}\n"
-                    + (f"当前窗口所有消息将自动发送到 {title}" if enabled else "")
+                    f"Focus 模式{status_text}\n" + extra
                 ))
                 controller.stop()
 
@@ -865,9 +872,14 @@ class CommandHandlers:
         await self.state_mgr.persist_window_state(umo)
 
         if enabled:
-            yield event.plain_result(f"Focus 模式已开启\n当前窗口所有消息将自动发送到 {title}")
+            yield event.plain_result(
+                f"Focus 模式已开启\n"
+                f"当前窗口文字消息将自动发送到 {title}\n"
+                "纯图片/文件会先暂存，配上文字后再一并送出"
+            )
         else:
-            yield event.plain_result("Focus 模式已关闭")
+            self.plugin._clear_staged_attachments(umo)
+            yield event.plain_result("Focus 模式已关闭（暂存附件已清空）")
 
     # ── remote ──
 

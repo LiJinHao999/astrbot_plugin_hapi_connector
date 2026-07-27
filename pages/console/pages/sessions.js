@@ -367,7 +367,7 @@ function renderFocusToggle(col) {
   }
   const on = isFocusOn(col.umo);
   slot.innerHTML = `
-    <label class="tb-check focus-toggle" title="开启后：该聊天窗口里发的普通消息会直接转发给当前 session，不用再加快捷前缀。与聊天指令 /hapi focus 同步。">
+    <label class="tb-check focus-toggle" title="开启后：该聊天窗口里发的文字消息会直接转发给当前 session（免前缀）；纯图片/文件会先暂存，配上文字后再一并送出。与 /hapi focus 同步。">
       <input type="checkbox" id="focus-mode-chk" ${on ? "checked" : ""} />
       <span>Focus 模式${on ? " · 开" : ""}</span>
     </label>`;

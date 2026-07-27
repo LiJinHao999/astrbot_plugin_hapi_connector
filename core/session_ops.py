@@ -42,6 +42,21 @@ async def _finish(resp, ok_msg: str, fail_prefix: str) -> tuple[bool, str]:
     return False, f"{fail_prefix}: {resp.status} {body[:200]}"
 
 
+async def fetch_slash_commands(client: AsyncHapiClient, sid: str) -> list[dict]:
+    """获取 session 支持的斜杠命令列表（内置 + 用户/项目/插件自定义）。
+
+    上游 GET /api/sessions/:id/slash-commands：优先 RPC 向 agent 实时查询，
+    失败时 Hub 自身回退 metadata.slashCommands。命令 name 不带前导斜杠。
+    """
+    resp = await client.get(f"/api/sessions/{sid}/slash-commands")
+    resp.raise_for_status()
+    data = await resp.json()
+    resp.release()
+    if not data.get("success", True):
+        return []
+    return data.get("commands", []) or []
+
+
 async def send_message(client: AsyncHapiClient, sid: str, text: str,
                        attachments: list[dict] | None = None) -> tuple[bool, str]:
     """发送消息到 session（可附带已上传的附件），返回 (成功, 描述)"""

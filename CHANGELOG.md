@@ -1,51 +1,43 @@
 # 更新日志
 
-## v3.2.0 — Focus 模式、会话模板与快捷发送增强
+## v3.2.1
+
+1. **修复 Focus 模式下 `/` 开头消息的拦截判断失效**  
+   AstrBot 的 `WakingCheckStage` 会在插件处理器之前剥离唤醒前缀（`/help` 到插件手里已是 `help`），导致 Focus 的「`/` 开头命令不转发」判断实际从未生效——其它 AstrBot 指令会被误转发给 AI 并被吞掉。现改为回看真正的原文判断（兼容自定义唤醒前缀）。
+
+2. **修复 Focus / 快捷前缀发送图片时同一张图被上传两次**  
+   AstrBot 常把同一附件同时落成 `media_image_*.jpg` 与 `download.jpg` 两份本地缓存（路径不同、内容相同），旧逻辑只按 path/url 去重，会把一份图当成两个 attachments 发出。现上传前按内容 SHA-256 去重，重复项直接跳过。
+
+3. **Focus 纯附件改为「发送区暂存」**  
+   开着 Focus 时，只发图片/文件不再立刻 `send_message` 惊动 AI：先 upload 到当前 session 的 blobs 并暂存在本窗口发送区；下一条**文字消息**会连同暂存附件一并送出。图文同发仍立即发送。关闭 Focus（聊天指令或 WebUI）会清空暂存；暂存为内存态，插件重启丢失。快捷前缀 `>` 行为不变（仍可立刻带附件发送）。
+
+## v3.2.0 — 支持 Focus 模式完全接管 Astrbot 会话、支持在 webui 设置快速创建agent的模板
 
 1. **新增 Focus 模式 用于让 HAPI 完全接管 astrbot 会话**  
    - `/hapi focus on`：开启专注模式，当前窗口的普通消息自动发送到当前选中的 session，无需快捷前缀 `>`（`/` 开头命令、`hapi` 开头消息、关键词别名仍按原样处理）
    - `/hapi focus off`：关闭专注模式；状态持久化，重启后自动恢复
-   - 中文快捷指令：`专注` → `/hapi focus on`，`退出专注` → `/hapi focus off`（默认关键词映射，可在 WebUI 修改）
-   - 仅对单个窗口的当前 session 生效，不影响其他窗口或 session
+   - 快捷指令：`专注` → `/hapi focus on`，`退出专注` → `/hapi focus off`
+   - 仅对单个聊天窗口的当前 session 生效，不影响其他窗口或 session
    - WebUI 会话管理页：窗口列表显示 Focus 标签，面板标题旁可直接开关
+   - 附件语义见 v3.2.1：纯附件暂存，文字一并送出
 
-2. **新增创建连接模板功能**  
+2. **新增创建 Agent 模板功能**  
    - WebUI「交互优化 → 会话模板」可以把常用组合（代理 / 目录 / 机器 / 类型 / YOLO / 思考深度）存成命名模板，用于快速启动
    - 在聊天中使用命令 `/hapi create <模板名> [目录]` 一步创建，跳过向导；目录参数可覆盖模板默认，模板目录留空时必须传参
    - 不带参数的 `/hapi create` 仍走交互向导，有模板时会先列出可用模板
 
-3. **新增 `/hapi retry`**  
+3. **新增 `/hapi retry`**  命令
    重发本窗口上一条发出的消息（快捷前缀 / Focus / send / to / LLM 工具发的都会记录），AI 无响应或断线重连后使用；记录在内存，重启后清空
 
-4. **Focus 转发支持附件**  
-   Focus 模式下发的图片/文件与快捷前缀一致：自动走 HAPI upload 接口转为 attachments 随消息发出（纯附件、无文字的消息也会转发）。指令类路径（`/hapi send` / `to` / LLM 工具）保持只发文本，附件请用快捷前缀或 `/hapi upload`
-
-5. **新增《插件使用指南》文档**  
+4. **新增《插件使用指南》文档**  
    `docs/usage-guide.md`：从上手流程、Focus 模式、审批、通知路由到常见问题的完整使用说明；WebUI「部署文档」页可直接阅读
 
-6. **语言描述统一**  
-   将所有用户可见文案中的 "agent" 统一改为 "AI 代理"，提升中文语境一致性。
-
-7. **代码质量改进**  
+5. **代码质量改进**  
    - 修复 `session_ops.py` 中 `send_message` 重复定义 bug（英文版覆盖中文版，导致发送回执显示英文）
    - 提取公共 helper 方法（`_visible_sids`、`_require_sid`、`_resolve_target_verbose` 等），消除重复代码
    - 统一推送标签格式：`[System]` → 【系统】，`[Summary]` → 【总结】，`[Message]` → 【消息】
    - 中文化错误提示与操作反馈（`✗` 前缀 + 失败原因说明）
    - 符号标准化：`◀ 当前`、`⚠️`（变体符）、待审批计数格式
-
-8. **帮助文案精简**  
-   - `/hapi effort` 不再列举全部 AI 代理值域，改为通用说明
-   - `/hapi plan` 去掉实现细节，聚焦用户操作
-   - `file_ops.py` 用户可见错误信息中文化
-
-9. **文档与架构描述优化**  
-   - `CLAUDE.md`：更新项目定位、版本号、模块职责表（AI 代理 flavor）
-   - `README.md`：修正标点/空格/大小写混用，新增 Focus 模式说明
-
-10. **WebUI 文案统一**  
-   - `constants.js`：AI 代理推送窗口、AI 对话
-   - `sessions.js`：优先按 AI 代理类型推送消息
-   - `settings_schema_fallback.js`：AI 代理完成任务、AI 对话
 
 ## v3.1.0
 
@@ -69,8 +61,8 @@
 默认开启的关键词监听映射有：
 stop，停 -> /hapi stop 命令
 sw -> /hapi sw 命令
-cl -> /hapi to 1 /clear 命令，即对当前agent发送/clear指令清除会话上下文
-继续 -> /hapi to 1 继续 ，即对当前agent直接发送一条“继续”的消息
+cl -> /hapi send /clear 命令，即对当前agent发送/clear指令清除会话上下文
+继续 -> /hapi send 继续 ，即对当前agent直接发送一条“继续”的消息
 hapi指令别名 -> /hapi alias 命令，即查看当前别名关键词映射情况
 
 关键词只会在当前有交互中的session，并且用户是管理员时被触发。无须担心误触。
