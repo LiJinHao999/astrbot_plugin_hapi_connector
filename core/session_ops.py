@@ -32,6 +32,44 @@ async def fetch_messages(client: AsyncHapiClient, sid: str, limit: int = 10) -> 
     return data.get("messages", [])
 
 
+async def fetch_generated_image(
+    client: AsyncHapiClient, sid: str, image_id: str
+) -> tuple[bytes | None, str | None, str | None]:
+    """下载 session 内 HAPI 生成图。
+
+    对应 Hub ``GET /api/sessions/:id/generated-images/:imageId``（base64 字节流）。
+    返回 (bytes, mime, error)；成功时 error 为 None。
+    """
+    image_id = (image_id or "").strip()
+    if not sid or not image_id:
+        return None, None, "missing sid or imageId"
+    path = f"/api/sessions/{sid}/generated-images/{image_id}"
+    resp = await client.get(path)
+    try:
+        if resp.status == 404:
+            body = await resp.text()
+            return None, None, f"not found: {body[:120]}"
+        if resp.status >= 400:
+            body = await resp.text()
+            return None, None, f"HTTP {resp.status}: {body[:160]}"
+        raw = await resp.read()
+        mime = resp.headers.get("Content-Type") or "application/octet-stream"
+        # 部分错误仍 200 + JSON
+        if not raw:
+            return None, None, "empty body"
+        if raw[:1] == b"{" and b"error" in raw[:200]:
+            try:
+                import json as _json
+
+                err = _json.loads(raw.decode("utf-8", "replace"))
+                return None, None, str(err.get("error") or err)[:160]
+            except Exception:
+                pass
+        return raw, mime.split(";")[0].strip(), None
+    finally:
+        resp.release()
+
+
 async def _finish(resp, ok_msg: str, fail_prefix: str) -> tuple[bool, str]:
     """统一处理写操作响应：成功返回 ok_msg，失败返回中文错误 + 状态码与响应体片段"""
     if resp.ok:

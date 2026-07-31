@@ -6,6 +6,7 @@ Pillow / Playwright 为可选依赖；不可用或渲染失败时永远回退文
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from typing import Any, AsyncIterator
 
@@ -473,6 +474,93 @@ def _strip_emoji(text: str) -> str:
     return text.strip()
 
 
+_RE_HAPI_GENIMG = re.compile(
+    r"!\[([^\]]*)\]\(hapi-genimg://([^)\s]+)\)",
+    re.IGNORECASE,
+)
+
+
+async def resolve_hapi_genimg_markers(
+    body: str,
+    *,
+    client: Any,
+    session_id: str,
+    max_images: int = 6,
+) -> str:
+    """把 ``![alt](hapi-genimg://id)`` 下载成临时文件，改写为 ``![alt](/tmp/...)``。
+
+    供对话卡 Pillow 嵌真实像素。失败时保留可读占位，不拖垮整条消息。
+    临时文件由调用方在出图后延迟清理（或 OS 清 /tmp）。
+    """
+    text = body or ""
+    if "hapi-genimg://" not in text or not client or not session_id:
+        return text
+
+    from ..core import session_ops
+
+    cache: dict[str, str] = {}  # imageId -> local path or ""
+    out: list[str] = []
+    last = 0
+    count = 0
+    for m in _RE_HAPI_GENIMG.finditer(text):
+        out.append(text[last : m.start()])
+        alt = m.group(1) or "generated-image"
+        image_id = (m.group(2) or "").strip()
+        last = m.end()
+        if not image_id or count >= max_images:
+            out.append(f"[图片] {alt}")
+            continue
+        if image_id in cache:
+            path = cache[image_id]
+            if path:
+                out.append(f"![{alt}]({path})")
+            else:
+                out.append(f"[图片] {alt}")
+            continue
+        try:
+            raw, mime, err = await session_ops.fetch_generated_image(
+                client, session_id, image_id
+            )
+            if err or not raw:
+                logger.info(
+                    "genimg fetch fail sid=%s id=%s err=%s",
+                    (session_id or "")[:8],
+                    image_id[:16],
+                    err,
+                )
+                cache[image_id] = ""
+                out.append(f"[图片] {alt}")
+                continue
+            ext = ".png"
+            mt = (mime or "").lower()
+            if "jpeg" in mt or "jpg" in mt:
+                ext = ".jpg"
+            elif "webp" in mt:
+                ext = ".webp"
+            elif "gif" in mt:
+                ext = ".gif"
+            fd, path = tempfile.mkstemp(prefix="hapi_genimg_", suffix=ext)
+            os.close(fd)
+            with open(path, "wb") as f:
+                f.write(raw)
+            cache[image_id] = path
+            count += 1
+            out.append(f"![{alt}]({path})")
+            logger.info(
+                "genimg cached sid=%s id=%s bytes=%s path=%s",
+                (session_id or "")[:8],
+                image_id[:16],
+                len(raw),
+                path,
+            )
+        except Exception as e:
+            logger.warning("genimg resolve error: %s", e)
+            cache[image_id] = ""
+            out.append(f"[图片] {alt}")
+    out.append(text[last:])
+    return "".join(out)
+
+
 def build_message_payload(
     *,
     label: str,
@@ -486,6 +574,7 @@ def build_message_payload(
     - title：会话标题（对话名），缺省时从 label 首行 / session_title 取
     - subtitle：路径 · flavor · sid 等元信息（label 其余行）
     - footer：默认空；不再附 output=simple 等尾注（避免图片后再冒出一条文本）
+    - body 可含 ``![alt](/local/path)``；由 Pillow 嵌图
     """
     lines = [
         p.strip()
@@ -511,6 +600,7 @@ def build_message_payload(
         "title": conv_title,
         "subtitle": sub,
         # 工具调用等：先转 ASCII 标记再剥 emoji，避免卡片丢结构
+        # 注意：本地路径 ![alt](/tmp/...) 需保留，勿被剥坏
         "body": prepare_agent_body_for_card(body or ""),
         "footer": _strip_emoji(footer or ""),
     }

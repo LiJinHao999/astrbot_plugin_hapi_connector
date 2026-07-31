@@ -505,31 +505,58 @@ class SSEListener:
                 break
 
     async def _debounced_completion(self):
-        """防抖：等待状态稳定后再推送任务完成通知（避免 Codex 频繁切换 thinking 导致重复推送）"""
+        """防抖：等待状态稳定后再推送任务完成通知（避免 Codex 频繁切换 thinking 导致重复推送）。
+
+        多 agent / 子代理场景下 thinking 会多次边沿跳变；拉长稳定窗口，
+        且本轮已成功推过正文时不再额外弹「会话已完成」。
+        """
         while True:
-            await asyncio.sleep(1.5)
+            # 子代理来回切 thinking 时 1.5s 仍会抖；拉到 ~3s 合并一轮
+            await asyncio.sleep(3.0)
             sids = list(self._completion_sids)
             self._completion_sids.clear()
             for sid in sids:
                 async with self._lock:
                     state = self.session_states.get(sid, {})
                     has_pending = len(self.pending.get(sid, {})) > 0
-                if not state.get("thinking", False) and not has_pending:
-                    last_seq = state.get("lastSeq", 0)
-                    if self.output_level == "summary":
-                        await self._show_summary(sid, last_seq)
-                    elif self.output_level == "detail":
-                        await self._show_detail(sid, last_seq)
-                    elif self.output_level == "simple":
-                        await self._show_simple(sid, last_seq)
+                if state.get("thinking", False) or has_pending:
+                    continue
+                last_seq = state.get("lastSeq", 0)
+                # 再确认一次稳定：短等后 thinking 仍为 false
+                await asyncio.sleep(0.8)
+                async with self._lock:
+                    state2 = self.session_states.get(sid, {})
+                    has_pending2 = len(self.pending.get(sid, {})) > 0
+                if state2.get("thinking", False) or has_pending2:
+                    self._completion_sids.add(sid)
+                    continue
 
-                    async with self._lock:
-                        last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
-                    if last_seq <= self._completion_notified_seqs.get(sid, -1):
-                        continue
-                    label = session_label_short(sid, self.sessions_cache)
-                    self._completion_notified_seqs[sid] = last_seq
-                    await self._push_notification(f"✅ 会话已完成，等待新的输入\n{label}", sid)
+                showed = False
+                if self.output_level == "summary":
+                    showed = bool(await self._show_summary(sid, last_seq))
+                elif self.output_level == "detail":
+                    showed = bool(await self._show_detail(sid, last_seq))
+                elif self.output_level == "simple":
+                    showed = bool(await self._show_simple(sid, last_seq))
+
+                async with self._lock:
+                    last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
+                if last_seq <= self._completion_notified_seqs.get(sid, -1):
+                    continue
+                self._completion_notified_seqs[sid] = last_seq
+                # 本轮已推过对话卡，或防抖拉取时已推过同 seq 正文 → 不再叠「会话已完成」
+                if showed:
+                    continue
+                if last_seq > 0 and last_seq <= self._message_notified_seqs.get(sid, -1):
+                    continue
+                label = session_label_short(sid, self.sessions_cache)
+                if self.output_level == "silence":
+                    await self._push_notification(
+                        f"✅ 会话已完成，等待新的输入\n{label}", sid
+                    )
+                else:
+                    # 无新可见正文时轻量提示（避免全被过滤后完全没反馈）
+                    await self._push_notification(f"✅ 会话已完成\n{label}", sid)
             if not self._completion_sids:
                 break
 
@@ -633,8 +660,16 @@ class SSEListener:
             if not self._debounce_sids:
                 break
 
+    def _preview_message(self, content: dict, *, detail: bool) -> str | None:
+        """统一抽正文；detail 可含【子代理】，simple/summary 隐藏 sidechain 与工具进度。"""
+        return extract_text_preview(
+            content,
+            max_len=0,
+            include_sidechain=detail,
+        )
+
     async def _show_detail(self, sid: str, old_seq: int) -> bool:
-        """detail 模式：获取并显示所有新消息（使用统一格式）"""
+        """detail 模式：获取并显示所有新消息（含折叠后的子代理正文）"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=20)
             if not messages:
@@ -650,7 +685,7 @@ class SSEListener:
             visible_msgs = []
             for msg in new_msgs:
                 content = msg.get("content", {})
-                text = extract_text_preview(content, max_len=0)
+                text = self._preview_message(content, detail=True)
                 if text is not None:
                     visible_msgs.append((msg, text))
 
@@ -700,13 +735,12 @@ class SSEListener:
             return False
 
     async def _show_simple(self, sid: str, old_seq: int) -> bool:
-        """simple 模式：获取并显示新的 agent 纯文本消息"""
+        """simple 模式：仅主 agent 纯文本；过滤工具进度 / sidechain / 工具调用行。"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=50)
             if not messages:
                 return False
 
-            # 筛选: seq > old_seq、agent 角色、有文本内容、不以 [ 开头（排除工具调用/返回等）
             agent_texts = []
             for msg in messages:
                 if msg.get("seq", 0) <= old_seq:
@@ -714,8 +748,11 @@ class SSEListener:
                 content = msg.get("content", {})
                 if content.get("role") not in ("agent", "assistant"):
                     continue
-                text = extract_text_preview(content, max_len=0)
-                if text is None or text.startswith("🛠️"):
+                text = self._preview_message(content, detail=False)
+                if text is None or text.startswith("🛠️") or text.startswith("❓"):
+                    continue
+                # 子代理标签（若上游漏标 isSidechain 但正文被标了）在 simple 仍隐藏
+                if text.startswith("【子代理】"):
                     continue
                 agent_texts.append((msg, text))
 
@@ -739,13 +776,13 @@ class SSEListener:
 
             if len(agent_texts) == 1:
                 _, text = agent_texts[0]
-                output = f"{label}\n【消息】{text}"
+                output = f"{label}\n{format_agent_line(text)}"
                 body = text
             else:
                 lines = [f"{label}\n━━━ {len(agent_texts)} 条新消息 ━━━"]
                 body_parts = []
                 for _, text in agent_texts:
-                    lines.append(f"【消息】{text}")
+                    lines.append(format_agent_line(text))
                     body_parts.append(text)
                 lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 output = "\n\n".join(lines)
@@ -765,7 +802,7 @@ class SSEListener:
             return False
 
     async def _show_summary(self, sid: str, old_seq: int) -> bool:
-        """summary 模式：获取并显示最近 N 条新 agent 消息（过滤工具调用）"""
+        """summary 模式：最近 N 条主 agent 消息（过滤工具调用与 sidechain）"""
         try:
             messages = await session_ops.fetch_messages(self.client, sid, limit=50)
             if not messages:
@@ -778,8 +815,10 @@ class SSEListener:
                 content = msg.get("content", {})
                 if content.get("role") not in ("agent", "assistant"):
                     continue
-                text = extract_text_preview(content, max_len=0)
-                if text is None or text.startswith("🛠️"):
+                text = self._preview_message(content, detail=False)
+                if text is None or text.startswith("🛠️") or text.startswith("❓"):
+                    continue
+                if text.startswith("【子代理】"):
                     continue
                 agent_texts.append((msg, text))
 
@@ -918,9 +957,20 @@ class SSEListener:
                 None,
             )
             sess_title = fmt.get_session_title(sess) if sess else ""
+            # HAPI generated-image → 本地下载，对话卡可嵌真图
+            body_resolved = body
+            try:
+                client = getattr(self, "client", None) or getattr(plugin, "client", None)
+                if client and body and "hapi-genimg://" in body:
+                    body_resolved = await output_present.resolve_hapi_genimg_markers(
+                        body, client=client, session_id=session_id
+                    )
+            except Exception as e:
+                logger.warning("resolve genimg markers failed: %s", e)
+                body_resolved = body
             payload = output_present.build_message_payload(
                 label=label,
-                body=body,
+                body=body_resolved,
                 title=title or sess_title,
                 footer=footer,  # 默认空，不推 caption
                 session_title=sess_title,

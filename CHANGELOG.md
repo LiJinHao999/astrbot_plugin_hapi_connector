@@ -1,5 +1,19 @@
 # 更新日志
 
+## v3.2.4
+
+1. **对话卡可嵌 HAPI 生成图**  
+   Agent 消息里的 `generated-image` 不再变成 `[generated-image]` 占位；会走 `GET /api/sessions/:id/generated-images/:imageId` 下载后嵌进对话卡（Markdown `![…](…)` / 本地路径同样支持）。
+
+2. **对话卡 Markdown 观感**  
+   列表用 `●`；GFM 任务列表 `- [x]` 走清单样式；链接显示文字+下划线；表内 `\|` 转义；代码块超长行按宽度折行并避免画布裁切。
+
+3. **过滤 MCP / SDK 进度噪音**  
+   `tool_progress` 心跳、session 元数据信封等不再整段 JSON 当正文推到对话卡。
+
+4. **多 agent（sidechain）与完成提示**  
+   simple / summary 默认不展示子代理正文；detail 以【子代理】前缀展示。thinking 完成边沿防抖加长；本轮已推过正文时不再叠「会话已完成」。
+
 ## v3.2.3
 
 1. **模板创建缺目录时可选手动/最近路径**  

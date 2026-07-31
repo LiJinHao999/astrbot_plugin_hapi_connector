@@ -2192,12 +2192,30 @@ def _is_md_table_sep(line: str) -> bool:
 
 
 def _split_md_table_row(line: str) -> list[str]:
+    """按 | 分列；支持单元格内转义 \\|（GFM 常见写法）。"""
     s = (line or "").rstrip()
     if s.lstrip().startswith("|"):
         s = s.lstrip()[1:]
     if s.rstrip().endswith("|"):
         s = s.rstrip()[:-1]
-    return [c.strip() for c in s.split("|")]
+    cells: list[str] = []
+    buf: list[str] = []
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "\\" and i + 1 < len(s) and s[i + 1] == "|":
+            buf.append("|")
+            i += 2
+            continue
+        if ch == "|":
+            cells.append("".join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    cells.append("".join(buf).strip())
+    return cells
 
 
 def _try_parse_md_table(lines: list[str], start: int) -> tuple[dict[str, Any], int] | None:
@@ -2257,7 +2275,8 @@ def _try_parse_md_table(lines: list[str], start: int) -> tuple[dict[str, Any], i
 
 def _plain_inline(s: str) -> str:
     """Pillow 用：去掉 ** ` 等标记，保留纯文本（测宽 / 回退）。"""
-    plain = re.sub(r"\*\*([^*]+)\*\*", r"\1", s or "")
+    plain = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", s or "")
+    plain = re.sub(r"\*\*([^*]+)\*\*", r"\1", plain)
     plain = re.sub(r"`([^`]+)`", r"\1", plain)
     plain = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", plain)
     plain = re.sub(r"__([^_]+)__", r"\1", plain)
@@ -2447,9 +2466,12 @@ def _draw_text(
     draw.text(xy, text, font=font, fill=fill)
 
 
-# 行内：`code` / **bold** / __bold__ / *em*（不含嵌套）
+# 行内：图片 / 链接 / `code` / **bold** / __bold__ / *em*（不含嵌套）
+# 图片须在链接前匹配，避免 ![alt](url) 被吃成 link
 _RE_INLINE_RUNS = re.compile(
-    r"(`[^`]+`)"
+    r"(!\[([^\]]*)\]\(([^)]+)\))"
+    r"|(\[([^\]]+)\]\(([^)]+)\))"
+    r"|(`[^`]+`)"
     r"|(\*\*[^*]+\*\*)"
     r"|(__[^_]+__)"
     r"|(?<!\*)(\*[^*]+\*)(?!\*)"
@@ -2457,7 +2479,11 @@ _RE_INLINE_RUNS = re.compile(
 
 
 def parse_inline_runs(text: str) -> list[dict[str, str]]:
-    """Markdown 行内 → [{type: text|bold|code|em, text}]，去掉标记符。"""
+    """Markdown 行内 → [{type, text, ...}]，去掉标记符。
+
+    type: text|bold|code|em|link|image_ref
+    image_ref 另带 src；真正位图由 _parse_md_blocks 的 image 块处理。
+    """
     s = text or ""
     if not s:
         return []
@@ -2467,7 +2493,15 @@ def parse_inline_runs(text: str) -> list[dict[str, str]]:
         if m.start() > pos:
             runs.append({"type": "text", "text": s[pos : m.start()]})
         raw = m.group(0)
-        if raw.startswith("`"):
+        if raw.startswith("!["):
+            alt = m.group(2) or ""
+            src = (m.group(3) or "").strip()
+            runs.append({"type": "image_ref", "text": alt or "image", "src": src})
+        elif raw.startswith("[") and "](" in raw:
+            label = m.group(5) or ""
+            # 链接只显示可读文字，不画 URL（卡片宽度有限）
+            runs.append({"type": "link", "text": label})
+        elif raw.startswith("`"):
             runs.append({"type": "code", "text": raw[1:-1]})
         elif raw.startswith("**") or raw.startswith("__"):
             runs.append({"type": "bold", "text": raw[2:-2]})
@@ -2484,7 +2518,7 @@ def parse_inline_runs(text: str) -> list[dict[str, str]]:
 def _font_for_run(run_type: str, font_body, font_bold, font_code):
     if run_type == "code":
         return font_code or font_body
-    if run_type == "bold":
+    if run_type in ("bold", "link"):
         return font_bold or font_body
     return font_body
 
@@ -2551,14 +2585,19 @@ def _wrap_inline_runs(
         font = _font_for_run(rtype, font_body, font_bold, font_code)
         stroke = _run_needs_stroke(rtype, font_body, font_bold)
         sw = 1 if stroke else 0
-        # 代码尽量整段；过长仍按字符折
+        # 代码尽量整段；当前行放不下则换行；仍超宽再按字切
         if rtype == "code":
             w, _ = _text_size(draw, text, font, stroke_width=sw)
-            if w <= max_width - cur_w or not cur:
+            if w <= max(1, max_width - cur_w):
                 append_piece(rtype, text)
                 continue
-            # 放不下：换行后按字切
-            flush()
+            if cur:
+                flush()
+            w2, _ = _text_size(draw, text, font, stroke_width=sw)
+            if w2 <= max_width:
+                append_piece(rtype, text)
+                continue
+            # 单段代码宽于整行：落入下方按字折
         # 按字符前进（CJK 友好）
         buf = ""
         for ch in text:
@@ -2618,6 +2657,7 @@ def _draw_inline_runs(
     code_bg: tuple[int, int, int] | None = None,
     max_width: int,
     line_extra: int = 4,
+    accent: tuple[int, int, int] | None = None,
 ) -> int:
     """绘制行内 runs，返回消耗的高度。"""
     lines = _wrap_inline_runs(
@@ -2645,21 +2685,35 @@ def _draw_inline_runs(
         for piece, pw, ph in pieces_m:
             ty = yy + max(0, (lh - ph) // 2)
             txt = piece.get("text") or ""
-            if piece.get("type") == "code" and code_bg is not None and txt:
+            rtype = piece.get("type") or "text"
+            if rtype == "code" and code_bg is not None and txt:
                 pad_x, pad_y = 3, 1
                 draw.rounded_rectangle(
                     (xx - pad_x, ty - pad_y, xx + pw + pad_x, ty + ph + pad_y),
                     radius=3,
                     fill=code_bg,
                 )
+            col = fill
+            if rtype == "link" and accent is not None:
+                col = accent
             _draw_text(
                 draw,
                 (xx, ty),
                 txt,
                 piece["font"],
-                fill,
+                col,
                 bold_stroke=bool(piece.get("stroke")),
             )
+            # 链接轻下划线
+            if rtype == "link" and txt and accent is not None:
+                try:
+                    draw.line(
+                        (xx, ty + ph - 1, xx + max(1, pw), ty + ph - 1),
+                        fill=accent,
+                        width=1,
+                    )
+                except Exception:
+                    pass
             xx += pw
         yy += lh + line_extra
     return max(0, yy - y)
@@ -3411,7 +3465,7 @@ def _parse_message_blocks_with_math(
     """
     segs = extract_formula_segments(text)
     if not segs or all(k == "text" for k, _c, _d in segs):
-        return _parse_md_blocks(text)
+        return _parse_md_blocks(text, image_max_width=max_formula_w)
 
     fs_inline = formula_fontsize
     fs_disp = formula_fontsize_display or (formula_fontsize * 1.12)
@@ -3444,7 +3498,7 @@ def _parse_message_blocks_with_math(
         if all(p.get("type") == "text" for p in line_parts):
             joined = "".join(p.get("text") or "" for p in line_parts)
             if joined.strip():
-                out.extend(_parse_md_blocks(joined))
+                out.extend(_parse_md_blocks(joined, image_max_width=max_formula_w))
             line_parts = []
             return
         # rich_line 里的 text 不应再含换行；按行拆开
@@ -3470,7 +3524,7 @@ def _parse_message_blocks_with_math(
             if all(x.get("type") == "text" for x in mixed):
                 joined = "".join(x.get("text") or "" for x in mixed)
                 if joined.strip():
-                    out.extend(_parse_md_blocks(joined))
+                    out.extend(_parse_md_blocks(joined, image_max_width=max_formula_w))
             else:
                 out.append({"type": "rich_line", "parts": list(mixed)})
         line_parts = []
@@ -3510,7 +3564,7 @@ def _parse_message_blocks_with_math(
             line_parts.append({"type": "text", "text": f"${content}$"})
 
     flush_line()
-    return out or _parse_md_blocks(text)
+    return out or _parse_md_blocks(text, image_max_width=max_formula_w)
 
 
 def _draw_message_png(
@@ -3565,7 +3619,7 @@ def _draw_message_png(
             formula_fontsize_display=formula_fs,
         )
     else:
-        blocks = _parse_md_blocks(body)
+        blocks = _parse_md_blocks(body, image_max_width=content_w)
 
     def _table_col_widths(headers, rows) -> list[int]:
         n = max(1, len(headers))
@@ -3696,8 +3750,14 @@ def _draw_message_png(
             return 18
         prefix = ""
         max_w = content_w
+        if b["type"] == "image":
+            im = b.get("image")
+            if im is not None:
+                return int(getattr(im, "height", 40)) + 16
+            # 未解析到像素时按一行说明占位
+            return _text_size(d0, "测", font_body)[1] + 20
         if b["type"] == "li":
-            prefix = "- "
+            prefix = "● "
         elif b["type"] == "quote":
             prefix = ""
             max_w = content_w - 16
@@ -3985,6 +4045,13 @@ def _draw_message_png(
                 sum(_text_size(draw, ln or " ", font_code)[1] + line_extra for ln in lines)
                 + 20
             )
+            if y + block_h + pad + 40 > height:
+                new_h = y + block_h + pad + 80
+                bigger = Image.new("RGB", (width, new_h), bg)
+                bigger.paste(img, (0, 0))
+                img = bigger
+                draw = ImageDraw.Draw(img)
+                height = new_h
             _draw_rounded_rect(
                 draw,
                 (pad, y, width - pad, y + block_h),
@@ -4095,6 +4162,7 @@ def _draw_message_png(
                 code_bg=code_bg,
                 max_width=content_w,
                 line_extra=line_extra,
+                accent=accent,
             )
             y += used + 10
             continue
@@ -4122,10 +4190,50 @@ def _draw_message_png(
                 code_bg=code_bg,
                 max_width=content_w - 16,
                 line_extra=line_extra,
+                accent=accent,
             )
             y += max(used, q_h) + 8
             continue
-        prefix = "- " if b["type"] == "li" else ""
+        if b["type"] == "image":
+            im = b.get("image")
+            alt = str(b.get("text") or b.get("alt") or "image")
+            if im is not None:
+                try:
+                    if y + im.height > height - pad:
+                        new_h = y + im.height + pad + 40
+                        if new_h > height:
+                            bigger = Image.new("RGB", (width, new_h), bg)
+                            bigger.paste(img, (0, 0))
+                            img = bigger
+                            draw = ImageDraw.Draw(img)
+                            height = new_h
+                    # 圆角底 + 细边，避免贴边发飘
+                    x0 = pad + max(0, (content_w - im.width) // 2)
+                    _draw_rounded_rect(
+                        draw,
+                        (x0 - 4, y - 4, x0 + im.width + 4, y + im.height + 4),
+                        radius=8,
+                        fill=code_bg,
+                        outline=border,
+                        width=1,
+                    )
+                    if getattr(im, "mode", "") == "RGBA":
+                        img.paste(im, (x0, y), im)
+                    else:
+                        img.paste(im, (x0, y))
+                    y += im.height + 14
+                except Exception:
+                    for line in _wrap_text(draw, f"[图片] {alt}", font_body, content_w):
+                        draw.text((pad, y), line, font=font_body, fill=sub_fg)
+                        y += _text_size(draw, line or " ", font_body)[1] + line_extra
+                    y += 8
+            else:
+                for line in _wrap_text(draw, f"[图片] {alt}", font_body, content_w):
+                    draw.text((pad, y), line, font=font_body, fill=sub_fg)
+                    y += _text_size(draw, line or " ", font_body)[1] + line_extra
+                y += 8
+            continue
+        prefix = "● " if b["type"] == "li" else ""
         runs = list(b.get("runs") or parse_inline_runs(b.get("text") or ""))
         if prefix:
             runs = [{"type": "text", "text": prefix}] + runs
@@ -4141,6 +4249,7 @@ def _draw_message_png(
             code_bg=code_bg,
             max_width=content_w,
             line_extra=line_extra,
+            accent=accent,
         )
         y += used + 8
 
@@ -4199,7 +4308,83 @@ def _draw_message_png(
     return buf.getvalue(), width, height
 
 
-def _parse_md_blocks(text: str) -> list[dict[str, Any]]:
+_RE_MD_IMAGE_ONLY = re.compile(r"^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$")
+_RE_MD_IMAGE_ANY = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
+
+def _load_pil_image_from_src(
+    src: str,
+    *,
+    max_width: int = 640,
+    max_height: int = 900,
+) -> Any | None:
+    """从本地路径 / data URL 加载 PIL 图并等比缩放到卡片宽度。失败返回 None。"""
+    if not _HAS_PILLOW or not src:
+        return None
+    raw: bytes | None = None
+    s = str(src).strip()
+    try:
+        if s.startswith("data:"):
+            # data:image/png;base64,....
+            comma = s.find(",")
+            if comma < 0:
+                return None
+            meta, b64 = s[:comma], s[comma + 1 :]
+            if ";base64" not in meta:
+                return None
+            import base64 as _b64
+
+            raw = _b64.b64decode(b64, validate=False)
+        elif s.startswith("file://"):
+            from urllib.parse import unquote, urlparse
+
+            path = unquote(urlparse(s).path or "")
+            if path and Path(path).is_file():
+                raw = Path(path).read_bytes()
+        elif s.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", s):
+            p = Path(s)
+            if p.is_file():
+                raw = p.read_bytes()
+        # http(s) / hapi-genimg:// 由上层预下载成本地路径后再进来
+        else:
+            p = Path(s)
+            if p.is_file():
+                raw = p.read_bytes()
+    except Exception as e:
+        logger.debug("load image src failed: %s · %s", s[:80], e)
+        return None
+    if not raw:
+        return None
+    try:
+        im = Image.open(io.BytesIO(raw))
+        im.load()
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+        tw = max(40, int(max_width))
+        th = max(40, int(max_height))
+        w, h = im.size
+        if w <= 0 or h <= 0:
+            return None
+        scale = min(tw / w, th / h, 1.0)
+        if scale < 0.999:
+            nw = max(1, int(w * scale))
+            nh = max(1, int(h * scale))
+            try:
+                resample = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
+            except Exception:
+                resample = Image.LANCZOS  # type: ignore[attr-defined]
+            im = im.resize((nw, nh), resample)
+        return im
+    except Exception as e:
+        logger.debug("decode image failed: %s", e)
+        return None
+
+
+def _parse_md_blocks(
+    text: str,
+    *,
+    image_max_width: int = 640,
+) -> list[dict[str, Any]]:
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
     blocks: list[dict[str, Any]] = []
@@ -4228,6 +4413,23 @@ def _parse_md_blocks(text: str) -> list[dict[str, Any]]:
             continue
         if re.match(r"^---+$|^\*\*\*+$|^___+$", line.strip()):
             blocks.append({"type": "hr", "text": ""})
+            i += 1
+            continue
+        # 独占一行的 Markdown 图：![alt](src)
+        m_img = _RE_MD_IMAGE_ONLY.match(line)
+        if m_img:
+            alt = (m_img.group(1) or "").strip() or "image"
+            src = (m_img.group(2) or "").strip()
+            im = _load_pil_image_from_src(src, max_width=image_max_width)
+            blocks.append(
+                {
+                    "type": "image",
+                    "text": alt,
+                    "alt": alt,
+                    "src": src,
+                    "image": im,
+                }
+            )
             i += 1
             continue
         # 卡片用工具/任务行（无 emoji；见 output_present.prepare_agent_body_for_card）
@@ -4300,6 +4502,22 @@ def _parse_md_blocks(text: str) -> list[dict[str, Any]]:
                     "type": "quote",
                     "text": _plain_inline(raw),
                     "runs": parse_inline_runs(raw),
+                }
+            )
+            i += 1
+            continue
+        # GFM 任务列表：- [x] / - [ ] / 1. [x]
+        m = re.match(r"^(\s*)(?:[-*+]|\d+\.)\s+\[([ xX~])\]\s+(.*)$", line)
+        if m:
+            mark = (m.group(2) or " ").lower()
+            content = (m.group(3) or "").strip()
+            status = "done" if mark == "x" else ("run" if mark == "~" else "todo")
+            blocks.append(
+                {
+                    "type": "todo",
+                    "status": status,
+                    "text": content,
+                    "indent": len(m.group(1) or ""),
                 }
             )
             i += 1
