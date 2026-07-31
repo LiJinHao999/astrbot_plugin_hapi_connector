@@ -1129,8 +1129,80 @@ class CommandHandlers:
             msg += f"\n已自动切换到该 session [{flavor}] {new_sid[:8]}..."
         return msg
 
+    async def _resolve_template_machine(
+        self, tpl: dict, machines: list[dict]
+    ) -> tuple[str | None, str | None]:
+        """解析模板机器：返回 (machine_id, error_text)。"""
+        machine_id = tpl.get("machine_id") or ""
+        if machine_id:
+            if not any(m.get("id") == machine_id for m in machines):
+                return None, (
+                    f"模板指定的机器（{machine_id[:12]}...）当前不在线，"
+                    "请在 WebUI 更新模板或改用交互向导"
+                )
+            return machine_id, None
+        if len(machines) == 1:
+            return machines[0]["id"], None
+        return None, (
+            f"当前有 {len(machines)} 台在线机器，模板未指定用哪台。\n"
+            "请在 WebUI「交互优化 → 会话模板」为模板选择机器"
+        )
+
+    async def _ask_directory_like_create(
+        self,
+        event: AstrMessageEvent,
+        *,
+        title: str,
+        chosen: dict,
+    ):
+        """模板缺目录时：与 create 向导步骤 2 相同的最近目录选择。
+
+        chosen 为可变 dict，成功时写入 chosen["directory"]；取消/超时不写。
+        """
+        from .create_wizard import CreateWizard
+
+        recent_paths: list[str] = []
+        try:
+            recent_paths = await session_ops.fetch_recent_paths(self.client)
+        except Exception:
+            pass
+
+        prompt = CreateWizard.format_directory_prompt(
+            recent_paths,
+            prefix=title,
+            header="选择工作目录:",
+        )
+        yield event.plain_result(prompt)
+
+        @session_waiter(timeout=120, record_history_chains=False)
+        async def dir_waiter(controller: SessionController, ev: AstrMessageEvent):
+            raw = (ev.message_str or "").strip()
+            if not raw:
+                controller.keep(timeout=120, reset_timeout=True)
+                return
+            if raw.lower() in ("c", "cancel", "取消", "q", "quit"):
+                await ev.send(ev.plain_result("已取消"))
+                controller.stop()
+                return
+            directory = CreateWizard.resolve_directory_input(raw, recent_paths)
+            if not directory:
+                await ev.send(ev.plain_result("目录不能为空，请重新输入（或回复 取消）"))
+                controller.keep(timeout=120, reset_timeout=True)
+                return
+            chosen["directory"] = directory
+            controller.stop()
+
+        try:
+            await dir_waiter(event)
+        except TimeoutError:
+            yield event.plain_result("选择目录超时，已取消")
+
     async def _create_from_template(self, event: AstrMessageEvent, arg: str):
-        """模板一步创建: /hapi create <模板名> [目录]"""
+        """模板一步创建: /hapi create <模板名> [目录]
+
+        目录优先命令参数，其次模板默认；都没有时拉 recent_paths，
+        交互选择（与 /hapi create 向导步骤 2 相同）。
+        """
         from .session_templates import describe_template, find_template, format_templates_list
 
         templates = self.state_mgr.get_session_templates()
@@ -1146,14 +1218,6 @@ class CommandHandlers:
             )
             return
 
-        directory = dir_override or tpl.get("directory") or ""
-        if not directory:
-            yield event.plain_result(
-                f"模板「{tpl['name']}」未设置默认目录，请在命令中指定:\n"
-                f"/hapi create {tpl['name']} <目录>"
-            )
-            return
-
         # 机器解析：模板指定且在线 → 用之；未指定且仅一台在线 → 自动选
         try:
             machines = await session_ops.fetch_machines(self.client)
@@ -1164,22 +1228,24 @@ class CommandHandlers:
             yield event.plain_result("没有在线的机器")
             return
 
-        machine_id = tpl.get("machine_id") or ""
-        if machine_id:
-            if not any(m.get("id") == machine_id for m in machines):
-                yield event.plain_result(
-                    f"模板指定的机器（{machine_id[:12]}...）当前不在线，"
-                    "请在 WebUI 更新模板或改用交互向导"
-                )
-                return
-        elif len(machines) == 1:
-            machine_id = machines[0]["id"]
-        else:
-            yield event.plain_result(
-                f"当前有 {len(machines)} 台在线机器，模板未指定用哪台。\n"
-                "请在 WebUI「交互优化 → 会话模板」为模板选择机器"
-            )
+        machine_id, machine_err = await self._resolve_template_machine(tpl, machines)
+        if machine_err or not machine_id:
+            yield event.plain_result(machine_err or "无法解析机器")
             return
+
+        directory = dir_override or tpl.get("directory") or ""
+        if not directory:
+            # 与 create 向导一致：展示最近目录供序号选择 / 手输路径
+            chosen: dict = {}
+            async for msg in self._ask_directory_like_create(
+                event,
+                title=f"模板「{tpl['name']}」未设置默认目录",
+                chosen=chosen,
+            ):
+                yield msg
+            directory = chosen.get("directory") or ""
+            if not directory:
+                return
 
         spec = dict(tpl)
         spec["machine_id"] = machine_id

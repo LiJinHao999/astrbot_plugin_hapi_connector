@@ -1019,18 +1019,45 @@ _RE_FORMULA_BEGIN = re.compile(
 )
 
 
+def _looks_like_currency_dollar_span(inner: str) -> bool:
+    """行内 $...$ 是否更像价格/普通美元，而非数学公式。
+
+    典型误伤：表格里的 `$5 / $30`、`$0.14 / $0.28` 会被贪婪匹配成
+    `$5 / $` / `$0.14 / $`，既渲染不出公式，又把 GFM 表格拆碎。
+    """
+    s = (inner or "").strip()
+    if not s:
+        return True
+    # 含 LaTeX 命令或明显数学结构 → 当公式
+    if re.search(r"\\[a-zA-Z]+", s):
+        return False
+    if re.search(r"[=^_{}\[\]<>]|\\", s):
+        return False
+    # 纯数字 / 金额片段（可带小数、千分位、空格、斜杠、百分号、加减）
+    if re.fullmatch(r"[\d\s.,/%+\-–—]*", s):
+        return True
+    # 极短且无字母的残留（如 "5 / "）
+    if len(s) <= 8 and not re.search(r"[A-Za-z一-鿿]", s):
+        return True
+    return False
+
+
 def text_has_formula(text: str | None) -> bool:
     """正文是否含数学公式（仅定界符 / LaTeX 环境，不猜命令密度）。"""
     s = str(text or "")
     if not s or len(s) < 3:
         return False
-    return bool(
+    if (
         _RE_FORMULA_BLOCK.search(s)
         or _RE_FORMULA_BRACKET.search(s)
         or _RE_FORMULA_PAREN.search(s)
         or _RE_FORMULA_BEGIN.search(s)
-        or _RE_FORMULA_INLINE.search(s)
-    )
+    ):
+        return True
+    for m in _RE_FORMULA_INLINE.finditer(s):
+        if not _looks_like_currency_dollar_span(m.group(1) or ""):
+            return True
+    return False
 
 
 def matplotlib_available() -> bool:
@@ -1071,6 +1098,10 @@ def extract_formula_segments(text: str) -> list[tuple[str, str, bool]]:
     for m in _RE_FORMULA_PAREN.finditer(s):
         _add(m, display=False)
     for m in _RE_FORMULA_INLINE.finditer(s):
+        inner = m.group(1) or ""
+        # 跳过价格类 $5 / $30，避免拆碎表格 / 列表等块级 Markdown
+        if _looks_like_currency_dollar_span(inner):
+            continue
         _add(m, display=False)
 
     if not spans:
@@ -3401,6 +3432,12 @@ def _parse_message_blocks_with_math(
     line_parts: list[dict[str, Any]] = []
 
     def flush_line() -> None:
+        """冲刷当前行内缓冲。
+
+        全是 text 时把多行拼回完整 Markdown 再交给 _parse_md_blocks，
+        这样 GFM 表格（表头+分隔行+数据行）不会被逐行拆碎。
+        混有行内公式图时走 rich_line。
+        """
         nonlocal line_parts
         if not line_parts:
             return
@@ -3410,17 +3447,41 @@ def _parse_message_blocks_with_math(
                 out.extend(_parse_md_blocks(joined))
             line_parts = []
             return
-        out.append({"type": "rich_line", "parts": list(line_parts)})
+        # rich_line 里的 text 不应再含换行；按行拆开
+        mixed: list[dict[str, Any]] = []
+        for p in line_parts:
+            if p.get("type") != "text":
+                mixed.append(p)
+                continue
+            t = str(p.get("text") or "")
+            if "\n" not in t:
+                if t:
+                    mixed.append(p)
+                continue
+            chunks = t.split("\n")
+            for i, chunk in enumerate(chunks):
+                if i > 0:
+                    if mixed:
+                        out.append({"type": "rich_line", "parts": list(mixed)})
+                        mixed = []
+                if chunk:
+                    mixed.append({"type": "text", "text": chunk})
+        if mixed:
+            if all(x.get("type") == "text" for x in mixed):
+                joined = "".join(x.get("text") or "" for x in mixed)
+                if joined.strip():
+                    out.extend(_parse_md_blocks(joined))
+            else:
+                out.append({"type": "rich_line", "parts": list(mixed)})
         line_parts = []
 
     for kind, content, is_display in segs:
         if kind == "text":
-            parts = str(content or "").split("\n")
-            for i, part in enumerate(parts):
-                if i > 0:
-                    flush_line()
-                if part:
-                    line_parts.append({"type": "text", "text": part})
+            # 保留换行在同一个 text part 里，flush 时整段交给 MD 块解析
+            # （旧逻辑按行 flush，会把表格拆成单行 p）
+            text_piece = str(content or "")
+            if text_piece:
+                line_parts.append({"type": "text", "text": text_piece})
             continue
 
         if is_display:
@@ -3434,7 +3495,7 @@ def _parse_message_blocks_with_math(
                     "display": True,
                 })
             else:
-                out.append({"type": "p", "text": content})
+                out.append({"type": "p", "text": content, "runs": parse_inline_runs(content)})
             continue
 
         im = _render_one(content, display=False)
@@ -3446,7 +3507,7 @@ def _parse_message_blocks_with_math(
                 "display": False,
             })
         else:
-            line_parts.append({"type": "text", "text": content})
+            line_parts.append({"type": "text", "text": f"${content}$"})
 
     flush_line()
     return out or _parse_md_blocks(text)
@@ -3531,15 +3592,28 @@ def _draw_message_png(
         rows = list(b.get("rows") or [])
         cols = _table_col_widths(headers, rows)
         cell_pad_x, cell_pad_y = 8, 6
-        line_h = _text_size(d0, "测", font_code)[1] + 2
+        line_h = _text_size(d0, "测", font_body)[1] + 2
 
         def row_h(cells, is_header=False):
-            f = font_body if is_header else font_code
+            # 表头/单元格都走正文（可粗体）；不再用等宽，避免表内 ** ** 只剩纯文本还发灰
+            f_body = font_body_bold if is_header else font_body
+            f_bold = font_body_bold
             max_lines = 1
             for ci, cell in enumerate(cells):
                 cw = cols[ci] - cell_pad_x * 2 if ci < len(cols) else 40
-                wrapped = _wrap_text(d0, _plain_inline(str(cell)), f, max(20, cw)) or [""]
-                max_lines = max(max_lines, len(wrapped))
+                runs = parse_inline_runs(str(cell))
+                # 表头整格默认粗体：无标记时包一层 bold
+                if is_header and runs and all(r.get("type") == "text" for r in runs):
+                    runs = [{"type": "bold", "text": _plain_inline(str(cell))}]
+                lines = _wrap_inline_runs(
+                    d0,
+                    runs,
+                    font_body=f_body,
+                    font_bold=f_bold,
+                    font_code=font_code,
+                    max_width=max(20, cw),
+                ) or [[]]
+                max_lines = max(max_lines, len(lines))
             return max_lines * line_h + cell_pad_y * 2
 
         h = row_h(headers, True)
@@ -3930,37 +4004,69 @@ def _draw_message_png(
             rows = list(b.get("rows") or [])
             cols = _table_col_widths(headers, rows)
             cell_pad_x, cell_pad_y = 8, 6
-            line_h = _text_size(draw, "测", font_code)[1] + 2
+            line_h = _text_size(draw, "测", font_body)[1] + 2
             table_w = sum(cols)
             x0 = pad
 
             def _draw_row(cells, yy, is_header=False):
-                f = font_body if is_header else font_code
-                # 先算行高
-                wrapped_cols = []
+                f_body = font_body_bold if is_header else font_body
+                f_bold = font_body_bold
+                # 每格先折成「行内 run 行」
+                wrapped_cols: list[list[list[dict[str, Any]]]] = []
                 max_lines = 1
                 for ci in range(len(cols)):
                     cell = cells[ci] if ci < len(cells) else ""
                     cw = max(20, cols[ci] - cell_pad_x * 2)
-                    wrapped = _wrap_text(draw, _plain_inline(str(cell)), f, cw) or [""]
-                    wrapped_cols.append(wrapped)
-                    max_lines = max(max_lines, len(wrapped))
+                    runs = parse_inline_runs(str(cell))
+                    if is_header and runs and all(r.get("type") == "text" for r in runs):
+                        runs = [{"type": "bold", "text": _plain_inline(str(cell))}]
+                    lines = _wrap_inline_runs(
+                        draw,
+                        runs,
+                        font_body=f_body,
+                        font_bold=f_bold,
+                        font_code=font_code,
+                        max_width=cw,
+                    ) or [[]]
+                    wrapped_cols.append(lines)
+                    max_lines = max(max_lines, len(lines))
                 rh = max_lines * line_h + cell_pad_y * 2
                 fill = code_bg if is_header else bg
-                # 底色
                 draw.rectangle((x0, yy, x0 + table_w, yy + rh), fill=fill, outline=border, width=1)
-                # 竖线 + 文字
                 cx = x0
                 for ci, col_w in enumerate(cols):
                     if ci > 0:
                         draw.line((cx, yy, cx, yy + rh), fill=border, width=1)
-                    wrapped = wrapped_cols[ci] if ci < len(wrapped_cols) else [""]
+                    lines = wrapped_cols[ci] if ci < len(wrapped_cols) else [[]]
                     ty = yy + cell_pad_y
-                    for ln in wrapped:
-                        draw.text((cx + cell_pad_x, ty), ln, font=f, fill=fg)
+                    for run_line in lines:
+                        tx = cx + cell_pad_x
+                        for run in run_line:
+                            rtype = run.get("type") or "text"
+                            rtext = str(run.get("text") or "")
+                            if not rtext:
+                                continue
+                            font = run.get("font") or _font_for_run(
+                                rtype, f_body, f_bold, font_code
+                            )
+                            stroke = bool(run.get("stroke")) or _run_needs_stroke(
+                                rtype, f_body, f_bold
+                            )
+                            if rtype == "code":
+                                tw, th = _text_size(draw, rtext, font)
+                                draw.rectangle(
+                                    (tx - 1, ty - 1, tx + tw + 1, ty + th + 1),
+                                    fill=code_bg,
+                                )
+                            _draw_text(
+                                draw, (tx, ty), rtext, font, fg, bold_stroke=stroke
+                            )
+                            tw, _ = _text_size(
+                                draw, rtext, font, stroke_width=1 if stroke else 0
+                            )
+                            tx += tw
                         ty += line_h
                     cx += col_w
-                # 右边框
                 draw.line((x0 + table_w, yy, x0 + table_w, yy + rh), fill=border, width=1)
                 return rh
 

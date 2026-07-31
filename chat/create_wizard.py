@@ -78,21 +78,55 @@ class CreateWizard:
             f"自动选择机器: {s['machine_label']}",
             need_recent_paths=True)
 
-    def _step2_prompt(self, prefix: str = "") -> str:
-        """构建步骤 2 的提示文本"""
-        s = self.state
-        lines = []
+    @staticmethod
+    def format_directory_prompt(
+        recent_paths: list | None = None,
+        *,
+        prefix: str = "",
+        header: str = "步骤 2/5 — 工作目录:",
+    ) -> str:
+        """工作目录选择文案（向导步骤 2 / 模板缺省目录 共用）。"""
+        lines: list[str] = []
         if prefix:
             lines.extend([prefix, ""])
-        lines.append("步骤 2/5 — 工作目录:")
-        if s["recent_paths"]:
+        if header:
+            lines.append(header)
+        paths = list(recent_paths or [])
+        if paths:
             lines.append("最近使用的目录:")
-            for i, p in enumerate(s["recent_paths"], 1):
+            for i, p in enumerate(paths, 1):
                 lines.append(f"  [{i}] {p}")
             lines.append("回复序号选择，或直接输入新路径")
         else:
             lines.append("请输入完整路径")
         return "\n".join(lines)
+
+    @staticmethod
+    def resolve_directory_input(raw: str, recent_paths: list | None = None) -> str | None:
+        """解析目录输入：序号选最近路径，或直接路径；空输入返回 None。
+
+        顺带修 Unix 路径开头 / 被命令前缀吃掉的情况（home/... → /home/...）。
+        """
+        text = (raw or "").strip()
+        if not text:
+            return None
+        recent = list(recent_paths or [])
+        if text.isdigit() and recent and 1 <= int(text) <= len(recent):
+            return recent[int(text) - 1]
+        # 修复：如果 Unix 路径开头的 / 被命令前缀吃掉，自动补回
+        # Windows 盘符路径 (C:\...) 不处理
+        if not text.startswith(("/", "\\")) and not (len(text) >= 2 and text[1] == ":"):
+            if text.startswith(("home", "Users", "root", "opt", "var", "usr")):
+                text = "/" + text
+        return text
+
+    def _step2_prompt(self, prefix: str = "") -> str:
+        """构建步骤 2 的提示文本"""
+        return self.format_directory_prompt(
+            self.state.get("recent_paths") or [],
+            prefix=prefix,
+            header="步骤 2/5 — 工作目录:",
+        )
 
     def _step5_prompt(self) -> WizardResult:
         """构建 YOLO 步骤提示"""
@@ -156,18 +190,10 @@ class CreateWizard:
     def _step2(self, raw: str) -> WizardResult:
         """步骤 2: 工作目录"""
         s = self.state
-        recent = s["recent_paths"]
-        if raw.isdigit() and recent and 1 <= int(raw) <= len(recent):
-            s["directory"] = recent[int(raw) - 1]
-        elif raw:
-            # 修复：如果 Unix 路径开头的 / 被命令前缀吃掉，自动补回
-            # Windows 盘符路径 (C:\...) 不处理
-            if raw and not raw.startswith(("/", "\\")) and not (len(raw) >= 2 and raw[1] == ":"):
-                if raw.startswith(("home", "Users", "root", "opt", "var", "usr")):
-                    raw = "/" + raw
-            s["directory"] = raw
-        else:
+        directory = self.resolve_directory_input(raw, s.get("recent_paths") or [])
+        if not directory:
             return WizardResult("目录不能为空，请重新输入")
+        s["directory"] = directory
 
         s["step"] = 3
         lines = [

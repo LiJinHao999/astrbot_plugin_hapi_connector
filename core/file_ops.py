@@ -321,8 +321,12 @@ def _dedupe_astrbot_image_dual_cache(
     """同条消息里 AstrBot 常把一张图落成两份本地缓存（如 media_image_*.jpg
     与 download.png）：路径不同、编码也不同，内容哈希去不掉。
 
-    策略尽量简单：识别到这种双缓存时，只保留字节数更大的那一份；
-    非图片附件、以及无法判断为双缓存的多图原样保留。
+    策略：
+    - 有主缓存（media_image_* 等）时，**一律丢弃** download.* 副缓存。
+      不能按体积选大：download.png 往往是重编码后的更大 PNG，旧逻辑会
+      反而留下副缓存、丢掉更合适的主图。
+    - 仅有多份 download.* 时，保留体积最大的一份。
+    - 非本地图片 / 无法识别为双缓存的附件原样保留。
     """
     if len(sources) < 2:
         return sources
@@ -335,9 +339,6 @@ def _dedupe_astrbot_image_dual_cache(
         else:
             others.append(source)
 
-    if len(path_images) < 2:
-        return sources
-
     downloads: list[dict[str, Any]] = []
     primaries: list[dict[str, Any]] = []
     for source in path_images:
@@ -348,30 +349,37 @@ def _dedupe_astrbot_image_dual_cache(
         else:
             primaries.append(source)
 
-    # 典型双缓存：一边是 download.*，一边是 media_image_* 等主缓存
-    if not downloads:
+    # URL 侧文件名若是 download.*：有本地主图时丢掉，避免 path+url 各传一次
+    other_kept: list[dict[str, Any]] = []
+    for source in others:
+        label = str(source.get("name") or source.get("url") or "")
+        if (
+            source.get("kind") == "url"
+            and _is_download_cache_name(label)
+            and primaries
+        ):
+            continue
+        other_kept.append(source)
+
+    if not downloads and len(other_kept) == len(others):
         return sources
 
     if primaries:
-        # 单主图 + 若干 download → 整组只留字节更大的那份
-        # 多主图 + download 副缓存 → 丢掉 download，主图全留
-        if len(primaries) == 1:
-            best = max(
-                primaries + downloads,
-                key=lambda s: _path_byte_size(str(s.get("path") or "")),
-            )
-            return others + [best]
-        return others + primaries
+        # 有主图 → 忽略全部 download.* 副缓存
+        return other_kept + primaries
 
-    # 只有 download 命名的多份图：仍可能是双缓存重编码，留最大
+    if not downloads:
+        return sources
+
+    # 没有主图、只剩 download 命名的多份本地图：留体积最大的一份
     if len(downloads) >= 2:
         best = max(
             downloads,
             key=lambda s: _path_byte_size(str(s.get("path") or "")),
         )
-        return others + [best]
+        return other_kept + [best]
 
-    return sources
+    return other_kept + downloads
 
 
 async def upload_event_files(client: AsyncHapiClient, event: Any,
@@ -382,8 +390,8 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
     供快捷前缀 / Focus 转发链路使用：图片、文件经 /upload 接口
     转为 attachments 随消息发出。指令类路径（send/to）不自动捎带附件。
 
-    提取阶段已按「双缓存留更大」去掉 AstrBot 的 media/download 重复图；
-    上传前再按内容 SHA-256 去重，挡住路径不同但字节完全相同的副本。
+    提取阶段已按「有主图则忽略 download.*」去掉 AstrBot 的 media/download
+    重复图；上传前再按内容 SHA-256 去重，挡住路径不同但字节完全相同的副本。
     """
     files = extract_files_from_message(event)
     if not files:
