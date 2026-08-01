@@ -1,43 +1,347 @@
 """纯函数：格式化 session 标签、消息预览、帮助文本等"""
 
 import json
+import re
 
 
-def extract_text_preview(content: dict, max_len: int = 80) -> str | None:
+# SDK / MCP 进度与内部控制：不应进对话卡正文
+_NOISE_BLOCK_TYPES = frozenset({
+    "token_count",
+    "thinking",
+    "tool_progress",
+    "tool-progress",
+    "progress",
+    "heartbeat",
+    "rate_limit_event",
+    "rate_limit",
+    "stream_event",
+    "status",
+})
+
+# 多 agent / Task 子代理 sidechain：simple 默认隐藏，detail 可折叠展示
+_SIDECHAIN_BLOCK_TYPES = frozenset({"sidechain"})
+
+
+def extract_text_preview(
+    content: dict,
+    max_len: int = 80,
+    *,
+    include_sidechain: bool = False,
+) -> str | None:
     """从消息 content 中提取文本预览（通用，适配所有 agent）。
-    返回 None 表示该消息不应显示（如 token_count、ready 事件等噪音）。
+
+    返回 None 表示该消息不应显示（噪音 / 被过滤的 sidechain 等）。
     max_len <= 0 表示不截断。
+
+    include_sidechain:
+      - False（默认，simple/summary）：子代理正文不展示
+      - True（detail）：子代理正文加【子代理】前缀
+
+    注意：tool_progress / heartbeat 等 SDK 噪音无论是否 sidechain 都丢弃。
     """
     if max_len <= 0:
         max_len = 999999
-    inner = content.get("content", {})
+    if not isinstance(content, dict):
+        if isinstance(content, str):
+            return _filter_text_piece(content, max_len)
+        return None
+
+    # 整包就是 SDK 进度 / 元数据（含 isSidechain=true 的 tool_progress 心跳）
+    # 必须优先于 sidechain 展示逻辑，否则 detail 会把心跳 JSON 当正文
+    if _looks_like_sdk_control_dict(content):
+        return None
+
+    # 整条消息带 isSidechain（SDK 日志字段可能挂在 content 根上）
+    if _flag_true(content.get("isSidechain")) or _flag_true(content.get("is_sidechain")):
+        if not include_sidechain:
+            return None
+
+    inner = content.get("content", content if "type" in content else {})
+    if isinstance(inner, dict) and _looks_like_sdk_control_dict(inner):
+        return None
 
     # 纯文本（部分 agent 直接返回字符串）
     if isinstance(inner, str):
-        return inner[:max_len] if inner.strip() else None
+        text = _filter_text_piece(inner, max_len)
+        if text is None:
+            return None
+        if include_sidechain and (
+            _flag_true(content.get("isSidechain")) or _flag_true(content.get("is_sidechain"))
+        ):
+            label = _sidechain_agent_label(content, text=text)
+            return _tag_sidechain(text, label)
+        return text
 
     # content blocks 列表（标准格式）
     if isinstance(inner, list):
-        return _extract_from_blocks(inner, max_len)
+        text = _extract_from_blocks(inner, max_len, include_sidechain=include_sidechain)
+        if text and include_sidechain and (
+            _flag_true(content.get("isSidechain")) or _flag_true(content.get("is_sidechain"))
+        ):
+            label = _sidechain_agent_label(content, *inner, text=text)
+            return _tag_sidechain(text, label)
+        return text
 
     # 单个 block（dict）
     if isinstance(inner, dict):
-        return _extract_from_block(inner, max_len)
+        # output 包装里的 data 可能自带 isSidechain
+        if not include_sidechain and _block_tree_is_sidechain(inner):
+            return None
+        text = _extract_from_block(inner, max_len, include_sidechain=include_sidechain)
+        if text and include_sidechain and _block_tree_is_sidechain(inner):
+            label = _sidechain_agent_label(content, inner, text=text)
+            return _tag_sidechain(text, label)
+        return text
 
-    return str(inner)[:max_len]
+    return None
 
 
-def _extract_from_blocks(blocks: list, max_len: int) -> str | None:
+def _flag_true(v) -> bool:
+    return v is True or v == "true" or v == 1
+
+
+def _sidechain_agent_label(*objs: object, text: str = "") -> str:
+    """尽量从 SDK/HAPI 字段推断子 agent 可读名（Task description、agent 名等）。"""
+    skip = {
+        "",
+        "assistant",
+        "agent",
+        "user",
+        "system",
+        "claude",
+        "codex",
+        "general-purpose",
+        "general_purpose",
+    }
+    keys = (
+        "agentName",
+        "agent_name",
+        "displayName",
+        "display_name",
+        "subagent_type",
+        "subagentType",
+        "activeForm",
+        "description",
+        "title",
+        "name",
+        "label",
+    )
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        for key in keys:
+            v = obj.get(key)
+            if not isinstance(v, str):
+                continue
+            s = v.strip()
+            if not s or s.lower() in skip:
+                continue
+            # 过长 description 截断
+            if len(s) > 36:
+                s = s[:35] + "…"
+            return s
+        # Task / Agent 工具入参
+        inp = obj.get("input") if isinstance(obj.get("input"), dict) else None
+        if inp:
+            for key in ("description", "prompt", "name", "subagent_type"):
+                v = inp.get(key)
+                if isinstance(v, str) and v.strip() and v.strip().lower() not in skip:
+                    s = v.strip().split("\n", 1)[0].strip()
+                    if len(s) > 36:
+                        s = s[:35] + "…"
+                    return s
+        # content 里第一个 tool_use 名
+        inner = obj.get("content")
+        if isinstance(inner, list):
+            for block in inner:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") in ("tool_use", "tool-call"):
+                    n = str(block.get("name") or "").strip()
+                    if n and n.lower() not in skip:
+                        return n[:36]
+    # 正文首行当弱标签
+    head = (text or "").strip().split("\n", 1)[0].strip()
+    if head and not head.startswith("{") and not head.startswith("【"):
+        if len(head) > 28:
+            head = head[:27] + "…"
+        return head
+    return ""
+
+
+def _tag_sidechain(text: str, label: str = "") -> str:
+    """detail 子代理正文标记。
+
+    形如 ``【子代理:查旧金山天气】…`` 或无名称时 ``【子代理】…``。
+    卡片解析器认前者画独立小卡并显示身份。
+    """
+    t = (text or "").strip()
+    if not t:
+        return t
+    # 已有标记则抽出 label / 正文
+    m = re.match(r"^【子代理(?::([^】]*))?】\s*", t)
+    if m:
+        if not label and m.group(1):
+            label = m.group(1).strip()
+        t = t[m.end() :].strip()
+    label = (label or "").strip()
+    if label:
+        return f"【子代理:{label}】{t}" if t else f"【子代理:{label}】"
+    return f"【子代理】{t}" if t else "【子代理】"
+
+
+def _block_tree_is_sidechain(block: dict) -> bool:
+    if not isinstance(block, dict):
+        return False
+    if _flag_true(block.get("isSidechain")) or _flag_true(block.get("is_sidechain")):
+        return True
+    if block.get("type") in _SIDECHAIN_BLOCK_TYPES:
+        return True
+    data = block.get("data")
+    if isinstance(data, dict):
+        return _block_tree_is_sidechain(data)
+    msg = block.get("message")
+    if isinstance(msg, dict) and (
+        _flag_true(msg.get("isSidechain")) or _flag_true(msg.get("is_sidechain"))
+    ):
+        return True
+    return False
+
+
+def _looks_like_sdk_control_dict(obj: dict) -> bool:
+    """识别 Claude SDK 泄漏的进度/元数据整包 JSON（不应当正文）。"""
+    if not isinstance(obj, dict):
+        return False
+    btype = str(obj.get("type") or "")
+    if btype in _NOISE_BLOCK_TYPES:
+        return True
+    # tool_progress 心跳：常带 tool_use_id + heartbeat / elapsed_time_seconds
+    if obj.get("tool_use_id") or obj.get("toolUseId"):
+        if obj.get("heartbeat") is True or "elapsed_time_seconds" in obj or "elapsedTimeSeconds" in obj:
+            return True
+        if btype in ("tool_progress", "tool-progress", "progress"):
+            return True
+    # 元数据信封：parentUuid + sessionId + userType（HAPI internalEventFilter 同款）
+    has_parent = "parentUuid" in obj or "parent_uuid" in obj
+    has_session = isinstance(obj.get("sessionId") or obj.get("session_id"), str)
+    has_user = isinstance(obj.get("userType") or obj.get("user_type"), str)
+    if has_parent and has_session and has_user and btype in (
+        "tool_progress",
+        "tool-progress",
+        "progress",
+        "output",
+        "system",
+        "queue-operation",
+        "",
+    ):
+        # 纯元数据、无 message/text 正文
+        if not obj.get("message") and not obj.get("text") and not obj.get("content"):
+            return True
+        if btype in _NOISE_BLOCK_TYPES or btype in ("", "system"):
+            return True
+    return False
+
+
+def _is_internal_event_json(text: str) -> bool:
+    """文本是否为应丢弃的内部控制 JSON（对齐 HAPI isInternalEventJson + 进度包）。"""
+    s = (text or "").strip()
+    if not s:
+        return False
+    # 去掉常见前缀后再判（【消息】/[Message]/Agent: 等包一层时仍应丢弃）
+    for prefix in (
+        "【消息】",
+        "[Message]:",
+        "[Message]",
+        "【子代理】",
+        "Agent:",
+        "agent:",
+        "Message:",
+        "message:",
+    ):
+        if s.startswith(prefix):
+            s = s[len(prefix) :].lstrip(" :：").strip()
+            break
+    if not s or s[0] not in "{[":
+        # 启发式：整段像泄漏的 tool_progress 原文（解析失败时的兜底）
+        if '"type"' in s and (
+            "tool_progress" in s
+            or "tool-progress" in s
+            or '"heartbeat"' in s
+            or "elapsed_time_seconds" in s
+        ):
+            if "tool_use_id" in s or "toolUseId" in s or "parentUuid" in s:
+                return True
+        return False
+    # 多层 JSON 字符串包装：'"{"type":...}"'
+    for _ in range(3):
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            break
+        if isinstance(parsed, str):
+            s = parsed.strip()
+            continue
+        if isinstance(parsed, dict):
+            if _looks_like_sdk_control_dict(parsed):
+                return True
+            # { type: "output", data: { parentUuid, sessionId, userType } }
+            if parsed.get("type") == "output" and isinstance(parsed.get("data"), dict):
+                data = parsed["data"]
+                if _looks_like_sdk_control_dict(data):
+                    return True
+                has_parent = "parentUuid" in data or "parent_uuid" in data
+                if (
+                    has_parent
+                    and isinstance(data.get("sessionId") or data.get("session_id"), str)
+                    and isinstance(data.get("userType") or data.get("user_type"), str)
+                ):
+                    return True
+            return False
+        break
+    return False
+
+
+def is_sdk_noise_text(text: str | None) -> bool:
+    """推送前最终兜底：正文是否仍是 SDK/MCP 进度 JSON。"""
+    if text is None:
+        return True
+    s = str(text).strip()
+    if not s:
+        return True
+    return _is_internal_event_json(s)
+
+
+def _filter_text_piece(text: str, max_len: int) -> str | None:
+    s = (text or "").strip()
+    if not s:
+        return None
+    if _is_internal_event_json(s):
+        return None
+    # task-notification 系统注入（子代理完成 XML）—— simple 不当正文
+    if s.startswith("<task-notification"):
+        return None
+    return s[:max_len]
+
+
+def _extract_from_blocks(
+    blocks: list,
+    max_len: int,
+    *,
+    include_sidechain: bool = False,
+) -> str | None:
     """从 content blocks 列表中提取文本预览，只保留有意义的内容"""
     parts = []
     for block in blocks:
         if isinstance(block, str):
-            if block.strip():
-                parts.append(block)
+            piece = _filter_text_piece(block, max_len)
+            if piece:
+                parts.append(piece)
             continue
         if not isinstance(block, dict):
             continue
-        text = _extract_from_block(block, max_len)
+        text = _extract_from_block(
+            block, max_len, include_sidechain=include_sidechain
+        )
         if text is not None:
             parts.append(text)
 
@@ -46,14 +350,26 @@ def _extract_from_blocks(blocks: list, max_len: int) -> str | None:
     return "\n".join(parts)
 
 
-def _extract_from_block(block: dict, max_len: int) -> str | None:
+def _extract_from_block(
+    block: dict,
+    max_len: int,
+    *,
+    include_sidechain: bool = False,
+) -> str | None:
     """从单个 content block 中提取文本，返回 None 表示跳过"""
-    btype = block.get("type", "")
+    if not isinstance(block, dict):
+        return None
+
+    # 整包就是 SDK 进度 / 元数据
+    if _looks_like_sdk_control_dict(block):
+        return None
+
+    btype = block.get("type", "") or ""
 
     # ── 文本内容（模型回复）──
     if btype == "text":
         text = block.get("text", "")
-        return text[:max_len] if text.strip() else None
+        return _filter_text_piece(str(text), max_len)
 
     # ── 工具调用（Claude: tool_use / Codex: tool-call 等）──
     if btype in ("tool_use", "tool-call"):
@@ -63,15 +379,47 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype in ("tool_result", "tool-call-result"):
         return None
 
+    # ── HAPI 生成图（Codex/Claude display_image 等）──
+    if btype in ("generated-image", "generated_image"):
+        return _fmt_generated_image(block, max_len)
+
+    # ── 子代理 sidechain 提示块 ──
+    if btype in _SIDECHAIN_BLOCK_TYPES:
+        if not include_sidechain:
+            return None
+        prompt = block.get("prompt") or block.get("text") or ""
+        prompt = str(prompt).strip()
+        if not prompt:
+            return None
+        short = prompt if len(prompt) <= max_len else prompt[: max_len - 1] + "…"
+        label = _sidechain_agent_label(block, text=short)
+        return _tag_sidechain(short, label)
+
+    # ── 明确噪音类型 ──
+    if btype in _NOISE_BLOCK_TYPES:
+        return None
+
     # ── 包装类型（output/input）：内容在 data 字段里，递归处理 ──
     if btype in ("output", "input"):
         data = block.get("data")
         if isinstance(data, dict):
-            return _extract_from_block(data, max_len)
+            if _looks_like_sdk_control_dict(data):
+                return None
+            if not include_sidechain and _block_tree_is_sidechain(data):
+                return None
+            text = _extract_from_block(
+                data, max_len, include_sidechain=include_sidechain
+            )
+            if text and include_sidechain and _block_tree_is_sidechain(data):
+                label = _sidechain_agent_label(block, data, text=text)
+                return _tag_sidechain(text, label)
+            return text
         if isinstance(data, list):
-            return _extract_from_blocks(data, max_len)
+            return _extract_from_blocks(
+                data, max_len, include_sidechain=include_sidechain
+            )
         if isinstance(data, str) and data.strip():
-            return data[:max_len]
+            return _filter_text_piece(data, max_len)
         return None
 
     # ── Codex 包装格式 {"type": "codex", "data": {...}} ──
@@ -82,9 +430,8 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if btype == "event":
         event_data = block.get("data", {})
         event_type = event_data.get("type", "?") if isinstance(event_data, dict) else "?"
-        if event_type == "ready":
+        if event_type in ("ready", "heartbeat", "thinking"):
             return None
-        # message 类型事件：提取实际消息内容（如 "Context was reset"）
         if event_type == "message" and isinstance(event_data, dict):
             msg = event_data.get("message", "")
             if msg:
@@ -96,19 +443,53 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
         text = block.get("summary", "")
         return f"【总结】{text[:max_len]}" if text else None
 
-    # ── 跳过噪音 ──
-    if btype in ("token_count", "thinking"):
+    # ── assistant / user SDK 消息：走进 message.content ──
+    if btype in ("assistant", "user", "system"):
+        if btype == "system":
+            return None
+        if not include_sidechain and (
+            _flag_true(block.get("isSidechain")) or _flag_true(block.get("is_sidechain"))
+        ):
+            return None
+        msg = block.get("message")
+        if isinstance(msg, dict) and "content" in msg:
+            nested = msg["content"]
+            if isinstance(nested, list):
+                text = _extract_from_blocks(
+                    nested, max_len, include_sidechain=include_sidechain
+                )
+            elif isinstance(nested, dict):
+                text = _extract_from_block(
+                    nested, max_len, include_sidechain=include_sidechain
+                )
+            elif isinstance(nested, str):
+                text = _filter_text_piece(nested, max_len)
+            else:
+                text = None
+            if text and include_sidechain and (
+                _flag_true(block.get("isSidechain"))
+                or _flag_true(block.get("is_sidechain"))
+            ):
+                label = _sidechain_agent_label(block, msg, text=text)
+                return _tag_sidechain(text, label)
+            return text
+        if isinstance(msg, str):
+            return _filter_text_piece(msg, max_len)
         return None
 
     # ── 嵌套消息结构（如 {"role": "user", "content": [...]} ）──
     if "role" in block and "content" in block:
         nested = block["content"]
         if isinstance(nested, list):
-            return _extract_from_blocks(nested, max_len)
+            return _extract_from_blocks(
+                nested, max_len, include_sidechain=include_sidechain
+            )
         if isinstance(nested, dict):
-            return _extract_from_block(nested, max_len)
+            return _extract_from_block(
+                nested, max_len, include_sidechain=include_sidechain
+            )
         if isinstance(nested, str) and nested.strip():
-            return nested[:max_len]
+            return _filter_text_piece(nested, max_len)
         return None
 
     # ── HAPI 消息包装（含 message 字段的元数据结构）──
@@ -116,33 +497,49 @@ def _extract_from_block(block: dict, max_len: int) -> str | None:
     if isinstance(msg, dict) and "role" in msg and "content" in msg:
         nested = msg["content"]
         if isinstance(nested, list):
-            return _extract_from_blocks(nested, max_len)
+            return _extract_from_blocks(
+                nested, max_len, include_sidechain=include_sidechain
+            )
         if isinstance(nested, dict):
-            return _extract_from_block(nested, max_len)
+            return _extract_from_block(
+                nested, max_len, include_sidechain=include_sidechain
+            )
         if isinstance(nested, str) and nested.strip():
-            return nested[:max_len]
+            return _filter_text_piece(nested, max_len)
         return None
 
-    # ── 未识别或无 type：尝试从常见字段提取文本 ──
+    # ── 未识别：常见字段；仍拒绝控制 JSON ──
     for key in ("text", "data", "content", "message", "output"):
         val = block.get(key)
         if val is None:
             continue
         if isinstance(val, str) and val.strip():
-            prefix = f"[{btype}] " if btype else ""
-            return f"{prefix}{val[:max_len]}"
+            piece = _filter_text_piece(val, max_len)
+            if piece is None:
+                continue
+            # 有明确 type 且不是文本类时，避免 `[tool_progress] ...`
+            if btype and btype not in ("text", "output", "input", "message"):
+                # 无有效可读正文则跳过
+                if _is_internal_event_json(val):
+                    return None
+            return piece
         if isinstance(val, list):
-            result = _extract_from_blocks(val, max_len)
+            result = _extract_from_blocks(
+                val, max_len, include_sidechain=include_sidechain
+            )
             if result:
                 return result
         if isinstance(val, dict):
-            result = _extract_from_block(val, max_len)
+            if _looks_like_sdk_control_dict(val):
+                continue
+            result = _extract_from_block(
+                val, max_len, include_sidechain=include_sidechain
+            )
             if result:
                 return result
 
-    # 兜底
-    raw = json.dumps(block, ensure_ascii=False)
-    return raw[:max_len] if raw != "{}" else None
+    # 兜底：不再把整包 JSON 当正文（这就是 tool_progress 刷屏根因）
+    return None
 
 
 _TODO_STATUS_ICON = {
@@ -150,6 +547,34 @@ _TODO_STATUS_ICON = {
     "in_progress": "🔄",
     "pending": "⬜",
 }
+
+
+def _fmt_generated_image(block: dict, max_len: int) -> str | None:
+    """HAPI generated-image → Markdown 图语法，供对话卡下载嵌图。
+
+    形如 ``![shot.png](hapi-genimg://<imageId>)``。
+    无 imageId 时退回可读占位，避免再吐整段 JSON。
+
+    注意：块上的 ``id`` 是消息/内容 UUID，不是 imageId（CLI display_image
+    会同时带 imageId 与 id）。勿把 ``id`` 当下载键，否则会 404 仍无图。
+    """
+    image_id = block.get("imageId") or block.get("image_id") or ""
+    image_id = str(image_id).strip()
+    file_name = (
+        block.get("fileName")
+        or block.get("file_name")
+        or block.get("name")
+        or "generated-image"
+    )
+    file_name = str(file_name).strip() or "generated-image"
+    # 文件名里的 ] ( 会破坏 MD 图语法
+    safe_name = file_name.replace("]", "").replace("[", "").replace("(", "").replace(")", "")
+    if image_id:
+        # 去掉 imageId 中可能破坏 URL 的字符
+        safe_id = image_id.replace(")", "").replace(" ", "")
+        marker = f"![{safe_name}](hapi-genimg://{safe_id})"
+        return marker[:max_len] if max_len else marker
+    return f"[{safe_name}]"[:max_len]
 
 
 def _fmt_todo_write(inp: dict) -> str:
@@ -299,7 +724,11 @@ def _fmt_tool_call(block: dict, max_len: int) -> str:
 
 
 def _extract_codex_block(data: dict, max_len: int) -> str | None:
-    """处理 Codex 专有的包装格式"""
+    """处理 Codex / 通用 agent 包装：``{type: 'codex', data: {...}}``。
+
+    CLI ``sendAgentMessage`` 把 display_image 等也塞进 data，因此
+    generated-image 必须在这里展开，不能落成 ``[generated-image]`` 占位。
+    """
     if not isinstance(data, dict):
         return str(data)[:max_len]
     dtype = data.get("type", "")
@@ -310,18 +739,28 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
         return _fmt_tool_call(data, max_len)
     if dtype == "tool-call-result":
         return None
-    if dtype == "token_count":
-        return None
-    if dtype in ("reasoning", "agent_reasoning"):
+    if dtype in ("generated-image", "generated_image"):
+        return _fmt_generated_image(data, max_len)
+    if dtype in _NOISE_BLOCK_TYPES or dtype in ("token_count", "reasoning", "agent_reasoning"):
         return None
     if dtype == "message":
         msg_text = data.get("message", "")
         return msg_text[:max_len] if msg_text else "(空消息)"
-    return f"[{dtype}]" if dtype else None
+    # 未知 dtype：不再用 [type] 占位刷屏（曾导致 generated-image 只剩方括号）
+    return None
 
 
 def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
-    """获取 session 的简短标识（用于 SSE 推送，多行格式，纯文本无 emoji）。"""
+    """获取 session 的简短标识（用于 SSE 推送 / 纯文本，保留 emoji）。
+
+    形如::
+
+        💬 会话标题
+        📂 /path/to/cwd
+        🤖 claude | 🏷️ 70ed1d5c
+
+    对话卡出图时由 ``output_present._strip_emoji`` 再剥符号，避免缺字形。
+    """
     session = None
     for s in sessions_cache:
         if s.get("id") == sid:
@@ -329,7 +768,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
             break
 
     if not session:
-        return f"session {sid[:8]}"
+        return f"🏷️ {sid[:8]}"
 
     meta = session.get("metadata", {})
     flavor = meta.get("flavor", "?")
@@ -345,7 +784,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
         or session.get("collaborationMode") == "plan"
     )
     plan_tag = " · Plan" if in_plan else ""
-    return f"{title}{plan_tag}\n{path}\n{flavor} · {sid[:8]}"
+    return f"💬 {title}{plan_tag}\n📂 {path}\n🤖 {flavor} | 🏷️ {sid[:8]}"
 
 
 def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
@@ -638,14 +1077,33 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
-_PASSTHROUGH_PREFIXES = ("【系统】", "【总结】", "🛠️")
+_PASSTHROUGH_PREFIXES = (
+    "【系统】",
+    "【总结】",
+    "【子代理】",
+    "【子代理:",
+    "🛠️",
+    "❓",
+    "[Message]",
+    "[Message]:",
+)
 
 
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件/摘要 → 透传，普通文本 → 【消息】"""
+    """格式化 agent 消息（纯文本推送）：工具/系统/子代理透传，普通文本 → ``[Message]:``。
+
+    对话卡路径会再经 ``prepare_agent_body_for_card`` 转写/剥 emoji；
+    纯文本必须保留可读前缀，不要改成无标记正文。
+    """
+    if is_sdk_noise_text(text):
+        return ""
     if any(text.startswith(p) for p in _PASSTHROUGH_PREFIXES):
         return text
-    return f"【消息】{text}"
+    # 兼容旧【消息】前缀：统一成 [Message]:
+    if text.startswith("【消息】"):
+        rest = text[len("【消息】") :].lstrip()
+        return f"[Message]: {rest}" if rest else "[Message]:"
+    return f"[Message]: {text}"
 
 
 def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,

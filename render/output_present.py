@@ -6,6 +6,7 @@ Pillow / Playwright 为可选依赖；不可用或渲染失败时永远回退文
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from typing import Any, AsyncIterator
 
@@ -431,6 +432,16 @@ def prepare_agent_body_for_card(text: str) -> str:
             rest = line[len("❓") :].lstrip()
             out_lines.append(f"[Ask] {rest}" if rest else "[Ask]")
             continue
+        # 纯文本前缀 [Message]: / 【消息】 → 卡片只留正文
+        if line.startswith("[Message]:"):
+            line = line[len("[Message]:") :].lstrip()
+        elif line.startswith("[Message]"):
+            line = line[len("[Message]") :].lstrip(" :：")
+        elif line.startswith("【消息】"):
+            line = line[len("【消息】") :].lstrip()
+        if not str(line).strip():
+            continue
+        # 子代理标记保留给卡片解析器（【子代理】/【子代理:名称】）
         # Edit 差异续行（已是 "  - "/"  + "/"  …"）原样保留
         out_lines.append(line)
     return _strip_emoji("\n".join(out_lines))
@@ -473,6 +484,141 @@ def _strip_emoji(text: str) -> str:
     return text.strip()
 
 
+_RE_HAPI_GENIMG = re.compile(
+    r"!\[([^\]]*)\]\(hapi-genimg://([^)\s]+)\)",
+    re.IGNORECASE,
+)
+
+
+async def resolve_hapi_genimg_markers(
+    body: str,
+    *,
+    client: Any,
+    session_id: str,
+    max_images: int = 6,
+) -> str:
+    """把 ``![alt](hapi-genimg://id)`` 下载成临时文件，改写为 ``![alt](/tmp/...)``。
+
+    供对话卡 Pillow 嵌真实像素。失败时保留可读占位，不拖垮整条消息。
+    临时文件由调用方在出图后延迟清理（或 OS 清 /tmp）。
+    """
+    text = body or ""
+    if "hapi-genimg://" not in text or not client or not session_id:
+        return text
+
+    from ..core import session_ops
+
+    cache: dict[str, str] = {}  # imageId -> local path or ""
+    out: list[str] = []
+    last = 0
+    count = 0
+    for m in _RE_HAPI_GENIMG.finditer(text):
+        out.append(text[last : m.start()])
+        alt = m.group(1) or "generated-image"
+        image_id = (m.group(2) or "").strip()
+        last = m.end()
+        if not image_id or count >= max_images:
+            out.append(f"[图片] {alt}")
+            continue
+        if image_id in cache:
+            path = cache[image_id]
+            if path:
+                out.append(f"![{alt}]({path})")
+            else:
+                out.append(f"[图片] {alt}")
+            continue
+        try:
+            raw, mime, err = await session_ops.fetch_generated_image(
+                client, session_id, image_id
+            )
+            if err or not raw:
+                logger.info(
+                    "genimg fetch fail sid=%s id=%s err=%s",
+                    (session_id or "")[:8],
+                    image_id[:16],
+                    err,
+                )
+                cache[image_id] = ""
+                out.append(f"[图片] {alt}")
+                continue
+            ext = ".png"
+            mt = (mime or "").lower()
+            if "jpeg" in mt or "jpg" in mt:
+                ext = ".jpg"
+            elif "webp" in mt:
+                ext = ".webp"
+            elif "gif" in mt:
+                ext = ".gif"
+            fd, path = tempfile.mkstemp(prefix="hapi_genimg_", suffix=ext)
+            os.close(fd)
+            with open(path, "wb") as f:
+                f.write(raw)
+            cache[image_id] = path
+            count += 1
+            out.append(f"![{alt}]({path})")
+            logger.info(
+                "genimg cached sid=%s id=%s bytes=%s path=%s",
+                (session_id or "")[:8],
+                image_id[:16],
+                len(raw),
+                path,
+            )
+        except Exception as e:
+            logger.warning("genimg resolve error: %s", e)
+            cache[image_id] = ""
+            out.append(f"[图片] {alt}")
+    out.append(text[last:])
+    return "".join(out)
+
+
+# 本地/已解析的 Markdown 图：![alt](/abs/path) 或 file://
+_RE_LOCAL_MD_IMAGE = re.compile(
+    r"!\[([^\]]*)\]\(((/[^)\s]+)|(file://[^)\s]+))\)",
+    re.IGNORECASE,
+)
+
+
+def extract_local_images_for_plain(
+    text: str,
+    *,
+    placeholder: str = "见下方图片",
+) -> tuple[str, list[tuple[str, str]]]:
+    """纯文本模式：抽出可发送的本地图路径，正文占位避免时序错乱。
+
+    返回 ``(改写后的正文, [(alt, path), ...])``。
+    - 路径不存在的图改为 ``[图片] alt``，不进入待发列表
+    - 占位默认「见下方图片」，图片按出现顺序在正文后单独发送
+    """
+    s = text or ""
+    if "![" not in s:
+        return s, []
+
+    images: list[tuple[str, str]] = []
+    out: list[str] = []
+    last = 0
+    for m in _RE_LOCAL_MD_IMAGE.finditer(s):
+        out.append(s[last : m.start()])
+        alt = (m.group(1) or "").strip() or "image"
+        raw_src = (m.group(2) or "").strip()
+        last = m.end()
+        path = raw_src
+        if path.lower().startswith("file://"):
+            from urllib.parse import unquote, urlparse
+
+            path = unquote(urlparse(path).path or "")
+        if path and os.path.isfile(path):
+            images.append((alt, path))
+            # 独占一行的图：整行换成占位；行内图也替换为同一占位
+            out.append(placeholder)
+        else:
+            out.append(f"[图片] {alt}")
+    out.append(s[last:])
+    rewritten = "".join(out)
+    # 清理占位造成的多余空行
+    rewritten = re.sub(r"[ \t]*\n{3,}", "\n\n", rewritten).strip()
+    return rewritten, images
+
+
 def build_message_payload(
     *,
     label: str,
@@ -486,6 +632,7 @@ def build_message_payload(
     - title：会话标题（对话名），缺省时从 label 首行 / session_title 取
     - subtitle：路径 · flavor · sid 等元信息（label 其余行）
     - footer：默认空；不再附 output=simple 等尾注（避免图片后再冒出一条文本）
+    - body 可含 ``![alt](/local/path)``；由 Pillow 嵌图
     """
     lines = [
         p.strip()
@@ -507,11 +654,18 @@ def build_message_payload(
         sub = f"Agent 消息 · {sub}"
     else:
         sub = "Agent 消息"
+    from . import formatters as _fmt
+
+    raw_body = body or ""
+    # 出卡前再挡一层：SDK tool_progress / heartbeat 整包 JSON 不当正文
+    if _fmt.is_sdk_noise_text(raw_body):
+        raw_body = ""
     return {
         "title": conv_title,
         "subtitle": sub,
         # 工具调用等：先转 ASCII 标记再剥 emoji，避免卡片丢结构
-        "body": prepare_agent_body_for_card(body or ""),
+        # 注意：本地路径 ![alt](/tmp/...) 需保留，勿被剥坏
+        "body": prepare_agent_body_for_card(raw_body),
         "footer": _strip_emoji(footer or ""),
     }
 
@@ -687,6 +841,60 @@ def write_temp_png(png: bytes) -> str:
     return path
 
 
+def _plain_source_text(kind: str, data: dict[str, Any], fallback_text: str) -> str:
+    """纯文本回退文案。
+
+    优先 ``fallback_text``（SSE 已拼好的 label+正文，含 💬📂🤖 等），
+    不要用出卡 payload 反拼——那里的 title/subtitle 已被剥 emoji。
+    仅当 fallback 为空时，才用 payload body（可能仍含本地图路径）。
+    """
+    fb = (fallback_text or "").strip()
+    if fb:
+        return fallback_text or ""
+    if kind == "message" and isinstance(data, dict):
+        body = str(data.get("body") or "").strip()
+        if body:
+            title = str(data.get("title") or "").strip()
+            sub = str(data.get("subtitle") or "").strip()
+            head_parts = [p for p in (title, sub) if p]
+            head = "\n".join(head_parts)
+            return f"{head}\n\n{body}".strip() if head else body
+    return fallback_text or ""
+
+
+async def _push_plain_with_images(
+    notification_mgr,
+    text: str,
+    session_id: str,
+    sessions_cache: list[dict],
+) -> None:
+    """先发改写后的正文（图位→「见下方图片」），再按顺序发本地图。"""
+    plain, images = extract_local_images_for_plain(text)
+    if plain.strip():
+        await notification_mgr.push_notification(
+            plain, session_id, sessions_cache
+        )
+    for idx, (alt, path) in enumerate(images):
+        try:
+            await notification_mgr.push_image_notification(
+                path,
+                session_id,
+                sessions_cache,
+                caption="",
+                dedupe_key=(
+                    f"embed:{session_id}:{idx}:{os.path.basename(path)}:"
+                    f"{hash(alt) & 0xFFFF:x}"
+                ),
+            )
+        except Exception as e:
+            logger.warning(
+                "plain embed image push failed idx=%s path=%s: %s",
+                idx,
+                path[:60],
+                e,
+            )
+
+
 async def present(
     plugin,
     event: AstrMessageEvent,
@@ -694,14 +902,35 @@ async def present(
     data: dict[str, Any],
     fallback_text: str,
 ) -> AsyncIterator:
-    """yield 一条 event 结果：优先图片卡，否则纯文本。
+    """yield 一条 event 结果：优先图片卡，否则纯文本（可跟嵌图）。
 
     出卡成功时只发图，不另附 footer 文本（避免「操作提示」再冒一条消息）。
     footer 若有内容，由卡片引擎画在图内底部。
+
+    纯文本回退：body 内 ``![alt](/path)`` 换成「见下方图片」，再按顺序
+    ``image_result`` / chain 发图，避免「图先到、字后到」的时序问题。
     """
     result = try_render_png(plugin, kind, data)
     if result is None:
-        yield event.plain_result(fallback_text)
+        source = _plain_source_text(kind, data, fallback_text)
+        plain, images = extract_local_images_for_plain(source)
+        if plain.strip():
+            yield event.plain_result(plain)
+        if images:
+            import astrbot.api.message_components as Comp
+
+            for _alt, img_path in images:
+                try:
+                    if hasattr(event, "image_result"):
+                        yield event.image_result(img_path)
+                    elif hasattr(event, "chain_result"):
+                        yield event.chain_result(
+                            [Comp.Image.fromFileSystem(img_path)]
+                        )
+                except Exception as e:
+                    logger.warning("present plain embed image failed: %s", e)
+        elif not plain.strip():
+            yield event.plain_result(fallback_text or "")
         return
 
     path = None
@@ -720,7 +949,18 @@ async def present(
             yield event.plain_result(fallback_text)
     except Exception as e:
         logger.warning("present image failed: %s", e)
-        yield event.plain_result(fallback_text)
+        source = _plain_source_text(kind, data, fallback_text)
+        plain, images = extract_local_images_for_plain(source)
+        if plain.strip():
+            yield event.plain_result(plain)
+        for _alt, img_path in images:
+            try:
+                if hasattr(event, "image_result"):
+                    yield event.image_result(img_path)
+            except Exception:
+                pass
+        if not plain.strip() and not images:
+            yield event.plain_result(fallback_text)
     finally:
         if path:
             try:
@@ -738,11 +978,12 @@ async def present_push(
     session_id: str,
     sessions_cache: list[dict],
 ) -> bool:
-    """SSE/后台推送路径：尝试发图，失败则发文本。返回是否已发送（图或文）。"""
+    """SSE/后台推送路径：尝试发图，失败则发文本（可跟嵌图）。返回是否已发送。"""
     result = try_render_png(plugin, kind, data)
     if result is None or not result.png:
-        await notification_mgr.push_notification(
-            fallback_text, session_id, sessions_cache
+        source = _plain_source_text(kind, data, fallback_text)
+        await _push_plain_with_images(
+            notification_mgr, source, session_id, sessions_cache
         )
         return True
 
@@ -761,8 +1002,9 @@ async def present_push(
         return True
     except Exception as e:
         logger.warning("present_push image failed kind=%s: %s", kind, e)
-        await notification_mgr.push_notification(
-            fallback_text, session_id, sessions_cache
+        source = _plain_source_text(kind, data, fallback_text)
+        await _push_plain_with_images(
+            notification_mgr, source, session_id, sessions_cache
         )
         return True
     finally:

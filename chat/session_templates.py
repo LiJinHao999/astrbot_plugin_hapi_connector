@@ -1,7 +1,8 @@
 """会话创建模板：清洗、查找、展示（纯数据逻辑，不依赖 AstrBot）。
 
 模板存 AstrBot KV（键 session_templates），WebUI「交互优化」页管理；
-聊天里 /hapi create <模板名> [目录] 一步创建。
+聊天里 /hapi create <模板名> [目录] 一步创建；
+目录可省略——若模板也未设默认目录，会像 create 向导一样让你选最近路径。
 """
 
 from __future__ import annotations
@@ -81,8 +82,6 @@ def format_templates_list(templates: list[dict]) -> str:
         parts = [t.get("agent", "?")]
         if t.get("directory"):
             parts.append(t["directory"])
-        else:
-            parts.append("目录需传参")
         if t.get("yolo"):
             parts.append("YOLO")
         lines.append(f"  {t['name']} — {' · '.join(parts)}")
