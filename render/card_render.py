@@ -3622,23 +3622,65 @@ def _draw_message_png(
         blocks = _parse_md_blocks(body, image_max_width=content_w)
 
     def _table_col_widths(headers, rows) -> list[int]:
+        """按真实像素测宽分配列宽。
+
+        旧逻辑用 ``len(s)`` 估宽，ASCII 短词（true / bytes / file）与长路径
+        混排时短列被压到 ~36px，单元格按字折成竖排（t/r/u/e）。现用
+        font_body 实测最长单元格，并保证至少能放下约 4 个半角字符。
+        """
         n = max(1, len(headers))
-        # 按字符权重估宽，再缩放到 content_w
-        weights = []
+        cell_pad_x = 8
+        # 最小列宽：约 4 个半角 + 左右 padding，避免 true/file 被竖折
+        min_glyph = max(
+            _text_size(d0, "WWWW", font_body)[0],
+            _text_size(d0, "测测", font_body)[0],
+        )
+        min_col = max(48, min_glyph + cell_pad_x * 2)
+        usable = max(min_col * n, content_w - 2)
+
+        raw: list[int] = []
         for ci in range(n):
-            samples = [_plain_inline(str(headers[ci] if ci < len(headers) else ""))]
+            samples = [str(headers[ci] if ci < len(headers) else "")]
             for r in rows:
                 if ci < len(r):
-                    samples.append(_plain_inline(str(r[ci])))
-            max_len = max((len(s) for s in samples), default=1)
-            weights.append(max(2, min(max_len, 28)))
-        total_w = sum(weights) or 1
-        usable = max(80, content_w - 2)
-        cols = [max(36, int(usable * w / total_w)) for w in weights]
-        # 修正舍入
-        drift = usable - sum(cols)
-        if cols:
-            cols[-1] = max(36, cols[-1] + drift)
+                    samples.append(str(r[ci]))
+            max_px = min_glyph
+            for s in samples:
+                plain = _plain_inline(s) or " "
+                # 单元格可能含 `code` / **bold**；按 plain 用 body 字宽已够分配
+                w, _ = _text_size(d0, plain, font_body)
+                # 代码片段略宽：plain 已去反引号，再给一点余量
+                if "`" in s:
+                    w = int(w * 1.08) + 4
+                max_px = max(max_px, w)
+            raw.append(max_px + cell_pad_x * 2)
+
+        # 先给每列最小宽度，剩余按「超出最小」的需求比例分
+        base = [min_col] * n
+        need = [max(0, raw[i] - min_col) for i in range(n)]
+        remain = max(0, usable - min_col * n)
+        total_need = sum(need) or 1
+        cols = list(base)
+        if remain > 0:
+            if total_need <= remain:
+                # 放得下：按实测需求加宽，多余给最后一列
+                for i in range(n):
+                    cols[i] = min_col + need[i]
+                drift = usable - sum(cols)
+                cols[-1] = max(min_col, cols[-1] + drift)
+            else:
+                # 总宽不够：按需求比例压缩，仍守 min_col
+                allocated = 0
+                for i in range(n - 1):
+                    extra = int(remain * need[i] / total_need)
+                    cols[i] = min_col + extra
+                    allocated += extra
+                cols[-1] = min_col + max(0, remain - allocated)
+        else:
+            # usable 极窄：均分
+            each = max(min_col, usable // n)
+            cols = [each] * n
+            cols[-1] = max(min_col, usable - each * (n - 1))
         return cols
 
     def _measure_table(b) -> int:

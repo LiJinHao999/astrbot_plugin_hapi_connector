@@ -82,8 +82,6 @@ def format_templates_list(templates: list[dict]) -> str:
         parts = [t.get("agent", "?")]
         if t.get("directory"):
             parts.append(t["directory"])
-        else:
-            parts.append("目录需传参")
         if t.get("yolo"):
             parts.append("YOLO")
         lines.append(f"  {t['name']} — {' · '.join(parts)}")

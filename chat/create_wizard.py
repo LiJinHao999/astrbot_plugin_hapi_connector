@@ -211,9 +211,8 @@ class CreateWizard:
         lines = [prefix, "", "步骤 4/5 — 选择 Vibe Coding 代理:"]
         for i, a in enumerate(agents, 1):
             p = profile_for(a)
-            note = f" — {p.notes}" if p.notes else ""
-            lines.append(f"  [{i}] {a} ({p.label}){note}")
-        lines.append("也可直接输入代理名（含 HAPI 新类型）")
+            lines.append(f"  [{i}] {a} ({p.label})")
+        lines.append("也可直接输入代理名（列表若无）")
         return WizardResult("\n".join(lines))
 
     def _step3(self, raw: str) -> WizardResult:

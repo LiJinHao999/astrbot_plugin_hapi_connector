@@ -416,13 +416,11 @@ def _fmt_generated_image(block: dict, max_len: int) -> str | None:
 
     形如 ``![shot.png](hapi-genimg://<imageId>)``。
     无 imageId 时退回可读占位，避免再吐整段 JSON。
+
+    注意：块上的 ``id`` 是消息/内容 UUID，不是 imageId（CLI display_image
+    会同时带 imageId 与 id）。勿把 ``id`` 当下载键，否则会 404 仍无图。
     """
-    image_id = (
-        block.get("imageId")
-        or block.get("image_id")
-        or block.get("id")
-        or ""
-    )
+    image_id = block.get("imageId") or block.get("image_id") or ""
     image_id = str(image_id).strip()
     file_name = (
         block.get("fileName")
@@ -588,7 +586,11 @@ def _fmt_tool_call(block: dict, max_len: int) -> str:
 
 
 def _extract_codex_block(data: dict, max_len: int) -> str | None:
-    """处理 Codex 专有的包装格式"""
+    """处理 Codex / 通用 agent 包装：``{type: 'codex', data: {...}}``。
+
+    CLI ``sendAgentMessage`` 把 display_image 等也塞进 data，因此
+    generated-image 必须在这里展开，不能落成 ``[generated-image]`` 占位。
+    """
     if not isinstance(data, dict):
         return str(data)[:max_len]
     dtype = data.get("type", "")
@@ -599,14 +601,15 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
         return _fmt_tool_call(data, max_len)
     if dtype == "tool-call-result":
         return None
-    if dtype == "token_count":
-        return None
-    if dtype in ("reasoning", "agent_reasoning"):
+    if dtype in ("generated-image", "generated_image"):
+        return _fmt_generated_image(data, max_len)
+    if dtype in _NOISE_BLOCK_TYPES or dtype in ("token_count", "reasoning", "agent_reasoning"):
         return None
     if dtype == "message":
         msg_text = data.get("message", "")
         return msg_text[:max_len] if msg_text else "(空消息)"
-    return f"[{dtype}]" if dtype else None
+    # 未知 dtype：不再用 [type] 占位刷屏（曾导致 generated-image 只剩方括号）
+    return None
 
 
 def session_label_short(sid: str, sessions_cache: list[dict]) -> str:

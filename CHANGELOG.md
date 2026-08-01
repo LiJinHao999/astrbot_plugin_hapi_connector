@@ -1,29 +1,24 @@
 # 更新日志
 
-## v3.2.4
-
-1. **对话卡可嵌 HAPI 生成图**  
-   Agent 消息里的 `generated-image` 不再变成 `[generated-image]` 占位；会走 `GET /api/sessions/:id/generated-images/:imageId` 下载后嵌进对话卡（Markdown `![…](…)` / 本地路径同样支持）。
-
-2. **对话卡 Markdown 观感**  
-   列表用 `●`；GFM 任务列表 `- [x]` 走清单样式；链接显示文字+下划线；表内 `\|` 转义；代码块超长行按宽度折行并避免画布裁切。
-
-3. **过滤 MCP / SDK 进度噪音**  
-   `tool_progress` 心跳、session 元数据信封等不再整段 JSON 当正文推到对话卡。
-
-4. **多 agent（sidechain）与完成提示**  
-   simple / summary 默认不展示子代理正文；detail 以【子代理】前缀展示。thinking 完成边沿防抖加长；本轮已推过正文时不再叠「会话已完成」。
-
 ## v3.2.3
 
 1. **模板创建缺目录时可选手动/最近路径**  
-   `/hapi create <模板名>` 在模板未设默认目录、命令也未传目录时，不再直接报错；改为拉取最近使用目录，展示与 create 向导步骤 2 相同的序号选择 / 手输路径。
+   `/hapi create <模板名>` 在模板未设默认目录、命令也未传目录时，不再直接报错；改为拉取最近使用目录，展示与 create 向导步骤 2 相同的序号选择 / 手输路径。精简 create 代理列表与模板展示文案。
 
-2. **修复 Focus / 快捷前缀发图仍可能传两份的问题**  
-   AstrBot 常把同一张图落成 `media_image_*.jpg` 与更大的 `download.png`。旧逻辑按体积保留更大的一份，反而会留下副缓存。现改为：识别到主图时**一律忽略** `download.*`。
+2. **Focus / 快捷前缀发图双缓存去重**  
+   AstrBot 常把同一张图落成 `media_image_*.jpg` 与 `download.png`（同尺寸、编码不同，哈希去不掉）。「1 主图 + download.*」按文件体积只留最大；多张主图时丢掉全部 `download.*`，避免误删真多图。上传前再按内容 SHA-256 去重。
 
-3. **修复对话卡 GFM 表格被拆成管道原文的问题**  
-   表内价格 `$5 / $30` 会被行内公式正则误吃，整段走公式路径后又按行切开，表格无法识别。现跳过价格类 `$…$`，纯文本块整段交给 Markdown 解析；表内 `**粗体**` 也会按 runs 绘制。
+3. **对话卡可嵌 HAPI 生成图**  
+   Agent 的 `generated-image`（含 Claude `display_image`）不再变成 `[generated-image]` 占位。HAPI 全 flavor 消息外壳是协议字面量 `type: "codex"`（历史命名），会展开 `codex.data` 产出 `hapi-genimg://`，再走 `GET /api/sessions/:id/generated-images/:imageId` 下载嵌卡；只用真正的 `imageId`，不用消息 `id`。Markdown 本地路径图同样支持。
+
+4. **对话卡 Markdown 观感**  
+   列表用 `●`；GFM 任务列表 `- [x]`；链接文字+下划线；表内 `\|` 转义；代码块超长折行。表格列宽按字体像素分配，避免 `true` / `bytes` 等短词被压成竖折。价格类 `$5` 不再被公式路径拆表。
+
+5. **过滤 MCP / SDK 进度噪音**  
+   `tool_progress` 心跳、session 元数据信封等不再整段 JSON 当正文推到对话卡。
+
+6. **多 agent（sidechain）与完成提示**  
+   simple / summary 默认不展示子代理正文；detail 以【子代理】前缀展示。thinking 完成边沿防抖加长；本轮已推过正文时不再叠「会话已完成」。
 
 ## v3.2.2
 
