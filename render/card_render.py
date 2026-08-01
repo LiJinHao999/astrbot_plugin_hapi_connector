@@ -3754,6 +3754,76 @@ def _draw_message_png(
         lines = _wrap_text(d0, line, font_body, content_w - 20) or [""]
         return sum(_text_size(d0, ln or " ", font_body)[1] + line_extra for ln in lines) + 6
 
+    def _measure_subagent_block(b) -> int:
+        """独立子代理小卡：标题栏 + 内嵌 blocks + 边距（偏宽松，避免挤）。"""
+        label = str(b.get("label") or "子代理")
+        head = f"子代理 · {label}"
+        # 比 tool 条更宽的内边距与卡间距
+        pad_y = max(14, tool_pad_y + 6)
+        pad_x = max(16, tool_pad_x + 4)
+        bar_w = max(4, int(style.tool_bar_w) or 4)
+        card_gap = max(18, tool_gap + 8)
+        head_gap = 12  # 标题下到分割线/正文
+        inner_gap = 8  # 内嵌块之间
+        inner_w = max(
+            40,
+            content_w - pad_x * 2 - bar_w - 12,
+        )
+        line_loose = line_extra + 4
+        h = pad_y * 2 + _text_size(d0, head, font_body_bold)[1] + head_gap
+        inner_blocks = list(b.get("blocks") or [])
+        if inner_blocks:
+            for idx, ib in enumerate(inner_blocks):
+                ibt = ib.get("type")
+                try:
+                    if ibt in ("tool", "ask"):
+                        # 内嵌 tool 用更窄宽度重算
+                        name = str(ib.get("name") or ib.get("text") or "tool")
+                        detail = str(ib.get("detail") or "")
+                        tag = "Tool" if ibt == "tool" else "Ask"
+                        head_t = f"[{tag}] {name}"
+                        ih = tool_pad_y * 2 + _text_size(d0, head_t, font_body_bold)[1]
+                        if detail:
+                            ih += 8
+                            for raw_ln in detail.split("\n"):
+                                for ln in _wrap_text(
+                                    d0, raw_ln, font_code, max(40, inner_w - 20)
+                                ) or [""]:
+                                    ih += _text_size(d0, ln or " ", font_code)[1] + 4
+                        h += ih
+                    elif ibt == "code":
+                        code_txt = str(ib.get("text") or "")
+                        clines = (
+                            _wrap_text(d0, code_txt, font_code, max(40, inner_w - 16))
+                            or [""]
+                        )
+                        h += (
+                            sum(
+                                _text_size(d0, ln or " ", font_code)[1] + 4
+                                for ln in clines
+                            )
+                            + 16
+                        )
+                    elif ibt == "li":
+                        raw = "● " + str(ib.get("text") or "")
+                        for ln in _wrap_text(d0, raw, font_body, inner_w) or [""]:
+                            h += _text_size(d0, ln or " ", font_body)[1] + line_loose
+                        h += 6
+                    else:
+                        raw = str(ib.get("text") or "")
+                        for ln in _wrap_text(d0, raw, font_body, inner_w) or [""]:
+                            h += _text_size(d0, ln or " ", font_body)[1] + line_loose
+                        h += 6
+                except Exception:
+                    h += _text_size(d0, "测", font_body)[1] + 16
+                if idx < len(inner_blocks) - 1:
+                    h += inner_gap
+        else:
+            body = str(b.get("text") or "")
+            for ln in _wrap_text(d0, body, font_body, inner_w) or [""]:
+                h += _text_size(d0, ln or " ", font_body)[1] + line_loose
+        return h + card_gap
+
     def measure_block(b) -> int:
         h = 0
         if b["type"] == "rich_line":
@@ -3765,6 +3835,8 @@ def _draw_message_png(
             return 48
         if b["type"] == "table":
             return _measure_table(b)
+        if b["type"] == "subagent":
+            return _measure_subagent_block(b)
         if b["type"] in ("tool", "ask"):
             return _measure_tool_block(b)
         if b["type"] == "todo":
@@ -3795,7 +3867,15 @@ def _draw_message_png(
         if b["type"] == "image":
             im = b.get("image")
             if im is not None:
-                return int(getattr(im, "height", 40)) + 16
+                # 绘制前再按 content_w 校正一次，保证测高与最终显示一致
+                try:
+                    fitted = _fit_pil_image_to_card(im, max_width=content_w)
+                    if fitted is not None:
+                        b["image"] = fitted
+                        im = fitted
+                except Exception:
+                    pass
+                return int(getattr(im, "height", 40)) + 20
             # 未解析到像素时按一行说明占位
             return _text_size(d0, "测", font_body)[1] + 20
         if b["type"] == "li":
@@ -3992,6 +4072,158 @@ def _draw_message_png(
                     draw.text((pad, y), line, font=font_body, fill=fg)
                     y += _text_size(draw, line or " ", font_body)[1] + line_extra
                 y += 8
+            continue
+        if b["type"] == "subagent":
+            # 独立子代理小卡：更松的内边距 / 行距 / 卡间距
+            label = str(b.get("label") or "子代理")
+            head = f"子代理 · {label}"
+            pad_y = max(14, tool_pad_y + 6)
+            pad_x = max(16, tool_pad_x + 4)
+            bar_w = max(4, int(style.tool_bar_w) or 4)
+            card_gap = max(18, tool_gap + 8)
+            head_gap = 12
+            inner_gap = 8
+            line_loose = line_extra + 4
+            inner_blocks = list(b.get("blocks") or [])
+            block_h = _measure_subagent_block(b)
+            panel_h = max(40, block_h - card_gap)
+            if y + block_h + pad + 40 > height:
+                new_h = y + block_h + pad + 160
+                bigger = Image.new("RGB", (width, new_h), bg)
+                bigger.paste(img, (0, 0))
+                img = bigger
+                draw = ImageDraw.Draw(img)
+                height = new_h
+            # 子卡底：浅于正文区、略带 tool 绿意
+            fill = _mix_rgb(_hex_to_rgb(style.bg), _hex_to_rgb(style.tool_bg), 0.42)
+            outline = _hex_to_rgb(style.tool_border)
+            bar = _hex_to_rgb(style.tool_accent)
+            head_fg = _hex_to_rgb(style.tool_accent)
+            r_card = max(10, int(style.tool_radius) + 4)
+            box = (pad, y, width - pad, y + panel_h)
+            _draw_rounded_rect(
+                draw,
+                box,
+                radius=r_card,
+                fill=fill,
+                outline=outline,
+                width=1,
+            )
+            # 左边强调条（上下内缩，更像独立卡）
+            draw.rectangle(
+                (pad + 4, y + 12, pad + 4 + bar_w, y + panel_h - 12),
+                fill=bar,
+            )
+            text_x = pad + pad_x + bar_w + 8
+            yy = y + pad_y
+            _draw_text(draw, (text_x, yy), head, font_body_bold, head_fg)
+            yy += _text_size(draw, head, font_body_bold)[1] + head_gap
+            # 标题下分割线（左右留白）
+            draw.line(
+                (text_x, yy - 6, width - pad - pad_x, yy - 6),
+                fill=_mix_rgb(outline, fill, 0.35),
+                width=1,
+            )
+            inner_w = max(40, width - pad - text_x - pad_x)
+            if not inner_blocks:
+                body = str(b.get("text") or "")
+                for ln in _wrap_text(draw, body, font_body, inner_w) or [""]:
+                    draw.text((text_x, yy), ln, font=font_body, fill=fg)
+                    yy += _text_size(draw, ln or " ", font_body)[1] + line_loose
+            else:
+                for idx, ib in enumerate(inner_blocks):
+                    ibt = ib.get("type")
+                    if ibt in ("tool", "ask"):
+                        is_ask = ibt == "ask"
+                        tag = "Ask" if is_ask else "Tool"
+                        name = str(ib.get("name") or ib.get("text") or "tool")
+                        detail = str(ib.get("detail") or "")
+                        th = f"[{tag}] {name}"
+                        fill_i = _hex_to_rgb(style.ask_bg if is_ask else style.tool_bg)
+                        th_h = _text_size(draw, th, font_body_bold)[1]
+                        dlines: list[str] = []
+                        if detail:
+                            for raw_ln in detail.split("\n"):
+                                dlines.extend(
+                                    _wrap_text(
+                                        draw, raw_ln, font_code, max(40, inner_w - 20)
+                                    )
+                                    or [""]
+                                )
+                        ih = tool_pad_y * 2 + th_h + (
+                            8
+                            + sum(
+                                _text_size(draw, ln or " ", font_code)[1] + 4
+                                for ln in dlines
+                            )
+                            if dlines
+                            else 0
+                        )
+                        _draw_rounded_rect(
+                            draw,
+                            (text_x, yy, width - pad - pad_x, yy + ih),
+                            radius=max(6, int(style.tool_radius)),
+                            fill=fill_i,
+                            outline=outline,
+                            width=1,
+                        )
+                        _draw_text(
+                            draw,
+                            (text_x + 10, yy + tool_pad_y),
+                            th,
+                            font_body_bold,
+                            head_fg,
+                        )
+                        dyy = yy + tool_pad_y + th_h + 8
+                        for ln in dlines:
+                            col = fg
+                            s = (ln or "").lstrip()
+                            if s.startswith("+"):
+                                col = _hex_to_rgb(style.diff_add)
+                            elif s.startswith("-"):
+                                col = _hex_to_rgb(style.diff_del)
+                            draw.text((text_x + 10, dyy), ln, font=font_code, fill=col)
+                            dyy += _text_size(draw, ln or " ", font_code)[1] + 4
+                        yy += ih + inner_gap
+                    elif ibt == "code":
+                        code_txt = str(ib.get("text") or "")
+                        clines = (
+                            _wrap_text(
+                                draw, code_txt, font_code, max(40, inner_w - 16)
+                            )
+                            or [""]
+                        )
+                        ch = (
+                            sum(
+                                _text_size(draw, ln or " ", font_code)[1] + 4
+                                for ln in clines
+                            )
+                            + 16
+                        )
+                        code_bg = _mix_rgb(fill, (20, 20, 20), 0.06)
+                        _draw_rounded_rect(
+                            draw,
+                            (text_x, yy, width - pad - pad_x, yy + ch),
+                            radius=6,
+                            fill=code_bg,
+                            outline=outline,
+                            width=1,
+                        )
+                        cyy = yy + 8
+                        for ln in clines:
+                            draw.text((text_x + 10, cyy), ln, font=font_code, fill=fg)
+                            cyy += _text_size(draw, ln or " ", font_code)[1] + 4
+                        yy += ch + inner_gap
+                    else:
+                        prefix = "●  " if ibt == "li" else ""
+                        raw = prefix + str(ib.get("text") or "")
+                        for ln in _wrap_text(draw, raw, font_body, inner_w) or [""]:
+                            draw.text((text_x, yy), ln, font=font_body, fill=fg)
+                            yy += (
+                                _text_size(draw, ln or " ", font_body)[1] + line_loose
+                            )
+                        yy += 6 if idx < len(inner_blocks) - 1 else 2
+            y += block_h
             continue
         if b["type"] in ("tool", "ask"):
             # 样式来自 --card-tool-* / --card-ask-bg / --card-diff-*（Pillow 可读）
@@ -4241,20 +4473,28 @@ def _draw_message_png(
             alt = str(b.get("text") or b.get("alt") or "image")
             if im is not None:
                 try:
-                    if y + im.height > height - pad:
-                        new_h = y + im.height + pad + 40
-                        if new_h > height:
-                            bigger = Image.new("RGB", (width, new_h), bg)
-                            bigger.paste(img, (0, 0))
-                            img = bigger
-                            draw = ImageDraw.Draw(img)
-                            height = new_h
-                    # 圆角底 + 细边，避免贴边发飘
+                    # 绘制时再贴合当前 content_w（解析阶段可能用了默认 640）
+                    im = _fit_pil_image_to_card(im, max_width=content_w) or im
+                    b["image"] = im
+                    frame = 6  # 外框留白，图略小于内容宽更贴「卡适应图」
+                    draw_w = min(im.width, content_w - frame * 2)
+                    if draw_w < im.width:
+                        im = _fit_pil_image_to_card(im, max_width=draw_w) or im
+                        b["image"] = im
+                    need_h = im.height + pad + 48
+                    if y + need_h > height:
+                        new_h = y + need_h
+                        bigger = Image.new("RGB", (width, new_h), bg)
+                        bigger.paste(img, (0, 0))
+                        img = bigger
+                        draw = ImageDraw.Draw(img)
+                        height = new_h
+                    # 水平居中于内容区；外框贴图尺寸，避免大块空白框
                     x0 = pad + max(0, (content_w - im.width) // 2)
                     _draw_rounded_rect(
                         draw,
                         (x0 - 4, y - 4, x0 + im.width + 4, y + im.height + 4),
-                        radius=8,
+                        radius=10,
                         fill=code_bg,
                         outline=border,
                         width=1,
@@ -4263,7 +4503,7 @@ def _draw_message_png(
                         img.paste(im, (x0, y), im)
                     else:
                         img.paste(im, (x0, y))
-                    y += im.height + 14
+                    y += im.height + 18
                 except Exception:
                     for line in _wrap_text(draw, f"[图片] {alt}", font_body, content_w):
                         draw.text((pad, y), line, font=font_body, fill=sub_fg)
@@ -4354,13 +4594,108 @@ _RE_MD_IMAGE_ONLY = re.compile(r"^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$")
 _RE_MD_IMAGE_ANY = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
+def _is_tool_detail_continuation(line: str) -> bool:
+    """判断是否为 [Tool] 块的 diff/缩进续行（须并入 tool.detail，不能当列表）。
+
+    覆盖：
+    - 缩进的 ``  + foo`` / ``  - bar`` / ``  · …``
+    - 顶格 diff 行 ``+ foo`` / ``- bar``（Edit 预览常见；旧逻辑漏吃会变成 ● 列表）
+    - 续行缩进的普通代码行（两空格起头）
+    - 空行夹在 diff 中间时仍算续行（由调用方在遇到非续行时停止）
+    """
+    if line is None:
+        return False
+    # 空行：不主动吞；由 while 在下一条非续行时 break
+    if not line.strip():
+        return False
+    # 新块起点：绝不能吞
+    s = line.lstrip()
+    if s.startswith("[Tool]") or s.startswith("[Ask]") or s.startswith("【"):
+        return False
+    if s.startswith("```") or s.startswith("#"):
+        return False
+    if re.match(r"^---+$|^\*\*\*+$|^___+$|^━{3,}$", s):
+        return False
+    # 缩进 + diff 标记
+    if re.match(r"^\s+([+\-…]|\.\.\.|·)", line):
+        return True
+    # 顶格 diff（Edit 输出常见）
+    if re.match(r"^[+\-](\s+|$)", line):
+        return True
+    # 至少两空格缩进的续行（代码块片段）
+    if line.startswith("  ") and line.strip():
+        return True
+    return False
+
+
+def _fit_pil_image_to_card(
+    im: Any,
+    *,
+    max_width: int = 640,
+    max_height: int | None = None,
+) -> Any:
+    """让嵌入图适配对话卡内容区：优先铺满内容宽，高度跟比例；过长再限高。
+
+    旧逻辑 ``min(宽比, 高比, 1)`` 会让竖长截图先被高度卡住，左右大片留白，
+    看起来像「没适应分辨率」。现策略：
+    1. 目标宽 = content 宽（几乎铺满，不强制放大超小图超过 1.5×）
+    2. 按宽等比缩放（可略放大中等图，让截图贴齐卡宽）
+    3. 若高度仍超过上限，再整体缩小（保持比例，居中由绘制侧处理）
+    """
+    if im is None:
+        return None
+    try:
+        w, h = im.size
+    except Exception:
+        return im
+    if w <= 0 or h <= 0:
+        return im
+
+    tw = max(40, int(max_width))
+    # 默认高上限放宽：优先「铺满内容宽」，卡片跟着图变高。
+    # 仅极端长图（约 >3.2× 内容宽，或绝对像素）再等比压高度，避免一条消息无限长。
+    if max_height is None or max_height <= 0:
+        th = max(1200, int(tw * 3.2))
+    else:
+        th = max(40, int(max_height))
+
+    # 目标：铺满内容宽（卡片适应图，而不是图被高上限挤窄）
+    if w >= tw:
+        scale = tw / float(w)
+    elif w < tw * 0.45:
+        # 很小的图标/表情：最多放大到 1.5×
+        scale = min(tw / float(w), 1.5)
+    else:
+        # 中等宽度截图：放大到内容宽，避免左右大片留白
+        scale = tw / float(w)
+
+    nw = max(1, int(round(w * scale)))
+    nh = max(1, int(round(h * scale)))
+    # 仅极端长图限高（仍保持比例 → 会略窄于内容宽，属有意兜底）
+    if nh > th:
+        scale2 = th / float(nh)
+        nw = max(1, int(round(nw * scale2)))
+        nh = max(1, int(round(nh * scale2)))
+
+    if nw == w and nh == h:
+        return im
+    try:
+        resample = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
+    except Exception:
+        resample = Image.LANCZOS  # type: ignore[attr-defined]
+    try:
+        return im.resize((nw, nh), resample)
+    except Exception:
+        return im
+
+
 def _load_pil_image_from_src(
     src: str,
     *,
     max_width: int = 640,
-    max_height: int = 900,
+    max_height: int | None = None,
 ) -> Any | None:
-    """从本地路径 / data URL 加载 PIL 图并等比缩放到卡片宽度。失败返回 None。"""
+    """从本地路径 / data URL 加载 PIL 图，并按卡片内容宽适配。失败返回 None。"""
     if not _HAS_PILLOW or not src:
         return None
     raw: bytes | None = None
@@ -4402,21 +4737,9 @@ def _load_pil_image_from_src(
         im.load()
         if im.mode not in ("RGB", "RGBA"):
             im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
-        tw = max(40, int(max_width))
-        th = max(40, int(max_height))
-        w, h = im.size
-        if w <= 0 or h <= 0:
-            return None
-        scale = min(tw / w, th / h, 1.0)
-        if scale < 0.999:
-            nw = max(1, int(w * scale))
-            nh = max(1, int(h * scale))
-            try:
-                resample = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
-            except Exception:
-                resample = Image.LANCZOS  # type: ignore[attr-defined]
-            im = im.resize((nw, nh), resample)
-        return im
+        return _fit_pil_image_to_card(
+            im, max_width=max_width, max_height=max_height
+        )
     except Exception as e:
         logger.debug("decode image failed: %s", e)
         return None
@@ -4474,6 +4797,47 @@ def _parse_md_blocks(
             )
             i += 1
             continue
+        # 子代理独立小卡：【子代理】/【子代理:名称】起一段，直到下一个子代理/主消息/分隔线
+        m_sub = re.match(r"^【子代理(?::([^】]*))?】(.*)$", line)
+        if m_sub:
+            label = (m_sub.group(1) or "").strip() or "子代理"
+            rest = (m_sub.group(2) or "").strip()
+            buf: list[str] = [rest] if rest else []
+            i += 1
+            while i < len(lines):
+                nxt = lines[i]
+                if re.match(r"^【子代理(?::[^】]*)?】", nxt):
+                    break
+                # 主消息起新段，不并进子代理小卡
+                if nxt.startswith("【消息】"):
+                    break
+                if re.match(r"^---+$|^\*\*\*+$|^___+$|^━{3,}$", nxt.strip()):
+                    break
+                buf.append(nxt)
+                i += 1
+            inner = "\n".join(buf).strip()
+            # 去掉正文里重复的【消息】前缀（主代理行误入时仍可读）
+            inner_blocks = (
+                _parse_md_blocks(inner, image_max_width=max(120, image_max_width - 28))
+                if inner
+                else []
+            )
+            blocks.append(
+                {
+                    "type": "subagent",
+                    "label": label,
+                    "text": inner,
+                    "blocks": inner_blocks,
+                }
+            )
+            continue
+        # 主消息前缀：卡片上不画「【消息】」字样，只留正文
+        if line.startswith("【消息】"):
+            line = line[len("【消息】") :].lstrip()
+            if not line.strip():
+                i += 1
+                continue
+            # 用剥前缀后的行继续本轮解析
         # 卡片用工具/任务行（无 emoji；见 output_present.prepare_agent_body_for_card）
         m = re.match(r"^\[Tool\]\s*(.*)$", line)
         if m:
@@ -4481,20 +4845,28 @@ def _parse_md_blocks(
             name, _, detail = rest.partition(":")
             name = name.strip() or "tool"
             detail = detail.strip()
-            # 吃掉后续缩进续行（Edit -/+ 差异、… 省略）
+            # 吃掉后续 diff/缩进续行。
+            # Edit 的 -/+ 行若没缩进（或仅 "+ foo"），不能当普通列表，
+            # 否则会渲染成一堆 ● 意义不明的列表（用户截图问题）。
             i += 1
             cont: list[str] = []
             while i < len(lines):
                 nxt = lines[i]
-                if re.match(r"^\s+([+\-…]|\.\.\.)", nxt) or (
-                    nxt.startswith("  ") and nxt.strip()
-                ):
-                    cont.append(nxt.strip())
+                if _is_tool_detail_continuation(nxt):
+                    # 保留原行（含缩进语义），绘制侧再处理
+                    cont.append(nxt.rstrip())
                     i += 1
                     continue
                 break
             if cont:
-                detail = (detail + "\n" if detail else "") + "\n".join(cont)
+                # 去掉仅用于对齐的前导双空格，保留 +/- 标记
+                cleaned: list[str] = []
+                for raw_c in cont:
+                    s = raw_c
+                    if s.startswith("  "):
+                        s = s[2:]
+                    cleaned.append(s if s.strip() else s)
+                detail = (detail + "\n" if detail else "") + "\n".join(cleaned)
             blocks.append(
                 {
                     "type": "tool",
@@ -4549,7 +4921,8 @@ def _parse_md_blocks(
             i += 1
             continue
         # GFM 任务列表：- [x] / - [ ] / 1. [x]
-        m = re.match(r"^(\s*)(?:[-*+]|\d+\.)\s+\[([ xX~])\]\s+(.*)$", line)
+        # 注意：不用 + 作列表标记，避免与 Edit diff 的 "+ code" 冲突
+        m = re.match(r"^(\s*)(?:[-*]|\d+\.)\s+\[([ xX~])\]\s+(.*)$", line)
         if m:
             mark = (m.group(2) or " ").lower()
             content = (m.group(3) or "").strip()
@@ -4564,7 +4937,8 @@ def _parse_md_blocks(
             )
             i += 1
             continue
-        m = re.match(r"^\s*[-*+]\s+(.*)$", line)
+        # 无序列表仅 - / *（排除 +，否则 Edit 的 "+ foo" 会变成 ● 列表）
+        m = re.match(r"^\s*[-*]\s+(.*)$", line)
         if m:
             raw = m.group(1)
             blocks.append(

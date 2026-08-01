@@ -1,6 +1,7 @@
 """纯函数：格式化 session 标签、消息预览、帮助文本等"""
 
 import json
+import re
 
 
 # SDK / MCP 进度与内部控制：不应进对话卡正文
@@ -67,7 +68,8 @@ def extract_text_preview(
         if include_sidechain and (
             _flag_true(content.get("isSidechain")) or _flag_true(content.get("is_sidechain"))
         ):
-            return _tag_sidechain(text)
+            label = _sidechain_agent_label(content, text=text)
+            return _tag_sidechain(text, label)
         return text
 
     # content blocks 列表（标准格式）
@@ -76,7 +78,8 @@ def extract_text_preview(
         if text and include_sidechain and (
             _flag_true(content.get("isSidechain")) or _flag_true(content.get("is_sidechain"))
         ):
-            return _tag_sidechain(text)
+            label = _sidechain_agent_label(content, *inner, text=text)
+            return _tag_sidechain(text, label)
         return text
 
     # 单个 block（dict）
@@ -86,7 +89,8 @@ def extract_text_preview(
             return None
         text = _extract_from_block(inner, max_len, include_sidechain=include_sidechain)
         if text and include_sidechain and _block_tree_is_sidechain(inner):
-            return _tag_sidechain(text)
+            label = _sidechain_agent_label(content, inner, text=text)
+            return _tag_sidechain(text, label)
         return text
 
     return None
@@ -96,13 +100,94 @@ def _flag_true(v) -> bool:
     return v is True or v == "true" or v == 1
 
 
-def _tag_sidechain(text: str) -> str:
+def _sidechain_agent_label(*objs: object, text: str = "") -> str:
+    """尽量从 SDK/HAPI 字段推断子 agent 可读名（Task description、agent 名等）。"""
+    skip = {
+        "",
+        "assistant",
+        "agent",
+        "user",
+        "system",
+        "claude",
+        "codex",
+        "general-purpose",
+        "general_purpose",
+    }
+    keys = (
+        "agentName",
+        "agent_name",
+        "displayName",
+        "display_name",
+        "subagent_type",
+        "subagentType",
+        "activeForm",
+        "description",
+        "title",
+        "name",
+        "label",
+    )
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        for key in keys:
+            v = obj.get(key)
+            if not isinstance(v, str):
+                continue
+            s = v.strip()
+            if not s or s.lower() in skip:
+                continue
+            # 过长 description 截断
+            if len(s) > 36:
+                s = s[:35] + "…"
+            return s
+        # Task / Agent 工具入参
+        inp = obj.get("input") if isinstance(obj.get("input"), dict) else None
+        if inp:
+            for key in ("description", "prompt", "name", "subagent_type"):
+                v = inp.get(key)
+                if isinstance(v, str) and v.strip() and v.strip().lower() not in skip:
+                    s = v.strip().split("\n", 1)[0].strip()
+                    if len(s) > 36:
+                        s = s[:35] + "…"
+                    return s
+        # content 里第一个 tool_use 名
+        inner = obj.get("content")
+        if isinstance(inner, list):
+            for block in inner:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") in ("tool_use", "tool-call"):
+                    n = str(block.get("name") or "").strip()
+                    if n and n.lower() not in skip:
+                        return n[:36]
+    # 正文首行当弱标签
+    head = (text or "").strip().split("\n", 1)[0].strip()
+    if head and not head.startswith("{") and not head.startswith("【"):
+        if len(head) > 28:
+            head = head[:27] + "…"
+        return head
+    return ""
+
+
+def _tag_sidechain(text: str, label: str = "") -> str:
+    """detail 子代理正文标记。
+
+    形如 ``【子代理:查旧金山天气】…`` 或无名称时 ``【子代理】…``。
+    卡片解析器认前者画独立小卡并显示身份。
+    """
     t = (text or "").strip()
     if not t:
         return t
-    if t.startswith("【子代理】"):
-        return t
-    return f"【子代理】{t}"
+    # 已有标记则抽出 label / 正文
+    m = re.match(r"^【子代理(?::([^】]*))?】\s*", t)
+    if m:
+        if not label and m.group(1):
+            label = m.group(1).strip()
+        t = t[m.end() :].strip()
+    label = (label or "").strip()
+    if label:
+        return f"【子代理:{label}】{t}" if t else f"【子代理:{label}】"
+    return f"【子代理】{t}" if t else "【子代理】"
 
 
 def _block_tree_is_sidechain(block: dict) -> bool:
@@ -297,7 +382,8 @@ def _extract_from_block(
         if not prompt:
             return None
         short = prompt if len(prompt) <= max_len else prompt[: max_len - 1] + "…"
-        return _tag_sidechain(short)
+        label = _sidechain_agent_label(block, text=short)
+        return _tag_sidechain(short, label)
 
     # ── 明确噪音类型 ──
     if btype in _NOISE_BLOCK_TYPES:
@@ -315,7 +401,8 @@ def _extract_from_block(
                 data, max_len, include_sidechain=include_sidechain
             )
             if text and include_sidechain and _block_tree_is_sidechain(data):
-                return _tag_sidechain(text)
+                label = _sidechain_agent_label(block, data, text=text)
+                return _tag_sidechain(text, label)
             return text
         if isinstance(data, list):
             return _extract_from_blocks(
@@ -373,7 +460,8 @@ def _extract_from_block(
                 _flag_true(block.get("isSidechain"))
                 or _flag_true(block.get("is_sidechain"))
             ):
-                return _tag_sidechain(text)
+                label = _sidechain_agent_label(block, msg, text=text)
+                return _tag_sidechain(text, label)
             return text
         if isinstance(msg, str):
             return _filter_text_piece(msg, max_len)
@@ -970,7 +1058,7 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
-_PASSTHROUGH_PREFIXES = ("【系统】", "【总结】", "【子代理】", "🛠️", "❓")
+_PASSTHROUGH_PREFIXES = ("【系统】", "【总结】", "【子代理】", "【子代理:", "🛠️", "❓")
 
 
 def format_agent_line(text: str) -> str:

@@ -756,7 +756,7 @@ class SSEListener:
                 if text is None or text.startswith("🛠️") or text.startswith("❓"):
                     continue
                 # 子代理标签（若上游漏标 isSidechain 但正文被标了）在 simple 仍隐藏
-                if text.startswith("【子代理】"):
+                if text.startswith("【子代理】") or text.startswith("【子代理:"):
                     continue
                 agent_texts.append((msg, text))
 
@@ -822,7 +822,7 @@ class SSEListener:
                 text = self._preview_message(content, detail=False)
                 if text is None or text.startswith("🛠️") or text.startswith("❓"):
                     continue
-                if text.startswith("【子代理】"):
+                if text.startswith("【子代理】") or text.startswith("【子代理:"):
                     continue
                 agent_texts.append((msg, text))
 

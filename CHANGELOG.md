@@ -8,18 +8,21 @@
 2. **Focus / 快捷前缀发图双缓存去重**  
    AstrBot 常把同一张图落成 `media_image_*.jpg` 与 `download.png`（同尺寸、编码不同，哈希去不掉）。有主图时**一律丢掉**全部 `download.*` 副缓存；上传前再按内容 SHA-256，并按 **PNG/JPEG 像素宽高** 合并同尺寸副本（留更大文件），挡住命名不规则的双缓存。
 
-3. **对话卡可嵌 HAPI 生成图**  
-   Agent 的 `generated-image`（含 Claude `display_image`）不再变成 `[generated-image]` 占位。HAPI 全 flavor 消息外壳是协议字面量 `type: "codex"`（历史命名），会展开 `codex.data` 产出 `hapi-genimg://`，再走 `GET /api/sessions/:id/generated-images/:imageId` 下载嵌卡；只用真正的 `imageId`，不用消息 `id`。Markdown 本地路径图同样支持。
+3. **对话卡可嵌 HAPI 生成图，并按卡宽适配；纯文本模式也可跟图**  
+   Agent 的 `generated-image`（含 Claude `display_image`）不再变成 `[generated-image]` 占位。HAPI 全 flavor 消息外壳是协议字面量 `type: "codex"`（历史命名），会展开 `codex.data` 产出 `hapi-genimg://`，再走 `GET /api/sessions/:id/generated-images/:imageId` 下载嵌卡；只用真正的 `imageId`，不用消息 `id`。Markdown 本地路径图同样支持。  
+   嵌图优先**铺满内容宽**（卡片跟着图变高），不再被固定高度上限挤成左右大片留白；仅极端长图再等比限高。  
+   **纯消息 / 出卡失败回退**：正文里的 `![alt](本地路径)` 换成「见下方图片」，再按出现顺序单独发图，避免图字时序错乱、并保持可读。
 
-4. **对话卡 Markdown 观感**  
-   列表用 `●`；GFM 任务列表 `- [x]`；链接文字+下划线；表内 `\|` 转义；代码块超长折行。表格列宽按字体像素分配，避免 `true` / `bytes` 等短词被压成竖折。价格类 `$5` 不再被公式路径拆表。
+4. **对话卡 Markdown 观感；Edit diff 续行不再误成列表**  
+   列表用 `●`；GFM 任务列表 `- [x]`；链接文字+下划线；表内 `\|` 转义；代码块超长折行。表格列宽按字体像素分配，避免 `true` / `bytes` 等短词被压成竖折。价格类 `$5` 不再被公式路径拆表。  
+   **Edit 工具条**：`+`/`-` 差异续行并入 `[Tool] Edit` 详情，不再被当成 Markdown 无序列表画成一堆 `●`。
 
 5. **过滤 MCP / SDK 进度噪音**  
    `tool_progress` 心跳、session 元数据信封等不再整段 JSON 当正文推到对话卡。  
    加固：噪音判断优先于 sidechain；支持 `【消息】` 前缀与多层 JSON 包装；推送入口 / 出卡前再兜底丢弃。
 
 6. **多 agent（sidechain）与完成提示**  
-   simple / summary 默认不展示子代理正文；detail 以【子代理】前缀展示。thinking 完成边沿防抖加长；本轮已推过正文时不再叠「会话已完成」。
+   simple / summary 默认不展示子代理正文；detail 以 `【子代理:名称】` 标记，对话卡渲染为**独立小卡**（标题可识别子 agent）。thinking 完成边沿防抖加长；本轮已推过正文时不再叠「会话已完成」。
 
 ## v3.2.2
 

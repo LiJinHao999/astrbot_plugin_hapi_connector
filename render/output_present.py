@@ -432,6 +432,7 @@ def prepare_agent_body_for_card(text: str) -> str:
             rest = line[len("❓") :].lstrip()
             out_lines.append(f"[Ask] {rest}" if rest else "[Ask]")
             continue
+        # 子代理标记保留给卡片解析器（【子代理】/【子代理:名称】）
         # Edit 差异续行（已是 "  - "/"  + "/"  …"）原样保留
         out_lines.append(line)
     return _strip_emoji("\n".join(out_lines))
@@ -559,6 +560,54 @@ async def resolve_hapi_genimg_markers(
             out.append(f"[图片] {alt}")
     out.append(text[last:])
     return "".join(out)
+
+
+# 本地/已解析的 Markdown 图：![alt](/abs/path) 或 file://
+_RE_LOCAL_MD_IMAGE = re.compile(
+    r"!\[([^\]]*)\]\(((/[^)\s]+)|(file://[^)\s]+))\)",
+    re.IGNORECASE,
+)
+
+
+def extract_local_images_for_plain(
+    text: str,
+    *,
+    placeholder: str = "见下方图片",
+) -> tuple[str, list[tuple[str, str]]]:
+    """纯文本模式：抽出可发送的本地图路径，正文占位避免时序错乱。
+
+    返回 ``(改写后的正文, [(alt, path), ...])``。
+    - 路径不存在的图改为 ``[图片] alt``，不进入待发列表
+    - 占位默认「见下方图片」，图片按出现顺序在正文后单独发送
+    """
+    s = text or ""
+    if "![" not in s:
+        return s, []
+
+    images: list[tuple[str, str]] = []
+    out: list[str] = []
+    last = 0
+    for m in _RE_LOCAL_MD_IMAGE.finditer(s):
+        out.append(s[last : m.start()])
+        alt = (m.group(1) or "").strip() or "image"
+        raw_src = (m.group(2) or "").strip()
+        last = m.end()
+        path = raw_src
+        if path.lower().startswith("file://"):
+            from urllib.parse import unquote, urlparse
+
+            path = unquote(urlparse(path).path or "")
+        if path and os.path.isfile(path):
+            images.append((alt, path))
+            # 独占一行的图：整行换成占位；行内图也替换为同一占位
+            out.append(placeholder)
+        else:
+            out.append(f"[图片] {alt}")
+    out.append(s[last:])
+    rewritten = "".join(out)
+    # 清理占位造成的多余空行
+    rewritten = re.sub(r"[ \t]*\n{3,}", "\n\n", rewritten).strip()
+    return rewritten, images
 
 
 def build_message_payload(
@@ -783,6 +832,53 @@ def write_temp_png(png: bytes) -> str:
     return path
 
 
+def _plain_source_text(kind: str, data: dict[str, Any], fallback_text: str) -> str:
+    """纯文本回退时优先用 payload body（可能含本地图路径），否则 fallback。"""
+    if kind == "message" and isinstance(data, dict):
+        body = str(data.get("body") or "").strip()
+        if body:
+            # 带上标题，观感接近卡片
+            title = str(data.get("title") or "").strip()
+            sub = str(data.get("subtitle") or "").strip()
+            head_parts = [p for p in (title, sub) if p]
+            head = "\n".join(head_parts)
+            return f"{head}\n\n{body}".strip() if head else body
+    return fallback_text or ""
+
+
+async def _push_plain_with_images(
+    notification_mgr,
+    text: str,
+    session_id: str,
+    sessions_cache: list[dict],
+) -> None:
+    """先发改写后的正文（图位→「见下方图片」），再按顺序发本地图。"""
+    plain, images = extract_local_images_for_plain(text)
+    if plain.strip():
+        await notification_mgr.push_notification(
+            plain, session_id, sessions_cache
+        )
+    for idx, (alt, path) in enumerate(images):
+        try:
+            await notification_mgr.push_image_notification(
+                path,
+                session_id,
+                sessions_cache,
+                caption="",
+                dedupe_key=(
+                    f"embed:{session_id}:{idx}:{os.path.basename(path)}:"
+                    f"{hash(alt) & 0xFFFF:x}"
+                ),
+            )
+        except Exception as e:
+            logger.warning(
+                "plain embed image push failed idx=%s path=%s: %s",
+                idx,
+                path[:60],
+                e,
+            )
+
+
 async def present(
     plugin,
     event: AstrMessageEvent,
@@ -790,14 +886,35 @@ async def present(
     data: dict[str, Any],
     fallback_text: str,
 ) -> AsyncIterator:
-    """yield 一条 event 结果：优先图片卡，否则纯文本。
+    """yield 一条 event 结果：优先图片卡，否则纯文本（可跟嵌图）。
 
     出卡成功时只发图，不另附 footer 文本（避免「操作提示」再冒一条消息）。
     footer 若有内容，由卡片引擎画在图内底部。
+
+    纯文本回退：body 内 ``![alt](/path)`` 换成「见下方图片」，再按顺序
+    ``image_result`` / chain 发图，避免「图先到、字后到」的时序问题。
     """
     result = try_render_png(plugin, kind, data)
     if result is None:
-        yield event.plain_result(fallback_text)
+        source = _plain_source_text(kind, data, fallback_text)
+        plain, images = extract_local_images_for_plain(source)
+        if plain.strip():
+            yield event.plain_result(plain)
+        if images:
+            import astrbot.api.message_components as Comp
+
+            for _alt, img_path in images:
+                try:
+                    if hasattr(event, "image_result"):
+                        yield event.image_result(img_path)
+                    elif hasattr(event, "chain_result"):
+                        yield event.chain_result(
+                            [Comp.Image.fromFileSystem(img_path)]
+                        )
+                except Exception as e:
+                    logger.warning("present plain embed image failed: %s", e)
+        elif not plain.strip():
+            yield event.plain_result(fallback_text or "")
         return
 
     path = None
@@ -816,7 +933,18 @@ async def present(
             yield event.plain_result(fallback_text)
     except Exception as e:
         logger.warning("present image failed: %s", e)
-        yield event.plain_result(fallback_text)
+        source = _plain_source_text(kind, data, fallback_text)
+        plain, images = extract_local_images_for_plain(source)
+        if plain.strip():
+            yield event.plain_result(plain)
+        for _alt, img_path in images:
+            try:
+                if hasattr(event, "image_result"):
+                    yield event.image_result(img_path)
+            except Exception:
+                pass
+        if not plain.strip() and not images:
+            yield event.plain_result(fallback_text)
     finally:
         if path:
             try:
@@ -834,11 +962,12 @@ async def present_push(
     session_id: str,
     sessions_cache: list[dict],
 ) -> bool:
-    """SSE/后台推送路径：尝试发图，失败则发文本。返回是否已发送（图或文）。"""
+    """SSE/后台推送路径：尝试发图，失败则发文本（可跟嵌图）。返回是否已发送。"""
     result = try_render_png(plugin, kind, data)
     if result is None or not result.png:
-        await notification_mgr.push_notification(
-            fallback_text, session_id, sessions_cache
+        source = _plain_source_text(kind, data, fallback_text)
+        await _push_plain_with_images(
+            notification_mgr, source, session_id, sessions_cache
         )
         return True
 
@@ -857,8 +986,9 @@ async def present_push(
         return True
     except Exception as e:
         logger.warning("present_push image failed kind=%s: %s", kind, e)
-        await notification_mgr.push_notification(
-            fallback_text, session_id, sessions_cache
+        source = _plain_source_text(kind, data, fallback_text)
+        await _push_plain_with_images(
+            notification_mgr, source, session_id, sessions_cache
         )
         return True
     finally:
