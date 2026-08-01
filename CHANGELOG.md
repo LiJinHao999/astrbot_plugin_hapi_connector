@@ -15,7 +15,8 @@
    列表用 `●`；GFM 任务列表 `- [x]`；链接文字+下划线；表内 `\|` 转义；代码块超长折行。表格列宽按字体像素分配，避免 `true` / `bytes` 等短词被压成竖折。价格类 `$5` 不再被公式路径拆表。
 
 5. **过滤 MCP / SDK 进度噪音**  
-   `tool_progress` 心跳、session 元数据信封等不再整段 JSON 当正文推到对话卡。
+   `tool_progress` 心跳、session 元数据信封等不再整段 JSON 当正文推到对话卡。  
+   加固：噪音判断优先于 sidechain；支持 `【消息】` 前缀与多层 JSON 包装；推送入口 / 出卡前再兜底丢弃。
 
 6. **多 agent（sidechain）与完成提示**  
    simple / summary 默认不展示子代理正文；detail 以【子代理】前缀展示。thinking 完成边沿防抖加长；本轮已推过正文时不再叠「会话已完成」。

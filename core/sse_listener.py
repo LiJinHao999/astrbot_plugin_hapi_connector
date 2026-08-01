@@ -662,11 +662,15 @@ class SSEListener:
 
     def _preview_message(self, content: dict, *, detail: bool) -> str | None:
         """统一抽正文；detail 可含【子代理】，simple/summary 隐藏 sidechain 与工具进度。"""
-        return extract_text_preview(
+        text = extract_text_preview(
             content,
             max_len=0,
             include_sidechain=detail,
         )
+        # 最终兜底：tool_progress 心跳 JSON 绝不当正文
+        if text is not None and formatters.is_sdk_noise_text(text):
+            return None
+        return text
 
     async def _show_detail(self, sid: str, old_seq: int) -> bool:
         """detail 模式：获取并显示所有新消息（含折叠后的子代理正文）"""
@@ -940,6 +944,18 @@ class SSEListener:
 
         标题用会话标题；不附 output=* 尾注（避免图片后再多一条文本）。
         """
+        # 推送入口再挡：整段 body / fallback 仍是 tool_progress 时直接不推
+        if formatters.is_sdk_noise_text(body) and formatters.is_sdk_noise_text(
+            fallback_text
+        ):
+            logger.debug("skip message push: sdk noise body session=%s", session_id[:8])
+            return
+        if formatters.is_sdk_noise_text(body):
+            body = ""
+        if formatters.is_sdk_noise_text(fallback_text):
+            fallback_text = (body or "").strip() or label
+        if not (body or "").strip() and not (fallback_text or "").strip():
+            return
         plugin = self.plugin
         if plugin is None:
             # 兜底：从 notify 链路外拿不到 plugin 时只发文本

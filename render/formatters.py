@@ -35,6 +35,8 @@ def extract_text_preview(
     include_sidechain:
       - False（默认，simple/summary）：子代理正文不展示
       - True（detail）：子代理正文加【子代理】前缀
+
+    注意：tool_progress / heartbeat 等 SDK 噪音无论是否 sidechain 都丢弃。
     """
     if max_len <= 0:
         max_len = 999999
@@ -43,12 +45,19 @@ def extract_text_preview(
             return _filter_text_piece(content, max_len)
         return None
 
+    # 整包就是 SDK 进度 / 元数据（含 isSidechain=true 的 tool_progress 心跳）
+    # 必须优先于 sidechain 展示逻辑，否则 detail 会把心跳 JSON 当正文
+    if _looks_like_sdk_control_dict(content):
+        return None
+
     # 整条消息带 isSidechain（SDK 日志字段可能挂在 content 根上）
     if _flag_true(content.get("isSidechain")) or _flag_true(content.get("is_sidechain")):
         if not include_sidechain:
             return None
 
     inner = content.get("content", content if "type" in content else {})
+    if isinstance(inner, dict) and _looks_like_sdk_control_dict(inner):
+        return None
 
     # 纯文本（部分 agent 直接返回字符串）
     if isinstance(inner, str):
@@ -151,29 +160,60 @@ def _looks_like_sdk_control_dict(obj: dict) -> bool:
 def _is_internal_event_json(text: str) -> bool:
     """文本是否为应丢弃的内部控制 JSON（对齐 HAPI isInternalEventJson + 进度包）。"""
     s = (text or "").strip()
-    if not s or s[0] != "{":
+    if not s:
         return False
-    try:
-        parsed = json.loads(s)
-    except Exception:
-        return False
-    if not isinstance(parsed, dict):
-        return False
-    if _looks_like_sdk_control_dict(parsed):
-        return True
-    # { type: "output", data: { parentUuid, sessionId, userType } }
-    if parsed.get("type") == "output" and isinstance(parsed.get("data"), dict):
-        data = parsed["data"]
-        if _looks_like_sdk_control_dict(data):
-            return True
-        has_parent = "parentUuid" in data or "parent_uuid" in data
-        if (
-            has_parent
-            and isinstance(data.get("sessionId") or data.get("session_id"), str)
-            and isinstance(data.get("userType") or data.get("user_type"), str)
+    # 去掉常见前缀后再判（【消息】/ Agent: 等包一层时仍应丢弃）
+    for prefix in ("【消息】", "【子代理】", "Agent:", "agent:", "Message:", "message:"):
+        if s.startswith(prefix):
+            s = s[len(prefix) :].strip()
+    if not s or s[0] not in "{[":
+        # 启发式：整段像泄漏的 tool_progress 原文（解析失败时的兜底）
+        if '"type"' in s and (
+            "tool_progress" in s
+            or "tool-progress" in s
+            or '"heartbeat"' in s
+            or "elapsed_time_seconds" in s
         ):
-            return True
+            if "tool_use_id" in s or "toolUseId" in s or "parentUuid" in s:
+                return True
+        return False
+    # 多层 JSON 字符串包装：'"{"type":...}"'
+    for _ in range(3):
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            break
+        if isinstance(parsed, str):
+            s = parsed.strip()
+            continue
+        if isinstance(parsed, dict):
+            if _looks_like_sdk_control_dict(parsed):
+                return True
+            # { type: "output", data: { parentUuid, sessionId, userType } }
+            if parsed.get("type") == "output" and isinstance(parsed.get("data"), dict):
+                data = parsed["data"]
+                if _looks_like_sdk_control_dict(data):
+                    return True
+                has_parent = "parentUuid" in data or "parent_uuid" in data
+                if (
+                    has_parent
+                    and isinstance(data.get("sessionId") or data.get("session_id"), str)
+                    and isinstance(data.get("userType") or data.get("user_type"), str)
+                ):
+                    return True
+            return False
+        break
     return False
+
+
+def is_sdk_noise_text(text: str | None) -> bool:
+    """推送前最终兜底：正文是否仍是 SDK/MCP 进度 JSON。"""
+    if text is None:
+        return True
+    s = str(text).strip()
+    if not s:
+        return True
+    return _is_internal_event_json(s)
 
 
 def _filter_text_piece(text: str, max_len: int) -> str | None:

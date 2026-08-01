@@ -596,12 +596,18 @@ def build_message_payload(
         sub = f"Agent 消息 · {sub}"
     else:
         sub = "Agent 消息"
+    from . import formatters as _fmt
+
+    raw_body = body or ""
+    # 出卡前再挡一层：SDK tool_progress / heartbeat 整包 JSON 不当正文
+    if _fmt.is_sdk_noise_text(raw_body):
+        raw_body = ""
     return {
         "title": conv_title,
         "subtitle": sub,
         # 工具调用等：先转 ASCII 标记再剥 emoji，避免卡片丢结构
         # 注意：本地路径 ![alt](/tmp/...) 需保留，勿被剥坏
-        "body": prepare_agent_body_for_card(body or ""),
+        "body": prepare_agent_body_for_card(raw_body),
         "footer": _strip_emoji(footer or ""),
     }
 
