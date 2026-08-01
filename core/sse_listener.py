@@ -511,8 +511,8 @@ class SSEListener:
         且本轮已成功推过正文时不再额外弹「会话已完成」。
         """
         while True:
-            # 子代理来回切 thinking 时 1.5s 仍会抖；拉到 ~3s 合并一轮
-            await asyncio.sleep(3.0)
+            # 完成边沿防抖：1.5s 合并一轮 thinking 抖动
+            await asyncio.sleep(1.5)
             sids = list(self._completion_sids)
             self._completion_sids.clear()
             for sid in sids:
