@@ -432,6 +432,15 @@ def prepare_agent_body_for_card(text: str) -> str:
             rest = line[len("❓") :].lstrip()
             out_lines.append(f"[Ask] {rest}" if rest else "[Ask]")
             continue
+        # 纯文本前缀 [Message]: / 【消息】 → 卡片只留正文
+        if line.startswith("[Message]:"):
+            line = line[len("[Message]:") :].lstrip()
+        elif line.startswith("[Message]"):
+            line = line[len("[Message]") :].lstrip(" :：")
+        elif line.startswith("【消息】"):
+            line = line[len("【消息】") :].lstrip()
+        if not str(line).strip():
+            continue
         # 子代理标记保留给卡片解析器（【子代理】/【子代理:名称】）
         # Edit 差异续行（已是 "  - "/"  + "/"  …"）原样保留
         out_lines.append(line)
@@ -833,11 +842,18 @@ def write_temp_png(png: bytes) -> str:
 
 
 def _plain_source_text(kind: str, data: dict[str, Any], fallback_text: str) -> str:
-    """纯文本回退时优先用 payload body（可能含本地图路径），否则 fallback。"""
+    """纯文本回退文案。
+
+    优先 ``fallback_text``（SSE 已拼好的 label+正文，含 💬📂🤖 等），
+    不要用出卡 payload 反拼——那里的 title/subtitle 已被剥 emoji。
+    仅当 fallback 为空时，才用 payload body（可能仍含本地图路径）。
+    """
+    fb = (fallback_text or "").strip()
+    if fb:
+        return fallback_text or ""
     if kind == "message" and isinstance(data, dict):
         body = str(data.get("body") or "").strip()
         if body:
-            # 带上标题，观感接近卡片
             title = str(data.get("title") or "").strip()
             sub = str(data.get("subtitle") or "").strip()
             head_parts = [p for p in (title, sub) if p]

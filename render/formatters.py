@@ -247,10 +247,20 @@ def _is_internal_event_json(text: str) -> bool:
     s = (text or "").strip()
     if not s:
         return False
-    # 去掉常见前缀后再判（【消息】/ Agent: 等包一层时仍应丢弃）
-    for prefix in ("【消息】", "【子代理】", "Agent:", "agent:", "Message:", "message:"):
+    # 去掉常见前缀后再判（【消息】/[Message]/Agent: 等包一层时仍应丢弃）
+    for prefix in (
+        "【消息】",
+        "[Message]:",
+        "[Message]",
+        "【子代理】",
+        "Agent:",
+        "agent:",
+        "Message:",
+        "message:",
+    ):
         if s.startswith(prefix):
-            s = s[len(prefix) :].strip()
+            s = s[len(prefix) :].lstrip(" :：").strip()
+            break
     if not s or s[0] not in "{[":
         # 启发式：整段像泄漏的 tool_progress 原文（解析失败时的兜底）
         if '"type"' in s and (
@@ -741,7 +751,16 @@ def _extract_codex_block(data: dict, max_len: int) -> str | None:
 
 
 def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
-    """获取 session 的简短标识（用于 SSE 推送，多行格式，纯文本无 emoji）。"""
+    """获取 session 的简短标识（用于 SSE 推送 / 纯文本，保留 emoji）。
+
+    形如::
+
+        💬 会话标题
+        📂 /path/to/cwd
+        🤖 claude | 🏷️ 70ed1d5c
+
+    对话卡出图时由 ``output_present._strip_emoji`` 再剥符号，避免缺字形。
+    """
     session = None
     for s in sessions_cache:
         if s.get("id") == sid:
@@ -749,7 +768,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
             break
 
     if not session:
-        return f"session {sid[:8]}"
+        return f"🏷️ {sid[:8]}"
 
     meta = session.get("metadata", {})
     flavor = meta.get("flavor", "?")
@@ -765,7 +784,7 @@ def session_label_short(sid: str, sessions_cache: list[dict]) -> str:
         or session.get("collaborationMode") == "plan"
     )
     plan_tag = " · Plan" if in_plan else ""
-    return f"{title}{plan_tag}\n{path}\n{flavor} · {sid[:8]}"
+    return f"💬 {title}{plan_tag}\n📂 {path}\n🤖 {flavor} | 🏷️ {sid[:8]}"
 
 
 def group_sessions_by_path(sessions: list[dict]) -> dict[str, list[dict]]:
@@ -1058,16 +1077,33 @@ def split_into_rounds(messages: list[dict]) -> list[list[dict]]:
     return rounds
 
 
-_PASSTHROUGH_PREFIXES = ("【系统】", "【总结】", "【子代理】", "【子代理:", "🛠️", "❓")
+_PASSTHROUGH_PREFIXES = (
+    "【系统】",
+    "【总结】",
+    "【子代理】",
+    "【子代理:",
+    "🛠️",
+    "❓",
+    "[Message]",
+    "[Message]:",
+)
 
 
 def format_agent_line(text: str) -> str:
-    """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件/摘要/子代理 → 透传，普通文本 → 【消息】"""
+    """格式化 agent 消息（纯文本推送）：工具/系统/子代理透传，普通文本 → ``[Message]:``。
+
+    对话卡路径会再经 ``prepare_agent_body_for_card`` 转写/剥 emoji；
+    纯文本必须保留可读前缀，不要改成无标记正文。
+    """
     if is_sdk_noise_text(text):
         return ""
     if any(text.startswith(p) for p in _PASSTHROUGH_PREFIXES):
         return text
-    return f"【消息】{text}"
+    # 兼容旧【消息】前缀：统一成 [Message]:
+    if text.startswith("【消息】"):
+        rest = text[len("【消息】") :].lstrip()
+        return f"[Message]: {rest}" if rest else "[Message]:"
+    return f"[Message]: {text}"
 
 
 def format_round(round_msgs: list[dict], round_idx: int, total_rounds: int,

@@ -4809,14 +4809,13 @@ def _parse_md_blocks(
                 if re.match(r"^【子代理(?::[^】]*)?】", nxt):
                     break
                 # 主消息起新段，不并进子代理小卡
-                if nxt.startswith("【消息】"):
+                if nxt.startswith("【消息】") or nxt.startswith("[Message]"):
                     break
                 if re.match(r"^---+$|^\*\*\*+$|^___+$|^━{3,}$", nxt.strip()):
                     break
                 buf.append(nxt)
                 i += 1
             inner = "\n".join(buf).strip()
-            # 去掉正文里重复的【消息】前缀（主代理行误入时仍可读）
             inner_blocks = (
                 _parse_md_blocks(inner, image_max_width=max(120, image_max_width - 28))
                 if inner
@@ -4831,8 +4830,18 @@ def _parse_md_blocks(
                 }
             )
             continue
-        # 主消息前缀：卡片上不画「【消息】」字样，只留正文
-        if line.startswith("【消息】"):
+        # 主消息前缀：卡片上不画「【消息】」/「[Message]:」字样，只留正文
+        if line.startswith("[Message]:"):
+            line = line[len("[Message]:") :].lstrip()
+            if not line.strip():
+                i += 1
+                continue
+        elif line.startswith("[Message]"):
+            line = line[len("[Message]") :].lstrip(" :：")
+            if not line.strip():
+                i += 1
+                continue
+        elif line.startswith("【消息】"):
             line = line[len("【消息】") :].lstrip()
             if not line.strip():
                 i += 1
