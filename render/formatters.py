@@ -975,6 +975,8 @@ _PASSTHROUGH_PREFIXES = ("【系统】", "【总结】", "【子代理】", "�
 
 def format_agent_line(text: str) -> str:
     """格式化 agent 消息：工具调用 → 🛠️ ...，系统事件/摘要/子代理 → 透传，普通文本 → 【消息】"""
+    if is_sdk_noise_text(text):
+        return ""
     if any(text.startswith(p) for p in _PASSTHROUGH_PREFIXES):
         return text
     return f"【消息】{text}"

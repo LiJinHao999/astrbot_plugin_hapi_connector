@@ -6,7 +6,7 @@
    `/hapi create <模板名>` 在模板未设默认目录、命令也未传目录时，不再直接报错；改为拉取最近使用目录，展示与 create 向导步骤 2 相同的序号选择 / 手输路径。精简 create 代理列表与模板展示文案。
 
 2. **Focus / 快捷前缀发图双缓存去重**  
-   AstrBot 常把同一张图落成 `media_image_*.jpg` 与 `download.png`（同尺寸、编码不同，哈希去不掉）。「1 主图 + download.*」按文件体积只留最大；多张主图时丢掉全部 `download.*`，避免误删真多图。上传前再按内容 SHA-256 去重。
+   AstrBot 常把同一张图落成 `media_image_*.jpg` 与 `download.png`（同尺寸、编码不同，哈希去不掉）。有主图时**一律丢掉**全部 `download.*` 副缓存；上传前再按内容 SHA-256，并按 **PNG/JPEG 像素宽高** 合并同尺寸副本（留更大文件），挡住命名不规则的双缓存。
 
 3. **对话卡可嵌 HAPI 生成图**  
    Agent 的 `generated-image`（含 Claude `display_image`）不再变成 `[generated-image]` 占位。HAPI 全 flavor 消息外壳是协议字面量 `type: "codex"`（历史命名），会展开 `codex.data` 产出 `hapi-genimg://`，再走 `GET /api/sessions/:id/generated-images/:imageId` 下载嵌卡；只用真正的 `imageId`，不用消息 `id`。Markdown 本地路径图同样支持。

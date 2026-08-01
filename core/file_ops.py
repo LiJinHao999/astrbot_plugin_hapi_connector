@@ -5,6 +5,7 @@ import hashlib
 import mimetypes
 import os
 import re
+import struct
 import tempfile
 import uuid
 from typing import Any
@@ -315,19 +316,118 @@ def _is_download_cache_name(path_or_name: str) -> bool:
     return bool(_DOWNLOAD_CACHE_NAME_RE.search(base))
 
 
+def _image_pixel_size(path: str) -> tuple[int, int] | None:
+    """读本地 PNG/JPEG 宽高（无 PIL 依赖），失败返回 None。"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+            if head.startswith(b"\x89PNG\r\n\x1a\n") and len(head) >= 24:
+                w, h = struct.unpack(">II", head[16:24])
+                if w > 0 and h > 0:
+                    return int(w), int(h)
+            if not head.startswith(b"\xff\xd8"):
+                return None
+            f.seek(2)
+            while True:
+                b = f.read(1)
+                if not b:
+                    return None
+                while b == b"\xff":
+                    b = f.read(1)
+                    if not b:
+                        return None
+                marker = b[0]
+                if marker in (0xD8, 0xD9) or marker == 0x01 or 0xD0 <= marker <= 0xD7:
+                    continue
+                bl_bytes = f.read(2)
+                if len(bl_bytes) < 2:
+                    return None
+                bl = struct.unpack(">H", bl_bytes)[0]
+                if bl < 2:
+                    return None
+                if marker in (
+                    0xC0,
+                    0xC1,
+                    0xC2,
+                    0xC3,
+                    0xC5,
+                    0xC6,
+                    0xC7,
+                    0xC9,
+                    0xCA,
+                    0xCB,
+                    0xCD,
+                    0xCE,
+                    0xCF,
+                ):
+                    data = f.read(5)
+                    if len(data) < 5:
+                        return None
+                    h, w = struct.unpack(">HH", data[1:5])
+                    if w > 0 and h > 0:
+                        return int(w), int(h)
+                    return None
+                f.seek(bl - 2, os.SEEK_CUR)
+    except OSError:
+        return None
+    return None
+
+
+def _dedupe_local_images_by_pixels(
+    images: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """同一消息内像素尺寸完全相同的本地图只留体积最大的一份。
+
+    media_image.jpg 与 download.png 编码不同、哈希不同，但宽高一致；
+    真·多图一般分辨率不同，误伤概率低。
+    """
+    if len(images) < 2:
+        return images
+    best_by_wh: dict[tuple[int, int], dict[str, Any]] = {}
+    passthrough: list[dict[str, Any]] = []
+    order: list[tuple[int, int] | None] = []
+    for source in images:
+        path = str(source.get("path") or "")
+        wh = _image_pixel_size(path) if path else None
+        if wh is None:
+            passthrough.append(source)
+            order.append(None)
+            continue
+        prev = best_by_wh.get(wh)
+        if prev is None or _path_byte_size(path) > _path_byte_size(
+            str(prev.get("path") or "")
+        ):
+            best_by_wh[wh] = source
+        order.append(wh)
+    # 保持首次出现顺序
+    out: list[dict[str, Any]] = []
+    seen_wh: set[tuple[int, int]] = set()
+    pi = 0
+    for marker in order:
+        if marker is None:
+            out.append(passthrough[pi])
+            pi += 1
+            continue
+        if marker in seen_wh:
+            continue
+        seen_wh.add(marker)
+        out.append(best_by_wh[marker])
+    return out
+
+
 def _dedupe_astrbot_image_dual_cache(
     sources: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """同条消息里 AstrBot 常把一张图落成两份本地缓存（如 media_image_*.jpg
     与 download.png）：路径不同、编码也不同，内容哈希去不掉。
 
-    策略：
-    - **一张图的双缓存**（1 个主名 + ≥1 个 download.*）：按文件体积只留最大的一份。
-      实测 download.png 常为更大 PNG，media_image_*.jpg 更小；用户偏好留大图。
-    - **多张主图**（primaries ≥ 2）+ download.*：丢掉全部 download 副缓存，
-      避免把 N 张真图收成 N 或 2N；多图场景不以「全局最大一张」误伤。
-    - 仅有多份 download.*：保留体积最大的一份。
-    - 非本地图片 / 无法识别为双缓存的附件原样保留。
+    策略（由严到宽）：
+    1. 有任一主图（非 download 名）时：**一律丢掉全部 download.*** 副缓存
+       （不再按体积二选一——避免两份都混进上传列表的边界情况）。
+    2. 仅有多份 download.*：留体积最大的一份。
+    3. 剩余本地图再按 **像素宽高** 合并：同尺寸只留更大文件
+       （双缓存最后兜底；真多图分辨率通常不同）。
+    4. URL 文件名是 download.* 且已有本地图：丢掉，避免 path+url 双传。
     """
     if len(sources) < 2:
         return sources
@@ -353,41 +453,92 @@ def _dedupe_astrbot_image_dual_cache(
     def _by_size(s: dict[str, Any]) -> int:
         return _path_byte_size(str(s.get("path") or ""))
 
-    # URL 侧文件名若是 download.*：已有任一本地 path 图时丢掉，避免 path+url 各传一次
+    # URL 侧文件名若是 download.*：已有任一本地 path 图时丢掉
     other_kept: list[dict[str, Any]] = []
     for source in others:
         label = str(source.get("name") or source.get("url") or "")
         if (
             source.get("kind") == "url"
             and _is_download_cache_name(label)
-            and (primaries or downloads)
+            and (primaries or downloads or path_images)
         ):
             continue
         other_kept.append(source)
 
-    if not downloads and len(other_kept) == len(others):
-        return sources
-
+    kept_images: list[dict[str, Any]]
     if primaries and downloads:
-        if len(primaries) == 1:
-            # 典型双缓存：media_image + download.* → 留更大的那份
-            best = max(primaries + downloads, key=_by_size)
-            return other_kept + [best]
-        # 多张主图：只丢副缓存，主图全留
-        return other_kept + primaries
+        # 有主图就丢光 download 副缓存（1 张或多张主图都如此）
+        kept_images = list(primaries)
+    elif primaries:
+        kept_images = list(primaries)
+    elif len(downloads) >= 2:
+        kept_images = [max(downloads, key=_by_size)]
+    elif downloads:
+        kept_images = list(downloads)
+    else:
+        # 无 download 命名、但仍可能是同图双 path（名都不叫 download）
+        kept_images = list(path_images)
+        if not other_kept and kept_images == path_images and len(path_images) < 2:
+            return sources
 
-    if primaries:
-        return other_kept + primaries
+    kept_images = _dedupe_local_images_by_pixels(kept_images)
+    return other_kept + kept_images
 
-    if not downloads:
-        return sources
 
-    # 没有主图、只剩 download 命名的多份本地图：留体积最大的一份
-    if len(downloads) >= 2:
-        best = max(downloads, key=_by_size)
-        return other_kept + [best]
-
-    return other_kept + downloads
+def _image_pixel_size_from_bytes(raw: bytes) -> tuple[int, int] | None:
+    """从已读字节解析 PNG/JPEG 宽高。"""
+    if not raw or len(raw) < 24:
+        return None
+    try:
+        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            w, h = struct.unpack(">II", raw[16:24])
+            if w > 0 and h > 0:
+                return int(w), int(h)
+            return None
+        if not raw.startswith(b"\xff\xd8"):
+            return None
+        i = 2
+        n = len(raw)
+        while i < n:
+            while i < n and raw[i] == 0xFF:
+                i += 1
+            if i >= n:
+                return None
+            marker = raw[i]
+            i += 1
+            if marker in (0xD8, 0xD9) or marker == 0x01 or 0xD0 <= marker <= 0xD7:
+                continue
+            if i + 2 > n:
+                return None
+            bl = struct.unpack(">H", raw[i : i + 2])[0]
+            i += 2
+            if bl < 2 or i + bl - 2 > n:
+                return None
+            if marker in (
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            ):
+                if i + 5 > n:
+                    return None
+                h, w = struct.unpack(">HH", raw[i + 1 : i + 5])
+                if w > 0 and h > 0:
+                    return int(w), int(h)
+                return None
+            i += bl - 2
+    except Exception:
+        return None
+    return None
 
 
 async def upload_event_files(client: AsyncHapiClient, event: Any,
@@ -398,16 +549,18 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
     供快捷前缀 / Focus 转发链路使用：图片、文件经 /upload 接口
     转为 attachments 随消息发出。指令类路径（send/to）不自动捎带附件。
 
-    提取阶段已按「双缓存留更大 / 多主图丢 download.*」去掉 AstrBot 的
-    media/download 重复图；上传前再按内容 SHA-256 去重，挡住字节完全相同的副本。
+    去重层次：
+    1. extract：丢 download 副缓存 + 同像素尺寸留大图
+    2. 上传前：内容 SHA-256
+    3. 上传前：图片像素宽高（编码不同的双缓存最终兜底，同尺寸留更大）
     """
     files = extract_files_from_message(event)
     if not files:
         return [], ""
 
-    attachments: list[dict] = []
+    # 先读全部，便于按像素尺寸在「上传前」做二次合并（路径阶段可能漏判）
+    loaded: list[tuple[dict[str, Any], bytes, str, str]] = []
     msgs: list[str] = []
-    seen_content: set[str] = set()
     for source in files:
         normalized = _normalize_upload_source(source)
         if not normalized:
@@ -418,13 +571,47 @@ async def upload_event_files(client: AsyncHapiClient, event: Any,
         except Exception as exc:
             msgs.append(f"读取 {_source_display_name(normalized)} 失败: {exc}")
             continue
+        loaded.append((normalized, raw, filename, mime_type))
 
-        content_key = hashlib.sha256(raw).hexdigest()
-        if content_key in seen_content:
-            continue  # 静默去重，不向用户啰嗦
-        seen_content.add(content_key)
+    # SHA-256 去重
+    unique: list[tuple[dict[str, Any], bytes, str, str]] = []
+    seen_hash: set[str] = set()
+    for item in loaded:
+        h = hashlib.sha256(item[1]).hexdigest()
+        if h in seen_hash:
+            continue
+        seen_hash.add(h)
+        unique.append(item)
 
-        # 已读字节经 _preloaded 回传，避免 upload_file 再读一遍磁盘/URL
+    # 像素尺寸去重：同 wh 只留更大文件（media_image vs download 编码不同）
+    best_by_wh: dict[tuple[int, int], tuple[dict[str, Any], bytes, str, str]] = {}
+    non_image: list[tuple[dict[str, Any], bytes, str, str]] = []
+    wh_order: list[tuple[int, int] | None] = []
+    for item in unique:
+        wh = _image_pixel_size_from_bytes(item[1])
+        if wh is None:
+            non_image.append(item)
+            wh_order.append(None)
+            continue
+        prev = best_by_wh.get(wh)
+        if prev is None or len(item[1]) > len(prev[1]):
+            best_by_wh[wh] = item
+        wh_order.append(wh)
+    final_items: list[tuple[dict[str, Any], bytes, str, str]] = []
+    seen_wh: set[tuple[int, int]] = set()
+    ni = 0
+    for marker in wh_order:
+        if marker is None:
+            final_items.append(non_image[ni])
+            ni += 1
+            continue
+        if marker in seen_wh:
+            continue
+        seen_wh.add(marker)
+        final_items.append(best_by_wh[marker])
+
+    attachments: list[dict] = []
+    for normalized, raw, filename, mime_type in final_items:
         ok, msg, attach = await upload_file(
             client, sid, {**normalized, "_preloaded": (raw, filename, mime_type)}
         )
