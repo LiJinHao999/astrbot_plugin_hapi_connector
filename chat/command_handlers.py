@@ -1520,6 +1520,96 @@ class CommandHandlers:
                 msg += f"\n已绑定当前窗口 [{flavor}] {final_sid[:8]}..."
         yield event.plain_result(msg)
 
+    # ── sync ──
+
+    def _shorten_sync_error(self, text: str, max_len: int = 80) -> str:
+        """把同步失败原因压缩成一行短文本，用于聊天展示（完整信息进日志）。
+
+        与项目其他命令的报错风格保持一致（简短一句），避免把 HAPI 原始错误
+        原文、本地路径等敏感信息直接暴露在聊天里。
+        """
+        text = (text or "").strip().replace("\n", " ").strip()
+        for prefix in ("HAPI 同步失败: ", "响应解析失败: ", "网络错误: "):
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+                break
+        if len(text) > max_len:
+            text = text[:max_len] + "…"
+        return text or "未知错误"
+
+    async def cmd_sync(self, event: AstrMessageEvent, target: str = ""):
+        """同步 Codex Session 到 HAPI: /hapi sync [序号|ID前缀]"""
+        from astrbot.api import logger
+        await self.state_mgr.set_user_state(event)
+
+        if target:
+            await self.plugin._refresh_sessions()
+            sid, err = self._resolve_target_verbose(target)
+            if err:
+                yield event.plain_result(err)
+                return
+        else:
+            sid, err = self._require_sid(event, cmd="sync")
+            if err:
+                yield event.plain_result(err)
+                return
+
+        from ..core import session_ops
+
+        try:
+            result = await session_ops.sync_codex_session(
+                self.client,
+                sid,
+                service_tier="standard",
+                collaboration_mode="default",
+            )
+        except session_ops.SyncCodexError as e:
+            # 完整错误进日志，聊天只给一行简短原因（避免暴露 HAPI 错误原文/路径等）
+            logger.warning(
+                "sync codex session failed sid=%s: %s (status=%s, body=%s)",
+                sid[:8], e, e.status, (e.body or "")[:500],
+            )
+            reason = self._shorten_sync_error(str(e))
+            if e.status == 409:
+                reason += "\n请先在 HAPI WebUI 中停止或归档该会话后重试。"
+            else:
+                reason += "\n详情请查看 HAPI 日志。"
+            yield event.plain_result(f"同步失败 [{sid[:8]}]\n{reason}")
+            return
+        except Exception as e:
+            logger.exception("sync codex session failed sid=%s", sid[:8])
+            yield event.plain_result(f"同步失败 [{sid[:8]}]\n{self._shorten_sync_error(f'{type(e).__name__}: {e}')}")
+            return
+
+        # 成功后刷新 Session 缓存；刷新失败不误报同步失败
+        try:
+            await self.plugin._refresh_sessions()
+        except Exception as e:
+            logger.warning("sync codex refresh after success failed: %s", e)
+
+        # 成功提示：会话卡片头（同 /hapi msg 推送的 💬📂🤖 格式）+ 导入成功新增条数
+        import re
+        from ..render.formatters import session_label_short
+        label = session_label_short(sid, self.sessions_cache)
+        count = 0
+        appended_total = 0
+        if isinstance(result, dict):
+            try:
+                count = int(result.get("syncedCount") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            # 解析每段 "Appended messages: N" 并求和。
+            # 注意：Action=created（新建会话）时 N 是该 transcript 的总消息数，
+            # 全部为本次新增；Action=updated（二次同步）时 N 才是真正的增量。
+            output = str(result.get("output") or "").strip()
+            for m in re.finditer(r"Appended messages:\s*(\d+)", output):
+                try:
+                    appended_total += int(m.group(1))
+                except ValueError:
+                    pass
+        head = f"✅ 导入成功 {count} 个会话，新增消息 {appended_total} 条" if count > 0 else "✅ 导入成功"
+        yield event.plain_result(f"{label}\n{head}")
+
     # ── rename ──
 
     async def cmd_rename(self, event: AstrMessageEvent, target: str = ""):

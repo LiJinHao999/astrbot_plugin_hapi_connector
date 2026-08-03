@@ -465,6 +465,8 @@ function renderSessPanel() {
         <button type="button" class="btn btn-sm" data-batch="resume" ${selectedVisible.length ? "" : "disabled"}>恢复</button>
         <button type="button" class="btn btn-sm" data-batch="archive" ${selectedVisible.length ? "" : "disabled"}>归档</button>
         <button type="button" class="btn btn-sm btn-danger" data-batch="delete" ${selectedVisible.length ? "" : "disabled"}>删除</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-sm" id="sync-selected" ${selectedVisible.length ? "" : "disabled"}>同步选中会话</button>
       </div>
       <div class="table-wrap">
         <table class="data">
@@ -587,6 +589,55 @@ function wireTable(visibleIds) {
       if (e.target.closest("select,input,button,a")) return;
       openDetail(tr.dataset.sid);
     };
+  });
+
+  // 同步选中 Codex Session 到 HAPI
+  const syncBtn = $("#sync-selected");
+  syncBtn?.addEventListener("click", async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const ids = visibleIds.filter((id) => state.selected.has(id));
+    if (!ids.length) {
+      toast("请先勾选要同步的 session");
+      return;
+    }
+    if (!isLive() || !getApi()) {
+      toast("未连接 HAPI，无法同步（本地 mock 模式）");
+      return;
+    }
+    const originText = syncBtn.textContent;
+    syncBtn.disabled = true;
+    syncBtn.classList.add("is-busy");
+    syncBtn.textContent = "正在同步…";
+    try {
+      const results = [];
+      for (const sid of ids) {
+        toast(`正在同步 ${String(sid).slice(0, 8)}…`);
+        try {
+          const res = await getApi().syncCodexSession({ sessionId: sid });
+          results.push({ id: sid, ok: true, message: res?.message || "同步完成" });
+        } catch (err) {
+          results.push({ id: sid, ok: false, message: err.message || String(err) });
+        }
+      }
+      const okN = results.filter((r) => r.ok).length;
+      const fails = results.filter((r) => !r.ok).slice(0, 3)
+        .map((r) => `${String(r.id).slice(0, 8)}: ${r.message}`)
+        .join("；");
+      let tip = `同步完成 ${okN}/${results.length}`;
+      if (fails) tip += ` · ${fails}`;
+      toast(tip);
+      ids.forEach((id) => state.selected.delete(id));
+      await refresh({ fresh: true, repaint: true });
+    } catch (err) {
+      console.error("sync codex session", err);
+      toast("同步失败: " + (err.message || err));
+      await refresh({ fresh: true, repaint: true });
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.classList.remove("is-busy");
+      syncBtn.textContent = originText;
+    }
   });
 
   $$("#sess-panel [data-batch]").forEach((b) => {

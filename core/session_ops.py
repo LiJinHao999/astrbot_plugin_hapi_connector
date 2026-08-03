@@ -372,3 +372,198 @@ async def read_file(client: AsyncHapiClient, sid: str,
     if not content:
         return False, "文件内容为空或不存在"
     return True, content
+
+
+class SyncCodexError(Exception):
+    """Codex Session 同步失败。
+
+    携带 HAPI 返回的原始状态码与响应体，供上层原样展示（不吞错误）。
+    """
+
+    def __init__(self, message: str, status: int | None = None, body: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+
+async def resolve_codex_session_id(
+    client: AsyncHapiClient,
+    session_id: str,
+    *,
+    machine_id: str | None = None,
+    cwd: str | None = None,
+) -> tuple[str, str | None, str | None]:
+    """把 HAPI 会话 id 解析成本机 codex transcript id。
+
+    HAPI 会话 id（/api/sessions 的 id）与 codex transcript id
+    （/api/codex/sessions 的 id）是两套独立体系，唯一桥梁是 HAPI 会话
+    metadata.codexSessionId——但会话执行过 /clear 后该字段会被清空
+    （cli 端 resetCodexThread）。本函数按以下顺序兜底解析：
+
+    1. metadata.codexSessionId 非空 → 直接用
+    2. 传入 id 已存在于本机 codex 会话列表 → 直接用（幂等）
+    3. metadata.path == codex session.cwd → 匹配
+    4. metadata.name == codex session.title → 匹配
+
+    返回 (codex_id, cwd, machine_id)；无法解析时抛 SyncCodexError。
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("session_id 不能为空")
+
+    meta: dict = {}
+    try:
+        data = await client.get_json("/api/sessions")
+        for s in data.get("sessions", []):
+            if s.get("id") == session_id:
+                meta = s.get("metadata") or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                if not machine_id:
+                    machine_id = (
+                        s.get("machineId") or s.get("machine_id")
+                        or meta.get("machineId") or meta.get("machine_id")
+                    )
+                if not cwd:
+                    cwd = (
+                        s.get("cwd")
+                        or meta.get("cwd") or meta.get("path")
+                        or meta.get("workingDirectory")
+                    )
+                break
+    except Exception:
+        pass  # 拉取失败不阻断后续兜底解析
+
+    # 1) metadata.codexSessionId 非空 → 直接用
+    if meta.get("codexSessionId"):
+        return str(meta["codexSessionId"]), cwd, machine_id
+
+    # 2) 拉本机 codex 会话列表
+    codex_sessions: list[dict] = []
+    try:
+        url = "/api/codex/sessions"
+        if machine_id:
+            url = f"/api/codex/sessions?machineId={machine_id}"
+        data = await client.get_json(url)
+        if isinstance(data, dict):
+            codex_sessions = data.get("sessions", []) or []
+    except Exception:
+        pass  # 拉取失败继续尝试其他匹配方式
+
+    # 传入 id 本身就在 codex 列表 → 直接用（幂等）
+    for s in codex_sessions:
+        if s.get("id") == session_id:
+            return session_id, cwd or s.get("cwd"), machine_id
+
+    # 3) 按 cwd 匹配（HAPI metadata.path == codex session.cwd）
+    if cwd:
+        norm = cwd.rstrip("/")
+        for s in codex_sessions:
+            if (s.get("cwd") or "").rstrip("/") == norm:
+                return str(s["id"]), s.get("cwd"), machine_id
+
+    # 4) 按 title 匹配（HAPI metadata.name == codex session.title）
+    name = (meta.get("name") or "").strip()
+    if name:
+        for s in codex_sessions:
+            if (s.get("title") or "").strip() == name:
+                return str(s["id"]), s.get("cwd"), machine_id
+
+    raise SyncCodexError(
+        f"无法解析 Codex Session: {session_id[:16]} 在本机 codex 会话中不存在"
+        "（可能已归档、删除或机器离线），请检查后重试。"
+    )
+
+
+async def sync_codex_session(
+    client: AsyncHapiClient,
+    session_id: str,
+    *,
+    machine_id: str | None = None,
+    cwd: str | None = None,
+    model: str | None = None,
+    model_reasoning_effort: str | None = None,
+    service_tier: str | None = None,
+    collaboration_mode: str = "default",
+    yolo: bool = False,
+) -> dict:
+    """同步指定 Codex Session 到 HAPI（POST /api/codex/sync-session）。
+
+    成功返回 HAPI 的完整 JSON；失败抛 SyncCodexError（含原始状态码/响应体）。
+    model / modelReasoningEffort 未指定时不在请求体中携带，
+    避免覆盖 HAPI 服务端默认值。
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("session_id 不能为空")
+
+    # HAPI 会话 id 与 codex transcript id 是两套体系：先解析成 codex id
+    try:
+        session_id, resolved_cwd, resolved_machine = await resolve_codex_session_id(
+            client, session_id, machine_id=machine_id, cwd=cwd
+        )
+        if resolved_cwd:
+            cwd = resolved_cwd
+        if resolved_machine:
+            machine_id = resolved_machine
+    except SyncCodexError:
+        raise
+    except Exception:
+        pass  # 解析失败时沿用原 session_id 继续
+
+    if service_tier not in (None, "fast", "standard"):
+        raise ValueError(f"service_tier 非法: {service_tier!r}（应为 fast|standard|None）")
+    if collaboration_mode not in ("default", "plan"):
+        raise ValueError(f"collaboration_mode 非法: {collaboration_mode!r}（应为 default|plan）")
+
+    payload: dict = {
+        "sessionIds": [session_id],
+        "collaborationMode": collaboration_mode,
+        "yolo": bool(yolo),
+    }
+    if machine_id:
+        payload["machineId"] = machine_id
+    if cwd:
+        payload["cwd"] = cwd
+    if model:
+        payload["model"] = model
+    if model_reasoning_effort:
+        payload["modelReasoningEffort"] = model_reasoning_effort
+    if service_tier:
+        payload["serviceTier"] = service_tier
+
+    try:
+        resp = await client.post("/api/codex/sync-session", json=payload)
+    except Exception as e:
+        raise SyncCodexError(f"网络错误: {e}") from e
+
+    try:
+        if resp.ok:
+            data = await resp.json()
+            resp.release()
+            # HAPI 业务失败时也返回 HTTP 200（success=false + error 字段），
+            # 必须检查 data.success，不能只看 HTTP 状态码。
+            if isinstance(data, dict) and data.get("success") is True:
+                return data
+            detail = ""
+            if isinstance(data, dict):
+                detail = str(data.get("error") or data.get("message") or "").strip()
+                if not detail:
+                    detail = str(data.get("output") or "").strip()
+            raise SyncCodexError(
+                f"HAPI 同步失败: {detail[:500]}" if detail
+                else "HAPI 同步失败（success=false），请查看 HAPI 日志",
+                status=200,
+            )
+        body = await resp.text()
+        status = resp.status
+        resp.release()
+        raise SyncCodexError(
+            f"HAPI 同步失败: HTTP {status} {body[:500]}",
+            status=status,
+            body=body,
+        )
+    except SyncCodexError:
+        raise
+    except Exception as e:
+        raise SyncCodexError(f"响应解析失败: {e}") from e
