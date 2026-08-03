@@ -717,8 +717,13 @@ def _fmt_tool_call(block: dict, max_len: int) -> str:
                 cmd_str = cmd_str[:max_len] + "..."
             tool_icon = "🛠️"
             return tool_icon + " " + name + ":\n```\n" + cmd_str + "\n```"
-        args_str = json.dumps(inp, ensure_ascii=False)[:max_len]
-        return f"🛠️ {name}: {args_str}"
+        # 非 command 类（wait 等纯 JSON 参数）：与 command 一致用代码块包裹，
+        # 避免 `🛠️ wait: {...}` 裸 JSON 一行贴在正文里（原输出样式）
+        args_str = json.dumps(inp, ensure_ascii=False)
+        args_str = args_str.replace("```", "``\u200b`")
+        if len(args_str) > max_len:
+            args_str = args_str[:max_len] + "..."
+        return "🛠️ " + name + ":\n```json\n" + args_str + "\n```"
     return f"🛠️ {name}"
 
 
@@ -1487,6 +1492,13 @@ HELP_COMMANDS = [
         "usage": "/hapi reopen [序号|ID前缀]",
         "summary": "恢复已停掉的会话（resume 备用接口）",
         "example": "/hapi reopen 1",
+        "home": True,
+    },
+    {
+        "topic": "session",
+        "usage": "/hapi sync [序号|ID前缀]",
+        "summary": "同步 Codex Session 到 HAPI（未传参时同步当前选中的会话）",
+        "example": "/hapi sync 1",
         "home": True,
     },
     {

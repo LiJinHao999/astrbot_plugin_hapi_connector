@@ -87,6 +87,8 @@ export function createApi(bridge) {
     bindSession: (sid, umo) => post(`sessions/${encodeURIComponent(sid)}/bind`, { umo }),
     lifecycle: (sid, action) => post(`sessions/${encodeURIComponent(sid)}/lifecycle`, { action }),
     batchLifecycle: (ids, action) => post("sessions/batch", { ids, action }),
+    /** 同步 Codex Session 到 HAPI（body 至少含 sessionId，可带 machineId/cwd 等） */
+    syncCodexSession: (body) => post("codex/sync-session", body || {}),
     setPrimaryRoute: (umo, user_id) => post("routes/primary", { umo, user_id }),
     setFlavorRoute: (flavor, umo, user_id) => post("routes/flavor", { flavor, umo, user_id }),
     /** 会话页可见窗口：隐藏列表存插件 KV（iframe 无 localStorage） */

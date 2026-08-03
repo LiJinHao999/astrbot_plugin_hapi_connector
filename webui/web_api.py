@@ -123,6 +123,7 @@ def register_pages(plugin) -> None:
         (f"{prefix}/connection/reconnect", api.connection_reconnect, ["POST"], "WebUI reconnect HAPI"),
         (f"{prefix}/sessions/snapshot", api.sessions_snapshot, ["GET"], "WebUI sessions snapshot"),
         (f"{prefix}/sessions/batch", api.sessions_batch, ["POST"], "WebUI batch lifecycle"),
+        (f"{prefix}/codex/sync-session", api.codex_sync_session, ["POST"], "WebUI sync codex session"),
         (f"{prefix}/sessions/<sid>/permission", api.session_permission, ["POST"], "WebUI set permission"),
         (f"{prefix}/sessions/<sid>/bind", api.session_bind, ["POST"], "WebUI bind session"),
         (f"{prefix}/sessions/<sid>/lifecycle", api.session_lifecycle, ["POST"], "WebUI session lifecycle"),
@@ -1072,6 +1073,98 @@ class WebApi:
             "results": results,
             "message": msg,
             "snapshot": build_sessions_snapshot(self.plugin),
+        })
+
+    async def codex_sync_session(self):
+        """WebUI 同步 Codex Session 到 HAPI（POST /api/codex/sync-session）。
+
+        - 缓存找不到时先刷新一次，仍无则 404
+        - 从 Session 对象/metadata 补充 machineId、cwd
+        - 成功刷新 sessions_cache；失败透传 HAPI 原始错误
+        - 运行中会话被 HAPI 拒绝时原样展示冲突信息，不强制同步
+        """
+        from astrbot.api.web import error_response, json_response, request
+        from ..core import session_ops
+
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+
+        session_id = str((payload.get("sessionId") or "").strip())
+        if not session_id:
+            return error_response("需要选择 Session（sessionId 不能为空）", status_code=400)
+
+        # 1. 从缓存查找（支持前缀）；找不到先刷新一次再查
+        session = _find_session(self.plugin, session_id)
+        if session is None:
+            try:
+                await self.plugin._refresh_sessions()
+            except Exception as e:
+                logger.warning("sync codex pre-refresh failed: %s", e)
+            session = _find_session(self.plugin, session_id)
+        if session is None:
+            return error_response(f"Session 不存在: {session_id[:16]}", status_code=404)
+        sid = str(session.get("id") or session_id)
+
+        # 2. 从 Session 对象 / metadata 补充 machineId、cwd（请求体显式值优先）
+        meta = session.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        machine_id = (
+            payload.get("machineId") or session.get("machineId")
+            or session.get("machine_id") or meta.get("machineId")
+            or meta.get("machine_id") or None
+        )
+        cwd = (
+            payload.get("cwd") or session.get("cwd")
+            or meta.get("cwd") or meta.get("path")
+            or meta.get("workingDirectory") or None
+        )
+
+        # 3. 调用底层同步
+        try:
+            result = await session_ops.sync_codex_session(
+                self.plugin.client,
+                sid,
+                machine_id=machine_id,
+                cwd=cwd,
+                model=payload.get("model"),
+                model_reasoning_effort=payload.get("modelReasoningEffort"),
+                service_tier=payload.get("serviceTier"),
+                collaboration_mode=payload.get("collaborationMode") or "default",
+                yolo=bool(payload.get("yolo") or False),
+            )
+        except session_ops.SyncCodexError as e:
+            logger.warning("sync codex session failed sid=%s: %s", sid[:8], e)
+            status = e.status if isinstance(e.status, int) and 400 <= e.status < 600 else 502
+            msg = str(e)
+            if e.status != 409:
+                msg += "\n详情请查看 HAPI 日志。"
+            return error_response(msg, status_code=status)
+        except Exception as e:
+            logger.exception("sync codex session unexpected error sid=%s", sid[:8])
+            return error_response(f"同步失败: {type(e).__name__}: {e}", status_code=502)
+
+        # 4. 成功后刷新缓存；刷新失败不误报同步失败
+        refresh_failed = False
+        try:
+            await self.plugin._refresh_sessions()
+        except Exception as e:
+            refresh_failed = True
+            logger.warning("sync codex session refresh after success failed: %s", e)
+
+        synced = result.get("syncedCount") if isinstance(result, dict) else None
+        if synced:
+            message = f"Codex Session 同步完成：已导入 {synced} 个会话"
+        else:
+            message = "Codex Session 同步完成"
+        if refresh_failed:
+            message += "（Session 列表刷新失败，请稍后手动刷新）"
+        return json_response({
+            "ok": True,
+            "sessionId": sid,
+            "message": message,
+            "result": result,
         })
 
     async def routes_primary(self):
