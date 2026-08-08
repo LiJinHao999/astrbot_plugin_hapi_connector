@@ -2,8 +2,8 @@
 
 ## v3.2.5
 
-1. **修复纯文本模式下 agent 图片（generated-image）退化成 Markdown 文本的问题**  
-   `output_level=simple` / `render_mode=text` 时，HAPI 的 `generated-image` 消息块虽然已被解析并缓存为本地图片，但纯文本回退文案（`fallback_text`）仍保留原始 `hapi-genimg://` 标记，导致 QQ 等平台只显示 `![alt](hapi-genimg://...)` 文本而不发图。现在推送前对回退文案同样执行 `resolve_hapi_genimg_markers`，text 模式下图片会以真实图片随正文一起发送。
+1. **修复纯文本模式下 agent 图片退化成 hapi-genimg 文本的问题**  
+   纯文本模式（`render_mode=text`）下，agent 推送的图片回退文案仍保留原始 `hapi-genimg://` 标记，导致 QQ 等平台只显示图片链接文本而不发图。现已对回退文案同样解析图片标记，图片会以真实图片随正文一起发送。
 
 ## v3.2.4
 
