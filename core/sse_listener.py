@@ -984,6 +984,17 @@ class SSEListener:
             except Exception as e:
                 logger.warning("resolve genimg markers failed: %s", e)
                 body_resolved = body
+            # 纯文本回退同样解析 hapi-genimg://，否则 text 模式图片退化成
+            # ![alt](hapi-genimg://id) 文本（上游 v3.2.4 未覆盖此路径）
+            fallback_resolved = fallback_text
+            try:
+                if client and fallback_text and "hapi-genimg://" in fallback_text:
+                    fallback_resolved = await output_present.resolve_hapi_genimg_markers(
+                        fallback_text, client=client, session_id=session_id
+                    )
+            except Exception as e:
+                logger.warning("resolve genimg markers in fallback failed: %s", e)
+                fallback_resolved = fallback_text
             payload = output_present.build_message_payload(
                 label=label,
                 body=body_resolved,
@@ -1001,7 +1012,7 @@ class SSEListener:
                 notif,
                 "message",
                 payload,
-                fallback_text,
+                fallback_resolved,
                 session_id,
                 self.sessions_cache,
             )
