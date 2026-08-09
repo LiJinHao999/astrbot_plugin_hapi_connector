@@ -306,7 +306,10 @@ class SSEListener:
         # 处理权限请求
         new_requests: list[tuple[str, dict]] = []
         if agent_state:
-            requests_data = agent_state.get("requests") or {}
+            # SSE 事件中 agentState 结构为 {version, value:{requests, ...}}，
+            # 兼容部分场景直接扁平放 requests
+            agent_state_value = agent_state.get("value") or {}
+            requests_data = agent_state_value.get("requests") or agent_state.get("requests") or {}
             async with self._lock:
                 old_reqs = self.pending.get(sid, {})
                 new_requests = [
@@ -1077,6 +1080,8 @@ class SSEListener:
                 continue
             try:
                 detail = await session_ops.fetch_session_detail(self.client, sid)
+                # fetch_session_detail 已解包 {session:{...}}，返回扁平 session 对象；
+                # agentState 为 {controlledByUser, startingMode, requests, completedRequests} 扁平结构
                 agent_state = detail.get("agentState") or {}
                 requests_data = agent_state.get("requests") or {}
                 if requests_data:
