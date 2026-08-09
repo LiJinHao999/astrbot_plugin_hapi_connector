@@ -1,5 +1,10 @@
 # 更新日志
 
+## v3.2.6
+
+1. **修复 SSE 权限请求收不到的问题（兼容 hapi v0.27.0+ 事件结构）**  
+   hapi v0.27.0 起，SSE `session-updated` 事件的 `agentState` 改为 `{version, value}` 嵌套结构，权限请求位于 `agentState.value.requests`，旧代码只读顶层导致收不到授权申请通知。现已兼容嵌套（优先）与扁平两种结构。
+
 ## v3.2.5
 
 1. **修复纯文本模式下 agent 图片退化成 hapi-genimg 文本的问题**  
