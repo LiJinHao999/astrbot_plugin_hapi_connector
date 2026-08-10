@@ -1606,7 +1606,7 @@ HELP_COMMANDS = [
     {
         "topic": "approve",
         "usage": "/hapi summary [all|<序号|ID>|status]",
-        "summary": "推送忙时托管操作汇总：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列",
+        "summary": "推送忙时托管操作记录：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列",
         "example": "/hapi summary",
         "home": False,
     },
@@ -1946,7 +1946,7 @@ def get_help_text(topic: str = "") -> str:
     return _format_help_commands("HAPI 帮助 / 完整命令列表", "all")
 
 
-# ──── 忙时托管操作汇总（dev-docs/auto-approve-silent-summary.md §3） ────
+# ──── 忙时托管操作记录（dev-docs/auto-approve-silent-summary.md §3） ────
 
 _SUMMARY_MODE_LABELS = {
     "daily": "按天",
@@ -1968,16 +1968,16 @@ def _fmt_summary_dt(dt) -> str:
 
 
 def _summary_detail_line(event: dict, mark: str) -> str:
-    """单条事件明细行：· 07:12 ✓ approve [Bash] 或失败附错误摘要。"""
+    """单条操作记录行：· 07:12 ✓ 批准 [Bash] npm install 或失败/拒绝摘要。"""
     at = event.get("at")
     time_part = ""
     if hasattr(at, "strftime"):
         time_part = at.strftime("%H:%M") + " "
     kind = str(event.get("kind") or "approve")
-    kind_label = "批准" if kind == "approve" else "压缩"
+    kind_label = {"approve": "批准", "compact": "压缩", "deny": "拒绝"}.get(kind, kind)
     tool = event.get("tool")
     bits = [time_part + mark, kind_label]
-    if tool:
+    if tool and tool != "__compact__":
         bits.append(f"[{tool}]")
     detail = str(event.get("detail") or "").strip()
     if detail:
@@ -1986,22 +1986,25 @@ def _summary_detail_line(event: dict, mark: str) -> str:
 
 
 def format_auto_approve_summary(view: dict) -> str:
-    """托管操作汇总的纯文本（§3.1）。
+    """托管操作记录汇总的纯文本（§3.1）。
 
     消费 AutoApproveSummaryService.build_summary_view 的视图 dict。
     """
     title = str(view.get("title") or view.get("label") or (view.get("sid") or "")[:8])
-    lines = [f"[操作汇总] {title}", f"时段/日期: {view.get('bucket_desc') or '—'}"]
+    lines = [f"[操作记录] {title}", f"时段/日期: {view.get('bucket_desc') or '—'}"]
 
     counters = view.get("counters") or {}
     approve_ok = int(counters.get("approve_ok") or 0)
     approve_fail = int(counters.get("approve_fail") or 0)
     compact_ok = int(counters.get("compact_ok") or 0)
     compact_fail = int(counters.get("compact_fail") or 0)
+    deny_n = int(counters.get("deny_fail") or 0)
     if approve_ok + approve_fail:
-        lines.append(f"自动批准  ✓{approve_ok} ✗{approve_fail}")
+        lines.append(f"批准  ✓{approve_ok} ✗{approve_fail}")
     if compact_ok + compact_fail:
-        lines.append(f"自动压缩  ✓{compact_ok} ✗{compact_fail}")
+        lines.append(f"压缩  ✓{compact_ok} ✗{compact_fail}")
+    if deny_n:
+        lines.append(f"拒绝  {deny_n} 次")
 
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
@@ -2010,11 +2013,11 @@ def format_auto_approve_summary(view: dict) -> str:
 
     if failures:
         if include_failures:
-            lines.append("── 失败明细 ──")
+            lines.append("── 失败 / 未执行明细 ──")
             for evt in failures:
                 lines.append(_summary_detail_line(evt, "✗"))
         else:
-            lines.append(f"── 失败 {len(failures)} 次（已隐藏明细）──")
+            lines.append(f"── 失败 / 未执行 {len(failures)} 次（已隐藏明细）──")
 
     if successes:
         shown = successes[-max_lines:]
@@ -2067,7 +2070,7 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
     in_window = bool(status.get("in_window"))
     sessions = status.get("sessions") or {}
 
-    lines = ["托管操作汇总状态"]
+    lines = ["托管操作记录状态"]
     if enabled:
         lines.append("总开关: 开启")
     else:
@@ -2075,7 +2078,7 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
         if not auto_approve:
             why.append("托管审批未开启")
         if not silent:
-            why.append("操作汇总未开启")
+            why.append("操作记录未开启")
         lines.append(f"总开关: 关闭（{'；'.join(why) if why else '—'}）")
     lines.append(f"模式: {_SUMMARY_MODE_LABELS.get(mode, mode or '?')}")
     lines.append(f"推送: {_SUMMARY_PUSH_LABELS.get(push, push or '?')}"

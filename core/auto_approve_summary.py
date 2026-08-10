@@ -1,4 +1,4 @@
-"""忙时托管操作汇总：事件收集、桶、指纹、防漏发、KV 持久化与推送编排。
+"""忙时托管操作记录：事件收集、桶、指纹、防漏发、KV 持久化与推送编排。
 
 设计对照 dev-docs/auto-approve-silent-summary.md（§2/§4/§5.3）：
 
@@ -39,7 +39,7 @@ PERSIST_DEBOUNCE_SEC = 5
 SUMMARY_MODES = ("daily", "window", "per_event")
 PUSH_TRIGGERS = ("on_window_end", "at_fixed_time")
 
-COUNT_KEYS = ("approve_ok", "approve_fail", "compact_ok", "compact_fail")
+COUNT_KEYS = ("approve_ok", "approve_fail", "compact_ok", "compact_fail", "deny_fail")
 
 
 @dataclass
@@ -99,7 +99,7 @@ class SessionSummaryState:
 
 
 class AutoApproveSummaryService:
-    """托管操作汇总服务（每插件单例）。
+    """托管操作记录服务（每插件单例）。
 
     生命周期与 SSE 相同：load → start_tasks；stop 时先 flush 再取消任务。
     配置热更新走 update_config；「关 silent / 关 auto_approve / 改 mode/push/time」
@@ -157,7 +157,7 @@ class AutoApproveSummaryService:
 
     @property
     def enabled(self) -> bool:
-        """操作汇总总开关：托管开启 且 操作汇总开启。"""
+        """操作记录总开关：托管开启 且 操作记录开启。"""
         return bool(self._auto_approve_enabled and self._silent)
 
     @property
@@ -282,7 +282,7 @@ class AutoApproveSummaryService:
         detail: str | None = None,
         request_id: str | None = None,
     ) -> None:
-        """操作汇总开启时收集一条托管自动动作（approve / compact）。
+        """操作记录开启时收集一条托管自动动作（approve / compact）。
 
         per_event（手动触发）模式不做即时推送：等每次手动 /hapi summary 命令
         或防漏发补发点（stop/关开关）才推送。
@@ -311,6 +311,30 @@ class AutoApproveSummaryService:
             key = f"{kind}_{'ok' if ok else 'fail'}"
             state.counters[key] = state.counters.get(key, 0) + 1
             self._mark_dirty()
+
+    async def record_operation(
+        self,
+        session_id: str,
+        kind: str,
+        ok: bool,
+        *,
+        tool: str | None = None,
+        detail: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        """托管时段内 agent 操作记录入口（手动批准 / 拒绝 / LLM 工具自动批准等）。
+
+        自动批准 / 自动压缩在 sse_listener 内直接走 append_event（必然发生在窗内）；
+        手动路径（用户批准、拒绝）只在托管窗内且汇总开启时才记录。
+        """
+        if not self.enabled:
+            return
+        if not self._in_window():
+            return
+        await self.append_event(
+            session_id, kind, ok,
+            tool=tool, detail=detail, request_id=request_id,
+        )
 
     # ──── 指纹 / 判定 ────
 

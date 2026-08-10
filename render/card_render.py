@@ -913,7 +913,7 @@ def sample_payload(kind: str) -> dict[str, Any]:
     if kind == "auto_approve_summary":
         return {
             "title": "重构鉴权中间件",
-            "subtitle": "操作汇总 · 托管时段 2026-08-09 23:00 ~ 2026-08-10 07:00",
+            "subtitle": "操作记录 · 托管时段 2026-08-09 23:00 ~ 2026-08-10 07:00",
             "rows": [
                 {"type": "kv", "label": "自动批准", "detail": "成功 12 · 失败 1"},
                 {"type": "kv", "label": "自动压缩", "detail": "成功 2 · 失败 0"},

@@ -95,7 +95,7 @@ class HapiConnectorPlugin(Star):
         # 供 SSE 推送呈现（对话/结构卡）读取 config 与 notification_mgr
         self.sse_listener.plugin = self
 
-        # 忙时托管操作汇总服务（dev-docs/auto-approve-silent-summary.md）
+        # 忙时托管操作记录服务（dev-docs/auto-approve-silent-summary.md）
         # 推送走 sse_listener.push_auto_approve_summary（带 session_id 走窗口路由）
         self.summary_service = AutoApproveSummaryService(self)
         self.summary_service.set_push_callback(
@@ -422,7 +422,7 @@ class HapiConnectorPlugin(Star):
         return False, sid, msg
 
     async def _summary_git_snapshot(self, sid: str) -> dict | None:
-        """操作汇总 flush 时附带的 git 变更快照（只读）。
+        """操作记录 flush 时附带的 git 变更快照（只读）。
 
         非 git 仓库 / HAPI 旧版本无路由 / 网络错误一律返回 None（汇总不附带 git 区块）。
         返回 {"status_count", "added", "deleted", "entries": [(mark, path)...], "total_entries"}。
@@ -487,7 +487,7 @@ class HapiConnectorPlugin(Star):
         # 加载已有的待审批请求（重启/断联后恢复）
         await self.sse_listener.load_existing_pending()
 
-        # 托管操作汇总：恢复 KV、同步配置、启动窗边沿/定点任务（§2.3 防漏发）
+        # 托管操作记录：恢复 KV、同步配置、启动窗边沿/定点任务（§2.3 防漏发）
         summary_svc = self.summary_service
         summary_svc.update_config(
             auto_approve_enabled=self.config.get("auto_approve_enabled", False),
@@ -531,8 +531,8 @@ class HapiConnectorPlugin(Star):
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
     async def terminate(self):
-        """插件销毁：补发操作汇总、停止 SSE、关闭 client"""
-        # 防漏发：先把未推送的操作汇总补发，再停任务
+        """插件销毁：补发操作记录、停止 SSE、关闭 client"""
+        # 防漏发：先把未推送的操作记录补发，再停任务
         try:
             summary_svc = getattr(self, "summary_service", None)
             if summary_svc is not None:
@@ -540,7 +540,7 @@ class HapiConnectorPlugin(Star):
                     await summary_svc.flush_all()
                 await summary_svc.stop()
         except Exception as e:
-            logger.warning("terminate 时操作汇总清理失败: %s", e)
+            logger.warning("terminate 时操作记录清理失败: %s", e)
         await self.sse_listener.stop()
         await self.client.close()
         logger.info("HAPI Connector 已销毁")

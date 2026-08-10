@@ -151,20 +151,20 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "render_kinds": {
         "label": "以下类型渲成图片",
-        "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话、操作汇总、git 状态/统计。没勾的仍发文字。",
+        "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话、操作记录、git 状态/统计。没勾的仍发文字。",
         "control": "kind_checks",
         "show_if": {"key": "render_mode", "eq": "card"},
     },
     "auto_approve_silent": {
-        "label": "托管操作汇总",
-        "help": "开启后，忙时托管时段内的自动批准 / 自动压缩不再逐条推送，改为按下方策略汇总推送（如早晨一版）。关闭则保持现状逐条推。托管时段 AI 仍会自主执行全部操作，只是通知方式变了。",
+        "label": "Agent 操作记录汇总",
+        "help": "开启后，忙时托管时段内 agent 的**全部操作**（自动批准、你手动批准的请求、拒绝、自动压缩）不再逐条推送，改为收集并按下方策略汇总推送（如早晨一版，含操作明细与 git 变更）。关闭则保持现状逐条推。托管本身不受影响，AI 仍会自主执行全部操作。",
         "control": "bool",
-        "warn": "开启后托管时段的自动操作不再逐条推送，改为汇总推送；托管本身不受影响，AI 仍会自主执行全部操作。",
+        "warn": "开启后托管时段的 agent 操作不再逐条推送，改为汇总推送；托管本身不受影响，AI 仍会自主执行全部操作。",
         "bool_labels": ["关闭（逐条推送）", "开启（汇总推送）"],
     },
     "auto_approve_summary_mode": {
         "label": "汇总方式",
-        "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；手动触发：不自动推送，每次执行 /hapi summary 命令时推当前积累的一版。开启「托管操作汇总」后生效。",
+        "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；手动触发：不自动推送，每次执行 /hapi summary 命令时推当前积累的一版。开启「Agent 操作记录汇总」后生效。",
         "control": "enum_cards",
         "option_meta": {
             "window": {"title": "按托管时段（推荐）", "desc": "夜间托管结束一次性结算，最贴合睡眠场景。"},
@@ -174,7 +174,7 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_summary_push": {
         "label": "推送时机",
-        "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「托管操作汇总」后生效。",
+        "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「Agent 操作记录汇总」后生效。",
         "control": "enum_cards",
         "option_meta": {
             "on_window_end": {"title": "托管结束时（推荐）", "desc": "23:00–07:00 这种窗结束后立刻推一版。"},
@@ -189,13 +189,13 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_summary_include_failures": {
         "label": "汇总含失败明细",
-        "help": "开启时失败项在汇总里列明细（置顶展示）；关闭时只计失败次数、不列明细。开启「托管操作汇总」后生效。",
+        "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。开启「Agent 操作记录汇总」后生效。",
         "control": "bool",
         "bool_labels": ["关闭", "开启"],
     },
     "auto_approve_summary_max_detail_lines": {
         "label": "明细行数上限",
-        "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「托管操作汇总」后生效。",
+        "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「Agent 操作记录汇总」后生效。",
         "control": "number",
     },
     "remind_pending": {

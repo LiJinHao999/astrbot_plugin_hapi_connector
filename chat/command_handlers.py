@@ -1016,17 +1016,30 @@ class CommandHandlers:
                 yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             sid, rid, req = found[0]
+            summary_svc = getattr(self.plugin, "summary_service", None)
             if is_compact_request(req):
                 ok, _ = await session_ops.send_message(self.client, sid, "/compact")
                 self.plugin.pending_mgr.remove_entry(sid, rid)
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "compact", ok, tool="__compact__",
+                        detail=("压缩上下文 (/compact)" if ok else "批准压缩失败"), request_id=rid)
                 yield event.plain_result("✓ 已批准: /compact" if ok else "✗ 批准失败: /compact 发送未成功")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
                 self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=True)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "approve", True, tool=tool,
+                        detail=formatters.format_request_detail(req), request_id=rid)
                 yield event.plain_result(f"✓ 已批准: {tool}")
             else:
                 ok, _ = await session_ops.approve_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "approve", ok, tool=tool,
+                        detail=(formatters.format_request_detail(req) if ok else "批准失败"), request_id=rid)
                 yield event.plain_result(f"✓ 已批准: {tool}" if ok else f"✗ 批准失败: {tool}")
         else:
             result = await self.plugin.pending_mgr.approve_items(regular, self.client)
@@ -1080,31 +1093,59 @@ class CommandHandlers:
                 yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             sid, rid, req = found[0]
+            summary_svc = getattr(self.plugin, "summary_service", None)
             if is_compact_request(req):
                 self.plugin.pending_mgr.remove_entry(sid, rid)
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "deny", False, tool="__compact__",
+                        detail="用户取消压缩 (/compact)", request_id=rid)
                 yield event.plain_result("✓ 已取消压缩: /compact")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
                 self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=False)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "deny", False, tool=tool,
+                        detail=formatters.format_request_detail(req), request_id=rid)
                 yield event.plain_result(f"✓ 已拒绝: {tool}")
             else:
                 ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "deny", False, tool=tool,
+                        detail=(formatters.format_request_detail(req) if ok else f"拒绝失败: {msg}"),
+                        request_id=rid)
                 yield event.plain_result(f"✓ 已拒绝: {tool}" if ok else f"✗ 拒绝失败: {tool}")
         else:
             # 全部拒绝
             results = []
+            summary_svc = getattr(self.plugin, "summary_service", None)
             for sid, rid, req in items:
                 if is_compact_request(req):
                     self.plugin.pending_mgr.remove_entry(sid, rid)
+                    if summary_svc is not None:
+                        await summary_svc.record_operation(
+                            sid, "deny", False, tool="__compact__",
+                            detail="用户取消压缩 (/compact)", request_id=rid)
                     results.append("✓ /compact (已取消)")
                 elif self.plugin.pending_mgr.is_llm_tool_request(req):
                     self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=False)
                     tool = req.get("tool", "?")
+                    if summary_svc is not None:
+                        await summary_svc.record_operation(
+                            sid, "deny", False, tool=tool,
+                            detail=formatters.format_request_detail(req), request_id=rid)
                     results.append(f"✓ {tool}")
                 else:
                     ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
+                    if summary_svc is not None:
+                        await summary_svc.record_operation(
+                            sid, "deny", False, tool=tool,
+                            detail=(formatters.format_request_detail(req) if ok else f"拒绝失败: {msg}"),
+                            request_id=rid)
                     results.append(f"{'✓' if ok else '✗'} {tool}")
             yield event.plain_result(f"已全部拒绝（{len(items)} 个，✗ 表示操作失败）:\n" + "\n".join(results))
 
@@ -2141,7 +2182,7 @@ class CommandHandlers:
     # ── summary ──
 
     async def cmd_summary(self, event: AstrMessageEvent, arg: str = ""):
-        """忙时托管操作汇总：/hapi summary [all|<序号|ID>|status]
+        """忙时托管操作记录：/hapi summary [all|<序号|ID>|status]
 
         无参 = 当前窗口可见且有 pending 的 session；all = 全部（各回各窗口）；
         指定序号/ID = 只推该 session；status = 只读队列状态。
@@ -2151,7 +2192,7 @@ class CommandHandlers:
         await self.state_mgr.set_user_state(event)
         summary_svc = getattr(self.plugin, "summary_service", None)
         if summary_svc is None:
-            yield event.plain_result("操作汇总服务未就绪，请重载插件后再试")
+            yield event.plain_result("操作记录服务未就绪，请重载插件后再试")
             return
 
         normalized = (arg or "").strip()
@@ -2184,8 +2225,8 @@ class CommandHandlers:
 
         if not target_sids:
             yield event.plain_result(
-                "没有待推送的操作汇总\n"
-                "（操作汇总未开启、暂无未推送事件，或当前窗口无相关 session；"
+                "没有待推送的操作记录\n"
+                "（操作记录未开启、暂无未推送事件，或当前窗口无相关 session；"
                 "可用 /hapi summary status 查看）"
             )
             return
@@ -2203,12 +2244,12 @@ class CommandHandlers:
 
         lines = []
         if pushed:
-            lines.append(f"✓ 已推送 {len(pushed)} 个 session 的操作汇总（各回各窗口）")
+            lines.append(f"✓ 已推送 {len(pushed)} 个 session 的操作记录（各回各窗口）")
         if no_change:
-            lines.append(f"ℹ️ {len(no_change)} 个 session 无新的操作汇总（同日且内容无变化）")
+            lines.append(f"ℹ️ {len(no_change)} 个 session 无新的操作记录（同日且内容无变化）")
         if failed:
             lines.append("⚠️ 推送失败: " + ", ".join(s[:8] for s in failed))
-        yield event.plain_result("\n".join(lines) or "没有可推送的操作汇总")
+        yield event.plain_result("\n".join(lines) or "没有可推送的操作记录")
 
     # ── git 查看（只读） ──
 

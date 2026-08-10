@@ -1,11 +1,11 @@
 # 更新日志
 
-## v3.3.0 — 忙时托管「操作汇总」
+## v3.3.0 — 忙时托管「Agent 操作记录汇总」
 
 > 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)，完整设计见 `dev-docs/auto-approve-silent-summary.md`。
 
-1. **新增托管操作汇总**（`auto_approve_silent`，键名保留兼容，默认关闭，行为与旧版一致）  
-   开启后，忙时托管时段内的自动批准 / 自动压缩（**全部托管自动操作**，含成功与失败）**不再逐条推送**，改为按策略收集汇总推送。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
+1. **新增 Agent 操作记录汇总**（`auto_approve_silent`，键名保留兼容，默认关闭，行为与旧版一致）  
+   开启后，忙时托管时段内 agent 的**全部操作**（自动批准、手动批准的请求、拒绝、自动压缩，含工具与参数摘要）**不再逐条推送**，改为按策略收集汇总推送，并附带 git 变更快照。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
 
 2. **汇总方式与推送时机可配置**（WebUI「设置 → 推送通知」底部）  
    - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `按天` / `手动触发`（不自动推，每次执行 `/hapi summary` 命令时推当前积累）
@@ -15,21 +15,21 @@
 3. **严格隔离与防漏发**  
    - 汇总按 session 分开，**每个有变更的 session 各推一张**（文本或结构卡），带 `session_id` 走既有窗口路由（session 绑定 → flavor 默认 → 用户默认窗口），不做全局广播
    - `last_pushed_at + 内容指纹（sha256）` 去重：同日同内容不重复推；事件增删、失败转成功都会改变指纹触发再推
-   - 补发路径：插件 terminate / SSE stop / 关操作汇总或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
+   - 补发路径：插件 terminate / SSE stop / 关操作记录或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
    - pending 与 `last_*` 持久化到 AstrBot KV（键 `auto_approve_summary_v1`），重启不丢
 
 4. **命令触发** `/hapi summary`  
    - `summary`：推送当前窗口可见且有变更的 session 汇总
    - `summary all`：全部有变更的 session（各回各窗口）
    - `summary <序号|ID>`：指定 session；`summary status`：查看队列与上次推送时间
-   - 手动触发与自动 flush 共用同一套「推送成功 → 清 pending → 更新 last_*」；无变更时提示「无新的操作汇总」，不会空卡刷屏
+   - 手动触发与自动 flush 共用同一套「推送成功 → 清 pending → 更新 last_*」；无变更时提示「无新的操作记录」，不会空卡刷屏
    - 帮助归类「审批」；`/hapi help 审批` 可查
 
 5. **汇总卡渲染**  
    新增 `render_kinds` 选项 `auto_approve_summary`（默认勾选）；`render_mode=card` 时汇总出结构卡（统计 + 失败置顶 + 成功明细折叠），`text` 或未勾选时纯文本，未安装 Pillow 自动回退文本。
 
 6. **WebUI 热更新**  
-   改操作汇总开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作汇总或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
+   改操作记录开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作记录或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
 
 7. **git 状态 / 变更统计 / 文件 diff 查看（只读）**（dev-docs §10 关联能力落地）  
    - `/hapi git`：当前 session 工作区 git 状态（porcelain 解析为可读列表，含 修改/新增/删除/重命名/冲突/未跟踪）
@@ -39,7 +39,7 @@
    - `render_mode=card` 时状态/统计出结构卡（新增出图类型 `git_status`，默认勾选），diff 走对话卡代码块；纯文本模式原样发送
    - 帮助归类「文件」；需较新 HAPI 版本（含 git 路由）
 
-8. **操作汇总附带 git 变更快照**  
+8. **操作记录附带 git 变更快照**  
    每次汇总推送时，对该 session 实时拉取 git 状态与变更统计（30s 缓存防高频重复查询），随汇总展示「N 个文件变更（+a -d）」与文件明细；非 git 仓库 / HAPI 无 git 路由时自动省略该区块，不影响汇总主体。想随时看更细的 diff 用 `/hapi diff <路径>`。
 
 ## v3.2.6

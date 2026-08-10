@@ -134,7 +134,7 @@ class LLMIntegration:
         # 等待审批结果（1分钟超时）
         try:
             approved = await asyncio.wait_for(future, timeout=60)
-            return (True, "approved") if approved else (False, "denied")
+            outcome = (True, "approved") if approved else (False, "denied")
         except asyncio.TimeoutError:
             # 超时，清理请求
             self.pending_mgr.remove_entry(window_id, req_id)
@@ -142,13 +142,30 @@ class LLMIntegration:
             # 如果处于忙时托管时段，超时默认允许
             if self.plugin.sse_listener._auto_approve_enabled and self.plugin.sse_listener._in_auto_approve_window():
                 logger.info(f"忙时托管时段，自动批准 {tool_name}")
-                return True, "auto_approved"
-            return False, "timeout"
+                outcome = (True, "auto_approved")
+            else:
+                outcome = (False, "timeout")
         except asyncio.CancelledError:
             # 任务被取消（通常是外部超时），清理并返回拒绝，不再传播异常
             self.pending_mgr.remove_entry(window_id, req_id)
             logger.warning(f"LLM 工具 {tool_name} 审批被取消")
-            return False, "cancelled"
+            outcome = (False, "cancelled")
+
+        # 托管时段内 LLM 工具操作 → 进操作记录（窗口 ID 即该窗口的 session 上下文）
+        summary_svc = getattr(self.plugin, "summary_service", None)
+        if summary_svc is not None:
+            detail = formatters.format_request_detail({"tool": tool_name, "arguments": args})
+            if outcome[0]:
+                await summary_svc.record_operation(
+                    window_id, "approve", True, tool=tool_name,
+                    detail=detail, request_id=req_id,
+                )
+            else:
+                await summary_svc.record_operation(
+                    window_id, "deny", False, tool=tool_name,
+                    detail=detail, request_id=req_id,
+                )
+        return outcome
 
     def _effective_sid(self, event: AstrMessageEvent) -> str | None:
         """统一解析当前工具应作用的 session。"""

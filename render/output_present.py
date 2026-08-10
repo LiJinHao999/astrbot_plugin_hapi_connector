@@ -787,7 +787,7 @@ def build_permission_payload(
 
 
 def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
-    """忙时托管操作汇总结构卡（§3.2）。
+    """忙时托管操作记录结构卡（§3.2）。
 
     消费 AutoApproveSummaryService.build_summary_view 的视图 dict；
     走通用结构卡渲染（kind=auto_approve_summary）。
@@ -802,10 +802,11 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
     def _event_line(evt: dict, mark: str) -> str:
         at = evt.get("at")
         time_part = _dt(at)[5:] if at else ""
-        kind_label = "批准" if str(evt.get("kind") or "approve") == "approve" else "压缩"
+        kind = str(evt.get("kind") or "approve")
+        kind_label = {"approve": "批准", "compact": "压缩", "deny": "拒绝"}.get(kind, kind)
         tool = evt.get("tool")
         bits = [time_part, mark, kind_label]
-        if tool:
+        if tool and tool != "__compact__":
             bits.append(f"[{tool}]")
         detail = str(evt.get("detail") or "").strip()
         if detail:
@@ -813,28 +814,35 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
         return " ".join(b for b in bits if b)
 
     clean_title = _strip_emoji(str(view.get("title") or (view.get("sid") or "")[:8]))
-    title = clean_title or "操作汇总"
+    title = clean_title or "操作记录"
     bucket = str(view.get("bucket_desc") or "—")
-    subtitle = f"操作汇总 · {bucket}"
+    subtitle = f"操作记录 · {bucket}"
 
     counters = view.get("counters") or {}
     approve_ok = int(counters.get("approve_ok") or 0)
     approve_fail = int(counters.get("approve_fail") or 0)
     compact_ok = int(counters.get("compact_ok") or 0)
     compact_fail = int(counters.get("compact_fail") or 0)
+    deny_n = int(counters.get("deny_fail") or 0)
 
     rows: list[dict[str, Any]] = []
     if approve_ok or approve_fail:
         rows.append({
             "type": "kv",
-            "label": "自动批准",
+            "label": "批准",
             "detail": f"成功 {approve_ok} · 失败 {approve_fail}",
         })
     if compact_ok or compact_fail:
         rows.append({
             "type": "kv",
-            "label": "自动压缩",
+            "label": "压缩",
             "detail": f"成功 {compact_ok} · 失败 {compact_fail}",
+        })
+    if deny_n:
+        rows.append({
+            "type": "kv",
+            "label": "拒绝",
+            "detail": f"{deny_n} 次",
         })
 
     failures = list(view.get("failures") or [])
@@ -845,7 +853,7 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
     if failures:
         rows.append({
             "type": "section",
-            "label": "失败明细",
+            "label": "失败 / 未执行",
             "detail": "" if include_failures else f"{len(failures)} 次（已隐藏）",
             "count": 0,
         })
