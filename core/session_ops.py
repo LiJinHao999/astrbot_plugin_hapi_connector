@@ -283,6 +283,75 @@ async def fetch_machines(client: AsyncHapiClient) -> list[dict]:
     return [m for m in machines if m.get("active")]
 
 
+async def _fetch_git_command(
+    client: AsyncHapiClient,
+    path: str,
+    *,
+    params: dict | None = None,
+    fail_prefix: str,
+) -> tuple[bool, str, dict]:
+    """git 系列只读接口统一解析（上游返回 CommandResponse / {success, stdout, error}）。
+
+    返回 (ok, stdout 或错误文本, 原始数据)。错误体只截断展示，不抛异常。
+    """
+    resp = await client.get(path, params=params)
+    try:
+        data = await resp.json()
+    except Exception:
+        body = await resp.text()
+        return False, f"{fail_prefix}: HTTP {resp.status} {body[:200]}", {}
+    if not resp.ok:
+        error = data.get("error") if isinstance(data, dict) else None
+        return False, f"{fail_prefix}: HTTP {resp.status} {str(error or data)[:200]}", data
+    if not data.get("success", True):
+        error = data.get("error") if isinstance(data, dict) else None
+        return False, f"{fail_prefix}: {str(error or '未知错误')[:200]}", data
+    stdout = data.get("stdout") if isinstance(data, dict) else None
+    return True, str(stdout or "") if stdout is not None else "", data
+
+
+def _staged_param(staged: bool | None) -> dict | None:
+    """staged 三态 → query 参数：True=仅暂存 / False=仅未暂存 / None=不传（上游默认）"""
+    if staged is None:
+        return None
+    return {"staged": "true" if staged else "false"}
+
+
+async def fetch_git_status(client: AsyncHapiClient, sid: str) -> tuple[bool, str, dict]:
+    """获取 session 工作区 git 状态（GET /api/sessions/:id/git-status）。"""
+    return await _fetch_git_command(
+        client, f"/api/sessions/{sid}/git-status", fail_prefix="获取 git 状态失败"
+    )
+
+
+async def fetch_git_diff_numstat(
+    client: AsyncHapiClient, sid: str, staged: bool | None = None
+) -> tuple[bool, str, dict]:
+    """获取变更统计（GET /api/sessions/:id/git-diff-numstat?staged=）。"""
+    return await _fetch_git_command(
+        client,
+        f"/api/sessions/{sid}/git-diff-numstat",
+        params=_staged_param(staged),
+        fail_prefix="获取变更统计失败",
+    )
+
+
+async def fetch_git_diff_file(
+    client: AsyncHapiClient, sid: str, path: str, staged: bool | None = None
+) -> tuple[bool, str, dict]:
+    """获取单文件 diff（GET /api/sessions/:id/git-diff-file?path=&staged=）。"""
+    params: dict = {"path": path}
+    staged_params = _staged_param(staged)
+    if staged_params:
+        params.update(staged_params)
+    return await _fetch_git_command(
+        client,
+        f"/api/sessions/{sid}/git-diff-file",
+        params=params,
+        fail_prefix="获取文件 diff 失败",
+    )
+
+
 async def fetch_recent_paths(client: AsyncHapiClient) -> list[str]:
     """从已有 sessions 提取去重的最近工作目录"""
     sessions = await fetch_sessions(client)

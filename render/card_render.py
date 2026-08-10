@@ -73,6 +73,7 @@ CARD_KINDS = (
     "routes",
     "message",
     "auto_approve_summary",
+    "git_status",
 )
 DENSITY_OPTIONS = ("comfortable", "compact")
 PRESET_IDS = ("terminal_light", "terminal_dark", "clean", "compact")
@@ -84,6 +85,7 @@ DEFAULT_KINDS = (
     "routes",
     "message",
     "auto_approve_summary",
+    "git_status",
 )
 
 # 默认 CSS：用户可在 WebUI 整段覆盖。
@@ -896,6 +898,17 @@ def sample_payload(kind: str) -> dict[str, Any]:
                 "> 建议：合并前跑一遍 `npm test`\n"
             ),
             "footer": "",
+        }
+    if kind == "git_status":
+        return {
+            "title": "重构鉴权中间件",
+            "subtitle": "git 状态 · 3 项 · claude · a1b2c3d4",
+            "rows": [
+                {"type": "row", "index": 0, "label": "修改", "detail": "src/auth/middleware.ts"},
+                {"type": "row", "index": 0, "label": "新增", "detail": "tests/test_auth.ts"},
+                {"type": "row", "index": 0, "label": "未跟踪", "detail": "notes/todo.md"},
+            ],
+            "footer": "/hapi diffstat  统计    /hapi diff <路径>  查看文件 diff",
         }
     return {
         "title": "Session 列表",

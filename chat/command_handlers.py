@@ -2210,6 +2210,116 @@ class CommandHandlers:
             lines.append("⚠️ 推送失败: " + ", ".join(s[:8] for s in failed))
         yield event.plain_result("\n".join(lines) or "没有可推送的托管汇总")
 
+    # ── git 查看（只读） ──
+
+    @staticmethod
+    def _parse_git_staged(arg: str) -> tuple[bool | None, str]:
+        """解析 diffstat / diff 参数尾部的 staged 关键词。
+
+        返回 (staged 三态, 剩余参数)。合法词：staged/暂存=true，unstaged/未暂存=false。
+        """
+        parts = (arg or "").strip().split(None, 1)
+        if not parts:
+            return None, ""
+        first = parts[0].strip().lower()
+        if first in ("staged", "暂存"):
+            return True, (parts[1] if len(parts) > 1 else "").strip()
+        if first in ("unstaged", "未暂存"):
+            return False, (parts[1] if len(parts) > 1 else "").strip()
+        return None, (arg or "").strip()
+
+    def _require_sid_or_arg(self, event: AstrMessageEvent, cmd: str, arg: str = "") -> tuple[str | None, str | None]:
+        """git 系列：当前选中 session 优先；参数为数字/ID 前缀时指向该 session。"""
+        if arg:
+            target_sid, err = self._resolve_target_verbose(arg)
+            if err:
+                return None, err
+            if target_sid:
+                return target_sid, None
+        return self._require_sid(event, cmd)
+
+    async def cmd_git(self, event: AstrMessageEvent):
+        """查看当前 session 工作区 git 状态（只读）"""
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        sid, err = self._require_sid(event, "git")
+        if err:
+            yield event.plain_result(err)
+            return
+        ok, stdout, _ = await session_ops.fetch_git_status(self.client, sid)
+        if not ok:
+            yield event.plain_result(stdout)
+            return
+        label = formatters.session_label_short(sid, self.sessions_cache)
+        text = formatters.format_git_status(label, stdout)
+        from ..render import output_present
+        payload = output_present.build_git_status_payload(label, stdout)
+        async for result in output_present.present(
+            self.plugin, event, "git_status", payload, text
+        ):
+            yield result
+
+    async def cmd_diffstat(self, event: AstrMessageEvent, arg: str = ""):
+        """查看当前 session 变更统计（--numstat；可跟 staged/unstaged）"""
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        staged, rest = self._parse_git_staged(arg)
+        sid, err = self._require_sid_or_arg(event, "diffstat", rest)
+        if err:
+            yield event.plain_result(err)
+            return
+        ok, stdout, _ = await session_ops.fetch_git_diff_numstat(self.client, sid, staged=staged)
+        if not ok:
+            yield event.plain_result(stdout)
+            return
+        label = formatters.session_label_short(sid, self.sessions_cache)
+        text = formatters.format_git_diff_numstat(label, stdout)
+        from ..render import output_present
+        payload = output_present.build_git_status_payload(label, stdout, is_numstat=True)
+        async for result in output_present.present(
+            self.plugin, event, "git_status", payload, text
+        ):
+            yield result
+
+    async def cmd_diff(self, event: AstrMessageEvent, arg: str = ""):
+        """查看单文件 diff：/hapi diff <路径> [staged|unstaged] [序号|ID前缀]"""
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        staged, rest = self._parse_git_staged(arg)
+        if not rest:
+            yield event.plain_result(
+                "格式: /hapi diff <文件路径> [staged|unstaged]\n"
+                "示例: /hapi diff src/main.py\n"
+                "先看 /hapi diffstat 确认文件路径"
+            )
+            return
+        sid, err = self._require_sid(event, "diff")
+        if err:
+            yield event.plain_result(err)
+            return
+        ok, stdout, _ = await session_ops.fetch_git_diff_file(self.client, sid, rest, staged=staged)
+        if not ok:
+            yield event.plain_result(stdout)
+            return
+        label = formatters.session_label_short(sid, self.sessions_cache)
+        scope = "（暂存）" if staged is True else ("（未暂存）" if staged is False else "")
+        title = f"{label}\ndiff {scope} {rest}".strip()
+        if not stdout.strip():
+            yield event.plain_result(f"{title}\n（无差异）")
+            return
+        body = f"```diff\n{stdout.rstrip()}\n```"
+        from ..render import output_present
+        payload = output_present.build_message_payload(
+            label=label,
+            body=body,
+            title=f"diff {rest}",
+            footer="",
+        )
+        async for result in output_present.present(
+            self.plugin, event, "message", payload, f"{title}\n\n{body}"
+        ):
+            yield result
+
     # ── reset ──
 
     async def cmd_reset(self, event: AstrMessageEvent):

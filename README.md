@@ -279,6 +279,9 @@ hapi codex    # OpenAI Codex
 | `/hapi find <关键词>` | 搜索当前 session 的远端文件 |
 | `/hapi download <路径>` | 下载远端文件到当前聊天（别名 `dl`） |
 | `/hapi upload [cancel]` | 上传文件到当前 session，支持交互上传和取消 |
+| `/hapi git` | 查看当前 session 工作区的 git 状态（只读） |
+| `/hapi diffstat [staged\|unstaged]` | 查看变更统计（`+新增 -删除`；staged=仅暂存，unstaged=仅未暂存） |
+| `/hapi diff <路径> [staged\|unstaged]` | 查看单文件 diff（统一 diff 格式，只读；卡片模式走对话卡代码块） |
 
 #### 🔧 模式与帮助
 

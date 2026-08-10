@@ -31,6 +31,14 @@
 6. **WebUI 热更新**  
    改静默 / mode / push / time 无需重连 SSE，保存后立即生效；关静默或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
 
+7. **git 状态 / 变更统计 / 文件 diff 查看（只读）**（dev-docs §10 关联能力落地）  
+   - `/hapi git`：当前 session 工作区 git 状态（porcelain 解析为可读列表，含 修改/新增/删除/重命名/冲突/未跟踪）
+   - `/hapi diffstat [staged|unstaged]`：变更统计（`+新增 -删除` 对齐，可只看暂存或未暂存）
+   - `/hapi diff <路径> [staged|unstaged]`：单文件完整 diff（统一 diff 格式）
+   - 走 HAPI `GET /api/sessions/:id/git-status` / `git-diff-numstat` / `git-diff-file`；**只读**，不做提交/暂存/回滚
+   - `render_mode=card` 时状态/统计出结构卡（新增出图类型 `git_status`，默认勾选），diff 走对话卡代码块；纯文本模式原样发送
+   - 帮助归类「文件」；需较新 HAPI 版本（含 git 路由）
+
 ## v3.2.6
 
 1. **修复 SSE 权限请求收不到的问题（兼容 hapi v0.27.0+ 事件结构）**  

@@ -909,6 +909,62 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_git_status_payload(
+    label: str,
+    stdout: str,
+    *,
+    is_numstat: bool = False,
+) -> dict[str, Any]:
+    """git 状态 / 变更统计结构卡（kind=git_status）。
+
+    - is_numstat=False：porcelain 状态行（状态 + 路径）
+    - is_numstat=True：+added -deleted 统计行
+    """
+    from . import formatters
+
+    clean_label = _strip_emoji(label or "")
+    label_lines = [p.strip() for p in clean_label.splitlines() if p.strip()]
+    title = label_lines[0] if label_lines else ("Git 状态" if not is_numstat else "变更统计")
+    meta = " · ".join(label_lines[1:]) if len(label_lines) > 1 else ""
+
+    rows: list[dict[str, Any]] = []
+    if is_numstat:
+        entries = formatters.parse_git_numstat(stdout)
+        for mark, path in entries:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": mark,
+                "detail": _strip_emoji(path)[:120],
+            })
+        subtitle_bits = [f"变更统计 · {len(entries)} 文件"]
+    else:
+        entries = formatters.parse_git_porcelain(stdout)
+        for code, status, path in entries:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": _strip_emoji(status or code or "?"),
+                "detail": _strip_emoji(path)[:120],
+            })
+        subtitle_bits = [f"git 状态 · {len(entries)} 项"]
+    if meta:
+        subtitle_bits.append(meta)
+    if not rows:
+        rows = [{
+            "type": "row",
+            "index": 0,
+            "label": "✓ 工作区干净",
+            "detail": "没有未提交的变更",
+        }]
+    return {
+        "title": title,
+        "subtitle": " · ".join(subtitle_bits),
+        "rows": rows,
+        "footer": "/hapi diffstat  统计    /hapi diff <路径>  查看文件 diff",
+    }
+
+
 def try_render_png(plugin, kind: str, data: dict[str, Any]) -> card_render.RenderResult | None:
     """若配置要求出卡且引擎可用，返回 RenderResult；否则 None（调用方发文本）。"""
     cfg = _cfg_dict(plugin)

@@ -46,6 +46,7 @@ const RENDER_KIND_LABELS = {
   routes: "推送路由",
   message: "AI 对话",
   auto_approve_summary: "托管汇总",
+  git_status: "git 状态/统计",
 };
 
 const FLAVOR_ROUTE_KEYS = ["claude", "codex", "cursor", "gemini", "grok", "kimi", "opencode", "pi"];
@@ -103,6 +104,9 @@ const HELP_COMMANDS = [
   { topic: "files", usage: "/hapi find <关键词>", summary: "搜索远端文件", example: "/hapi find config", home: false },
   { topic: "files", usage: "/hapi download <路径>", summary: "下载远端文件到聊天（别名: /hapi dl）", example: "/hapi dl logs/app.log", home: false },
   { topic: "files", usage: "/hapi upload [cancel]", summary: "上传文件到当前 session，支持快捷前缀附件", example: "/hapi upload", home: false },
+  { topic: "files", usage: "/hapi git", summary: "查看当前 session 工作区的 git 状态（只读）", example: null, home: false },
+  { topic: "files", usage: "/hapi diffstat [staged|unstaged]", summary: "查看变更统计（+新增 -删除；staged=仅暂存，unstaged=仅未暂存）", example: "/hapi diffstat staged", home: false },
+  { topic: "files", usage: "/hapi diff <路径> [staged|unstaged]", summary: "查看单文件 diff（统一 diff 格式，只读）", example: "/hapi diff src/main.py", home: false },
   { topic: "config", usage: "/hapi perm [模式]", summary: "查看或切换权限模式", example: null, home: false },
   { topic: "config", usage: "/hapi plan", summary: "切换 Plan 模式（toggle）。Claude 切换 permissionMode，Codex 切换 collaborationMode", example: null, home: false },
   { topic: "config", usage: "/hapi model [模式]", summary: "查看或切换当前使用的模型（Claude / Gemini）", example: null, home: false },

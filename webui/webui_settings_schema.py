@@ -151,7 +151,7 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "render_kinds": {
         "label": "以下类型渲成图片",
-        "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话、托管汇总。没勾的仍发文字。",
+        "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话、托管汇总、git 状态/统计。没勾的仍发文字。",
         "control": "kind_checks",
         "show_if": {"key": "render_mode", "eq": "card"},
     },

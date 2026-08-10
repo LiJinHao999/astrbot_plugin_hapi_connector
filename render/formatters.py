@@ -1393,6 +1393,9 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "find",
     "download", "dl",
     "upload",
+    "git",
+    "diffstat",
+    "diff",
 }
 
 
@@ -1647,6 +1650,27 @@ HELP_COMMANDS = [
         "usage": "/hapi upload [cancel]",
         "summary": "上传文件到当前 session，支持快捷前缀附件",
         "example": "/hapi upload\n> 分析这张图 [附带图片]",
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi git",
+        "summary": "查看当前 session 工作区的 git 状态（只读）",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi diffstat [staged|unstaged]",
+        "summary": "查看变更统计（+新增 -删除；staged=仅暂存，unstaged=仅未暂存）",
+        "example": "/hapi diffstat staged",
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi diff <路径> [staged|unstaged]",
+        "summary": "查看单文件 diff（统一 diff 格式，只读）",
+        "example": "/hapi diff src/main.py",
         "home": False,
     },
     {
@@ -2047,4 +2071,110 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
         pending = int(info.get("pending") or 0)
         last = _fmt_summary_dt(info.get("last_pushed_at"))
         lines.append(f"  {label[:40]}  pending={pending}  last={last}")
+    return "\n".join(lines)
+
+
+# ──── git 查看（dev-docs/auto-approve-silent-summary.md §10） ────
+
+_GIT_STATUS_LABELS = {
+    " ": "",      # porcelain XY 码的空位（如 " M"=仅工作区修改、"M "=仅暂存修改）
+    "M": "修改",
+    "A": "新增",
+    "D": "删除",
+    "R": "重命名",
+    "C": "复制",
+    "U": "冲突",
+    "?": "未跟踪",
+    "!": "忽略",
+}
+
+
+def _git_status_label(codes: str) -> str:
+    """porcelain XY 码 → 中文状态（去重保序，如 MM→修改、AM→新增+修改、??→未跟踪）。"""
+    uniq: list[str] = []
+    for c in codes:
+        lab = _GIT_STATUS_LABELS.get(c, c)
+        if lab and lab not in uniq:
+            uniq.append(lab)
+    if not uniq:
+        return "?"
+    return "+".join(uniq) if len(uniq) > 1 else uniq[0]
+
+
+def parse_git_porcelain(stdout: str) -> list[tuple[str, str, str]]:
+    """解析 ``git status --porcelain`` 输出 → [(XY码, 中文状态, 路径)]。
+
+    无法解析的行按 ("", "?", 原行) 保留，避免丢内容。
+    """
+    rows: list[tuple[str, str, str]] = []
+    for line in (stdout or "").splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        if len(line) >= 2:
+            x, y = line[0], line[1]
+            if x in _GIT_STATUS_LABELS and y in _GIT_STATUS_LABELS:
+                path = line[2:].strip().strip('"')
+                codes = "".join(c for c in (x, y) if c != " ")
+                rows.append((codes, _git_status_label(codes), path))
+                continue
+        rows.append(("", "?", line))
+    return rows
+
+
+def parse_git_numstat(stdout: str) -> list[tuple[str, str]]:
+    """解析 ``git diff --numstat`` 输出 → [("+a -d", path)]。二进制（-）按 0 计。"""
+    entries: list[tuple[str, str]] = []
+    for line in (stdout or "").splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            added_raw, deleted_raw = parts[0], parts[1]
+            path = "\t".join(parts[2:]).strip().strip('"')
+            try:
+                added = 0 if added_raw == "-" else int(added_raw)
+                deleted = 0 if deleted_raw == "-" else int(deleted_raw)
+            except ValueError:
+                entries.append((line, ""))
+                continue
+            entries.append((f"+{added} -{deleted}", path))
+        elif line.strip():
+            entries.append((line, ""))
+    return entries
+
+
+def format_git_status(label: str, stdout: str) -> str:
+    """git 状态纯文本（porcelain 解析为可读列表）。"""
+    rows = parse_git_porcelain(stdout)
+    if not rows:
+        return f"{label}\ngit 状态 · 工作区干净"
+    lines = [label, f"git 状态 · {len(rows)} 项"]
+    for code, status, path in rows:
+        lines.append(f"  {status}  {path}")
+    return "\n".join(lines)
+
+
+def format_git_diff_numstat(label: str, stdout: str) -> str:
+    """变更统计纯文本（+added -deleted 对齐）。"""
+    entries = parse_git_numstat(stdout)
+    if not entries:
+        return f"{label}\n无变更"
+    lines = [label, "变更统计（+新增 -删除）"]
+    total_added = 0
+    total_deleted = 0
+    for mark, path in entries:
+        if path:
+            lines.append(f"  {mark:<12} {path}")
+            try:
+                added = int(mark.split()[0][1:])
+                deleted = int(mark.split()[1][1:])
+            except (IndexError, ValueError):
+                added = deleted = 0
+            total_added += added
+            total_deleted += deleted
+        else:
+            lines.append(f"  {mark}")
+    lines.append(f"合计 +{total_added} -{total_deleted}")
     return "\n".join(lines)
