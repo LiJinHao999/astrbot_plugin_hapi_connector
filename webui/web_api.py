@@ -1992,7 +1992,7 @@ async def save_plugin_config(plugin, patch: dict) -> dict:
             try:
                 await summary_svc.flush_all()
             except Exception as e:
-                logger.warning("config save 后托管汇总 flush 失败: %s", e)
+                logger.warning("config save 后操作汇总 flush 失败: %s", e)
 
     try:
         apply_runtime_config(plugin, cleaned)

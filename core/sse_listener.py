@@ -116,14 +116,14 @@ class SSEListener:
     async def stop(self):
         """停止 SSE 监听"""
         self._stream_live = False
-        # 防漏发：停止前把未推送的托管汇总补发（need_flush 去重）
+        # 防漏发：停止前把未推送的操作汇总补发（need_flush 去重）
         summary_svc = getattr(self, "summary_service", None)
         if summary_svc is not None:
             try:
                 if summary_svc.has_pending():
                     await summary_svc.flush_all()
             except Exception as e:
-                logger.warning("SSE stop 时托管汇总 flush 失败: %s", e)
+                logger.warning("SSE stop 时操作汇总 flush 失败: %s", e)
         for task in (self._task, self._remind_task,
                      getattr(self, '_debounce_task', None),
                      getattr(self, '_completion_task', None),
@@ -378,7 +378,7 @@ class SSEListener:
                     ok, msg = await session_ops.approve_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
                     if self._auto_approve_silent and self.summary_service is not None:
-                        # 静默收集：进托管汇总管线，不再逐条推送
+                        # 操作汇总开启：进汇总管线，不再逐条推送
                         await self.summary_service.append_event(
                             sid, "approve", ok, tool=str(tool), request_id=rid,
                             detail=(None if ok else str(msg or "审批失败"))[:200],
@@ -622,7 +622,7 @@ class SSEListener:
                     ok, msg = await session_ops.send_message(self.client, sid, "/compact")
                     mark = "✓" if ok else "✗"
                     if self._auto_approve_silent and self.summary_service is not None:
-                        # 静默收集：进托管汇总管线，不再逐条推送
+                        # 操作汇总开启：进汇总管线，不再逐条推送
                         await self.summary_service.append_event(
                             sid, "compact", ok,
                             detail=(None if ok else str(msg or "自动压缩失败"))[:200],
@@ -1113,7 +1113,7 @@ class SSEListener:
             await self._push_notification(fallback_text, session_id)
 
     async def push_auto_approve_summary(self, session_id: str, view: dict, fallback_text: str) -> bool:
-        """托管汇总推送：结构卡优先，失败回退文本（§5.4 路由带 session_id）。
+        """操作汇总推送：结构卡优先，失败回退文本（§5.4 路由带 session_id）。
 
         供 AutoApproveSummaryService 注入为推送回调；返回值=是否已发出。
         """

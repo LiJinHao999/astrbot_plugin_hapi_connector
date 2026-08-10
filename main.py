@@ -422,7 +422,7 @@ class HapiConnectorPlugin(Star):
         return False, sid, msg
 
     async def _summary_git_snapshot(self, sid: str) -> dict | None:
-        """托管汇总 flush 时附带的 git 变更快照（只读）。
+        """操作汇总 flush 时附带的 git 变更快照（只读）。
 
         非 git 仓库 / HAPI 旧版本无路由 / 网络错误一律返回 None（汇总不附带 git 区块）。
         返回 {"status_count", "added", "deleted", "entries": [(mark, path)...], "total_entries"}。
@@ -531,8 +531,8 @@ class HapiConnectorPlugin(Star):
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
     async def terminate(self):
-        """插件销毁：补发托管汇总、停止 SSE、关闭 client"""
-        # 防漏发：先把未推送的托管汇总补发，再停任务
+        """插件销毁：补发操作汇总、停止 SSE、关闭 client"""
+        # 防漏发：先把未推送的操作汇总补发，再停任务
         try:
             summary_svc = getattr(self, "summary_service", None)
             if summary_svc is not None:
@@ -540,7 +540,7 @@ class HapiConnectorPlugin(Star):
                     await summary_svc.flush_all()
                 await summary_svc.stop()
         except Exception as e:
-            logger.warning("terminate 时托管汇总清理失败: %s", e)
+            logger.warning("terminate 时操作汇总清理失败: %s", e)
         await self.sse_listener.stop()
         await self.client.close()
         logger.info("HAPI Connector 已销毁")

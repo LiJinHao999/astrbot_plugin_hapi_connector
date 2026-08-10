@@ -2151,7 +2151,7 @@ class CommandHandlers:
         await self.state_mgr.set_user_state(event)
         summary_svc = getattr(self.plugin, "summary_service", None)
         if summary_svc is None:
-            yield event.plain_result("托管汇总服务未就绪，请重载插件后再试")
+            yield event.plain_result("操作汇总服务未就绪，请重载插件后再试")
             return
 
         normalized = (arg or "").strip()
@@ -2203,12 +2203,12 @@ class CommandHandlers:
 
         lines = []
         if pushed:
-            lines.append(f"✓ 已推送 {len(pushed)} 个 session 的托管汇总（各回各窗口）")
+            lines.append(f"✓ 已推送 {len(pushed)} 个 session 的操作汇总（各回各窗口）")
         if no_change:
-            lines.append(f"ℹ️ {len(no_change)} 个 session 无新的托管汇总（同日且内容无变化）")
+            lines.append(f"ℹ️ {len(no_change)} 个 session 无新的操作汇总（同日且内容无变化）")
         if failed:
             lines.append("⚠️ 推送失败: " + ", ".join(s[:8] for s in failed))
-        yield event.plain_result("\n".join(lines) or "没有可推送的托管汇总")
+        yield event.plain_result("\n".join(lines) or "没有可推送的操作汇总")
 
     # ── git 查看（只读） ──
 

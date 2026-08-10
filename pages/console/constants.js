@@ -45,7 +45,7 @@ const RENDER_KIND_LABELS = {
   permission: "权限请求",
   routes: "推送路由",
   message: "AI 对话",
-  auto_approve_summary: "托管汇总",
+  auto_approve_summary: "操作汇总",
   git_status: "git 状态/统计",
 };
 

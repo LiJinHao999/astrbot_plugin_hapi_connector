@@ -179,7 +179,7 @@
     "description": "允许出图的消息类型",
     "type": "string",
     "default": "session_list,pending,status,permission,routes,message,auto_approve_summary,git_status",
-    "hint": "插件 WebUI「交互优化 / 设置」里勾选保存。可选值：session_list,pending,status,permission,routes,message,auto_approve_summary,git_status（message=Agent 对话，auto_approve_summary=托管汇总，git_status=git 状态/统计）"
+    "hint": "插件 WebUI「交互优化 / 设置」里勾选保存。可选值：session_list,pending,status,permission,routes,message,auto_approve_summary,git_status（message=Agent 对话，auto_approve_summary=操作汇总，git_status=git 状态/统计）"
   },
   "card_style_preset": {
     "description": "推送图片样式预设",
