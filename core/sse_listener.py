@@ -52,7 +52,7 @@ class SSEListener:
         self._auto_approve_enabled: bool = False
         self._auto_approve_start: str = "23:00"
         self._auto_approve_end: str = "07:00"
-        # 忙时托管静默汇总（dev-docs/auto-approve-silent-summary.md）
+        # 忙时托管操作汇总（dev-docs/auto-approve-silent-summary.md）
         self._auto_approve_silent: bool = False
         self._auto_approve_summary_mode: str = "window"
         self._auto_approve_summary_push: str = "on_window_end"

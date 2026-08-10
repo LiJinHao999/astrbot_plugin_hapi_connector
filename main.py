@@ -95,7 +95,7 @@ class HapiConnectorPlugin(Star):
         # 供 SSE 推送呈现（对话/结构卡）读取 config 与 notification_mgr
         self.sse_listener.plugin = self
 
-        # 忙时托管静默汇总服务（dev-docs/auto-approve-silent-summary.md）
+        # 忙时托管操作汇总服务（dev-docs/auto-approve-silent-summary.md）
         # 推送走 sse_listener.push_auto_approve_summary（带 session_id 走窗口路由）
         self.summary_service = AutoApproveSummaryService(self)
         self.summary_service.set_push_callback(
@@ -487,7 +487,7 @@ class HapiConnectorPlugin(Star):
         # 加载已有的待审批请求（重启/断联后恢复）
         await self.sse_listener.load_existing_pending()
 
-        # 托管静默汇总：恢复 KV、同步配置、启动窗边沿/定点任务（§2.3 防漏发）
+        # 托管操作汇总：恢复 KV、同步配置、启动窗边沿/定点任务（§2.3 防漏发）
         summary_svc = self.summary_service
         summary_svc.update_config(
             auto_approve_enabled=self.config.get("auto_approve_enabled", False),

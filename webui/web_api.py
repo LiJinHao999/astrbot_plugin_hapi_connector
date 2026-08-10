@@ -102,7 +102,7 @@ INT_KEYS = frozenset({
     "card_font_scale",
 })
 
-# 托管静默汇总相关键：改动后需要尝试 flush 补发（§2.3 防漏发）
+# 托管操作汇总相关键：改动后需要尝试 flush 补发（§2.3 防漏发）
 SUMMARY_KEYS = frozenset({
     "auto_approve_silent",
     "auto_approve_summary_mode",
@@ -1984,7 +1984,7 @@ async def save_plugin_config(plugin, patch: dict) -> dict:
 
     await _persist_config(plugin)
 
-    # 托管静默汇总（§2.3 防漏发）：关 silent / 关 auto_approve / 改 mode/push/time
+    # 托管操作汇总（§2.3 防漏发）：关 silent / 关 auto_approve / 改 mode/push/time
     # 都会让当前桶提前结束 → 先把已收集的补发出去，再切到新状态。
     if any(k in SUMMARY_KEYS for k in cleaned):
         summary_svc = getattr(plugin, "summary_service", None)
@@ -2321,7 +2321,7 @@ def apply_runtime_config(plugin, patch: dict) -> None:
         sse._auto_approve_summary_include_failures = patch["auto_approve_summary_include_failures"]
     if "auto_approve_summary_max_detail_lines" in patch:
         sse._auto_approve_summary_max_detail_lines = patch["auto_approve_summary_max_detail_lines"]
-    # 托管静默汇总服务：同步同一份配置（不重连 SSE）
+    # 托管操作汇总服务：同步同一份配置（不重连 SSE）
     summary_svc = getattr(plugin, "summary_service", None)
     if summary_svc is not None:
         summary_svc.update_config(**{

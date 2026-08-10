@@ -2141,7 +2141,7 @@ class CommandHandlers:
     # ── summary ──
 
     async def cmd_summary(self, event: AstrMessageEvent, arg: str = ""):
-        """忙时托管静默汇总：/hapi summary [all|<序号|ID>|status]
+        """忙时托管操作汇总：/hapi summary [all|<序号|ID>|status]
 
         无参 = 当前窗口可见且有 pending 的 session；all = 全部（各回各窗口）；
         指定序号/ID = 只推该 session；status = 只读队列状态。
@@ -2184,8 +2184,8 @@ class CommandHandlers:
 
         if not target_sids:
             yield event.plain_result(
-                "没有待推送的托管汇总\n"
-                "（静默汇总未开启、暂无未推送事件，或当前窗口无相关 session；"
+                "没有待推送的操作汇总\n"
+                "（操作汇总未开启、暂无未推送事件，或当前窗口无相关 session；"
                 "可用 /hapi summary status 查看）"
             )
             return

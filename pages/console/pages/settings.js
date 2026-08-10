@@ -216,7 +216,9 @@ function renderSettings() {
       input.name === "auto_approve_enabled" ||
       input.name === "output_level" ||
       input.name === "remind_pending" ||
-      input.name === "render_mode"
+      input.name === "render_mode" ||
+      // 决定下方「固定推送时间」字段显隐，选中后需重渲染
+      input.name === "auto_approve_summary_push"
     ) {
       renderSettings();
       return;

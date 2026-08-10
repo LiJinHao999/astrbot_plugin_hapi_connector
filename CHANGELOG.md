@@ -1,21 +1,21 @@
 # 更新日志
 
-## v3.3.0 — 忙时托管「静默汇总」
+## v3.3.0 — 忙时托管「操作汇总」
 
 > 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)，完整设计见 `dev-docs/auto-approve-silent-summary.md`。
 
-1. **新增托管静默汇总**（`auto_approve_silent`，默认关闭，行为与旧版一致）  
-   开启后，忙时托管时段内的自动批准 / 自动压缩**不再逐条推送**，改为静默收集，按策略汇总推送。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
+1. **新增托管操作汇总**（`auto_approve_silent`，键名保留兼容，默认关闭，行为与旧版一致）  
+   开启后，忙时托管时段内的自动批准 / 自动压缩（**全部托管自动操作**）**不再逐条推送**，改为静默收集，按策略汇总推送。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
 
 2. **汇总方式与推送时机可配置**（WebUI「设置 → 推送通知」底部）  
-   - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `按天` / `每次触发`
+   - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `按天` / `手动触发`（不自动推，每次执行 `/hapi summary` 命令时推当前积累）
    - `auto_approve_summary_push`：`托管结束时`（默认）/ `每天固定时间`（`auto_approve_summary_time`，默认 08:00）
    - 高级：`auto_approve_summary_include_failures`（失败明细，默认开）、`auto_approve_summary_max_detail_lines`（明细行数上限，默认 30）
 
 3. **严格隔离与防漏发**  
    - 汇总按 session 分开，**每个有变更的 session 各推一张**（文本或结构卡），带 `session_id` 走既有窗口路由（session 绑定 → flavor 默认 → 用户默认窗口），不做全局广播
    - `last_pushed_at + 内容指纹（sha256）` 去重：同日同内容不重复推；事件增删、失败转成功都会改变指纹触发再推
-   - 补发路径：插件 terminate / SSE stop / 关静默或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
+   - 补发路径：插件 terminate / SSE stop / 关操作汇总或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
    - pending 与 `last_*` 持久化到 AstrBot KV（键 `auto_approve_summary_v1`），重启不丢
 
 4. **命令触发** `/hapi summary`  
@@ -29,7 +29,7 @@
    新增 `render_kinds` 选项 `auto_approve_summary`（默认勾选）；`render_mode=card` 时汇总出结构卡（统计 + 失败置顶 + 成功明细折叠），`text` 或未勾选时纯文本，未安装 Pillow 自动回退文本。
 
 6. **WebUI 热更新**  
-   改静默 / mode / push / time 无需重连 SSE，保存后立即生效；关静默或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
+   改操作汇总开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作汇总或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
 
 7. **git 状态 / 变更统计 / 文件 diff 查看（只读）**（dev-docs §10 关联能力落地）  
    - `/hapi git`：当前 session 工作区 git 状态（porcelain 解析为可读列表，含 修改/新增/删除/重命名/冲突/未跟踪）

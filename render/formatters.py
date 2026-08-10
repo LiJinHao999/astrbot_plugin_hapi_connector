@@ -1606,7 +1606,7 @@ HELP_COMMANDS = [
     {
         "topic": "approve",
         "usage": "/hapi summary [all|<序号|ID>|status]",
-        "summary": "推送忙时托管静默汇总：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列",
+        "summary": "推送忙时托管操作汇总：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列",
         "example": "/hapi summary",
         "home": False,
     },
@@ -1946,12 +1946,12 @@ def get_help_text(topic: str = "") -> str:
     return _format_help_commands("HAPI 帮助 / 完整命令列表", "all")
 
 
-# ──── 忙时托管静默汇总（dev-docs/auto-approve-silent-summary.md §3） ────
+# ──── 忙时托管操作汇总（dev-docs/auto-approve-silent-summary.md §3） ────
 
 _SUMMARY_MODE_LABELS = {
     "daily": "按天",
     "window": "按托管时段",
-    "per_event": "每次触发",
+    "per_event": "手动触发",
 }
 _SUMMARY_PUSH_LABELS = {
     "on_window_end": "托管结束时",
@@ -1986,12 +1986,12 @@ def _summary_detail_line(event: dict, mark: str) -> str:
 
 
 def format_auto_approve_summary(view: dict) -> str:
-    """托管静默汇总的纯文本（§3.1）。
+    """托管操作汇总的纯文本（§3.1）。
 
     消费 AutoApproveSummaryService.build_summary_view 的视图 dict。
     """
     title = str(view.get("title") or view.get("label") or (view.get("sid") or "")[:8])
-    lines = [f"[托管汇总] {title}", f"时段/日期: {view.get('bucket_desc') or '—'}"]
+    lines = [f"[操作汇总] {title}", f"时段/日期: {view.get('bucket_desc') or '—'}"]
 
     counters = view.get("counters") or {}
     approve_ok = int(counters.get("approve_ok") or 0)
@@ -2067,7 +2067,7 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
     in_window = bool(status.get("in_window"))
     sessions = status.get("sessions") or {}
 
-    lines = ["托管静默汇总状态"]
+    lines = ["托管操作汇总状态"]
     if enabled:
         lines.append("总开关: 开启")
     else:
@@ -2075,7 +2075,7 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
         if not auto_approve:
             why.append("托管审批未开启")
         if not silent:
-            why.append("静默汇总未开启")
+            why.append("操作汇总未开启")
         lines.append(f"总开关: 关闭（{'；'.join(why) if why else '—'}）")
     lines.append(f"模式: {_SUMMARY_MODE_LABELS.get(mode, mode or '?')}")
     lines.append(f"推送: {_SUMMARY_PUSH_LABELS.get(push, push or '?')}"

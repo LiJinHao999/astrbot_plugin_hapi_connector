@@ -787,7 +787,7 @@ def build_permission_payload(
 
 
 def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
-    """忙时托管静默汇总结构卡（§3.2）。
+    """忙时托管操作汇总结构卡（§3.2）。
 
     消费 AutoApproveSummaryService.build_summary_view 的视图 dict；
     走通用结构卡渲染（kind=auto_approve_summary）。
@@ -813,9 +813,9 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
         return " ".join(b for b in bits if b)
 
     clean_title = _strip_emoji(str(view.get("title") or (view.get("sid") or "")[:8]))
-    title = clean_title or "托管汇总"
+    title = clean_title or "操作汇总"
     bucket = str(view.get("bucket_desc") or "—")
-    subtitle = f"托管汇总 · {bucket}"
+    subtitle = f"操作汇总 · {bucket}"
 
     counters = view.get("counters") or {}
     approve_ok = int(counters.get("approve_ok") or 0)
@@ -922,7 +922,7 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
     mode_label = {
         "daily": "按天",
         "window": "按托管时段",
-        "per_event": "每次触发",
+        "per_event": "手动触发",
     }.get(str(view.get("mode") or ""), str(view.get("mode") or "?"))
     push_label = {
         "on_window_end": "托管结束时",

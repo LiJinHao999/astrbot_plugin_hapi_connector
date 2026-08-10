@@ -1,4 +1,4 @@
-"""忙时托管静默汇总：事件收集、桶、指纹、防漏发、KV 持久化与推送编排。
+"""忙时托管操作汇总：事件收集、桶、指纹、防漏发、KV 持久化与推送编排。
 
 设计对照 dev-docs/auto-approve-silent-summary.md（§2/§4/§5.3）：
 
@@ -99,7 +99,7 @@ class SessionSummaryState:
 
 
 class AutoApproveSummaryService:
-    """托管静默汇总服务（每插件单例）。
+    """托管操作汇总服务（每插件单例）。
 
     生命周期与 SSE 相同：load → start_tasks；stop 时先 flush 再取消任务。
     配置热更新走 update_config；「关 silent / 关 auto_approve / 改 mode/push/time」
@@ -157,7 +157,7 @@ class AutoApproveSummaryService:
 
     @property
     def enabled(self) -> bool:
-        """静默汇总总开关：托管开启 且 静默开启。"""
+        """操作汇总总开关：托管开启 且 操作汇总开启。"""
         return bool(self._auto_approve_enabled and self._silent)
 
     @property
@@ -267,7 +267,7 @@ class AutoApproveSummaryService:
             except Exception:
                 return bucket_id
         if bucket_id.startswith("event:"):
-            return "单次触发"
+            return "手动触发"
         return bucket_id
 
     # ──── 事件收集 ────
@@ -282,9 +282,10 @@ class AutoApproveSummaryService:
         detail: str | None = None,
         request_id: str | None = None,
     ) -> None:
-        """静默模式下收集一条托管自动动作（approve / compact）。
+        """操作汇总开启时收集一条托管自动动作（approve / compact）。
 
-        per_event 模式收集后立即尝试推送；其余模式等触发点。
+        per_event（手动触发）模式不做即时推送：等每次手动 /hapi summary 命令
+        或防漏发补发点（stop/关开关）才推送。
         """
         if not self.enabled:
             return
@@ -310,9 +311,6 @@ class AutoApproveSummaryService:
             key = f"{kind}_{'ok' if ok else 'fail'}"
             state.counters[key] = state.counters.get(key, 0) + 1
             self._mark_dirty()
-
-        if self.mode == "per_event":
-            await self.flush_session(session_id)
 
     # ──── 指纹 / 判定 ────
 
@@ -479,7 +477,8 @@ class AutoApproveSummaryService:
                 if day is not None and day < today:
                     bucket_rollover = True
                     break
-        if window_ended or bucket_rollover:
+        # per_event（手动触发）模式：自动触发点不推，只等 /hapi summary 命令
+        if (window_ended or bucket_rollover) and self.mode != "per_event":
             await self.flush_all()
 
     async def _edge_loop(self) -> None:
@@ -493,7 +492,7 @@ class AutoApproveSummaryService:
                 logger.warning("auto approve summary 边沿采样异常: %s", e)
 
     async def _fixed_time_loop(self) -> None:
-        """每天本地 HH:MM 推送（§2.5 at_fixed_time）。"""
+        """每天本地 HH:MM 推送（§2.5 at_fixed_time）。per_event（手动触发）模式不自动推。"""
         while True:
             try:
                 now = datetime.datetime.now()
@@ -502,7 +501,8 @@ class AutoApproveSummaryService:
                 if target <= now:
                     target += datetime.timedelta(days=1)
                 await asyncio.sleep(max(1, (target - now).total_seconds()))
-                await self.flush_all()
+                if self.mode != "per_event":
+                    await self.flush_all()
             except asyncio.CancelledError:
                 raise
             except Exception as e:

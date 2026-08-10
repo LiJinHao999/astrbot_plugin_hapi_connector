@@ -171,12 +171,12 @@ export const CONFIG_SCHEMA_FALLBACK = {
         },
         {
           "key": "auto_approve_silent",
-          "label": "托管静默汇总",
+          "label": "托管操作汇总",
           "type": "bool",
-          "help": "开启后，忙时托管时段内的自动批准 / 自动压缩不再逐条推送，改为按下方策略汇总推送（如早晨一版）。关闭则保持现状逐条推。静默不等于关闭托管：AI 仍会自动执行，只是不刷屏。",
+          "help": "开启后，忙时托管时段内的自动批准 / 自动压缩不再逐条推送，改为按下方策略汇总推送（如早晨一版）。关闭则保持现状逐条推。托管时段 AI 仍会自主执行全部操作，只是通知方式变了。",
           "default": false,
           "schema_type": "bool",
-          "warn": "静默只是把通知改成汇总推送，不会关掉自动批准本身。托管时段 AI 仍会自主执行全部操作。",
+          "warn": "开启后托管时段的自动操作不再逐条推送，改为汇总推送；托管本身不受影响，AI 仍会自主执行全部操作。",
           "boolLabels": [
             "关闭（逐条推送）",
             "开启（汇总推送）"
@@ -186,7 +186,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_mode",
           "label": "汇总方式",
           "type": "enum_cards",
-          "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；每次触发：每次自动动作立即推一版（较吵）。开启「托管静默汇总」后生效。",
+          "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；手动触发：不自动推送，每次执行 /hapi summary 命令时推当前积累的一版。开启「托管操作汇总」后生效。",
           "default": "window",
           "schema_type": "string",
           "options": [
@@ -202,8 +202,8 @@ export const CONFIG_SCHEMA_FALLBACK = {
             },
             {
               "value": "per_event",
-              "title": "每次触发",
-              "desc": "每个自动动作立即推一版，接近实时但较吵。"
+              "title": "手动触发",
+              "desc": "不自动推送，每次手动 /hapi summary 命令推一版。"
             }
           ]
         },
@@ -211,7 +211,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_push",
           "label": "推送时机",
           "type": "enum_cards",
-          "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「托管静默汇总」后生效。",
+          "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「托管操作汇总」后生效。",
           "default": "on_window_end",
           "schema_type": "string",
           "options": [
@@ -234,17 +234,13 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "help": "仅在推送时机为「每天固定时间」时生效。到点对每个有内容的 session 各推一版；没内容不推。",
           "default": "08:00",
           "schema_type": "string",
-          "placeholder": "08:00",
-          "showIf": {
-            "key": "auto_approve_summary_push",
-            "eq": "at_fixed_time"
-          }
+          "placeholder": "08:00"
         },
         {
           "key": "auto_approve_summary_include_failures",
           "label": "汇总含失败明细",
           "type": "bool",
-          "help": "开启时失败项在汇总里列明细（置顶展示）；关闭时只计失败次数、不列明细。开启「托管静默汇总」后生效。",
+          "help": "开启时失败项在汇总里列明细（置顶展示）；关闭时只计失败次数、不列明细。开启「托管操作汇总」后生效。",
           "default": true,
           "schema_type": "bool",
           "boolLabels": [
@@ -256,7 +252,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_max_detail_lines",
           "label": "明细行数上限",
           "type": "number",
-          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「托管静默汇总」后生效。",
+          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「托管操作汇总」后生效。",
           "default": 30,
           "schema_type": "int"
         }
