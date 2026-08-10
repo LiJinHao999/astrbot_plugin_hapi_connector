@@ -101,6 +101,7 @@ class HapiConnectorPlugin(Star):
         self.summary_service.set_push_callback(
             self.sse_listener.push_auto_approve_summary
         )
+        self.summary_service.set_git_provider(self._summary_git_snapshot)
         self.sse_listener.summary_service = self.summary_service
 
         # 待审批管理器
@@ -419,6 +420,38 @@ class HapiConnectorPlugin(Star):
             return True, resumed_sid, note
 
         return False, sid, msg
+
+    async def _summary_git_snapshot(self, sid: str) -> dict | None:
+        """托管汇总 flush 时附带的 git 变更快照（只读）。
+
+        非 git 仓库 / HAPI 旧版本无路由 / 网络错误一律返回 None（汇总不附带 git 区块）。
+        返回 {"status_count", "added", "deleted", "entries": [(mark, path)...], "total_entries"}。
+        """
+        try:
+            ok, stdout, _ = await session_ops.fetch_git_status(self.client, sid)
+            if not ok:
+                return None
+            status_rows = formatters.parse_git_porcelain(stdout)
+            ok_num, num_out, _ = await session_ops.fetch_git_diff_numstat(self.client, sid)
+            num_entries = formatters.parse_git_numstat(num_out) if ok_num else []
+            added = 0
+            deleted = 0
+            for mark, _path in num_entries:
+                try:
+                    added += int(mark.split()[0][1:])
+                    deleted += int(mark.split()[1][1:])
+                except (IndexError, ValueError):
+                    pass
+            return {
+                "status_count": len(status_rows),
+                "added": added,
+                "deleted": deleted,
+                "entries": num_entries[:15],
+                "total_entries": len(num_entries),
+            }
+        except Exception as e:
+            logger.debug("汇总 git 快照失败 sid=%s: %s", sid[:8], e)
+            return None
 
     def _format_no_visible_sessions_text(self, event: AstrMessageEvent) -> str:
         lines = [

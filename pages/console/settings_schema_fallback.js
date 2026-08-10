@@ -186,13 +186,9 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_mode",
           "label": "汇总方式",
           "type": "enum_cards",
-          "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；每次触发：每次自动动作立即推一版（较吵）。",
+          "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；每次触发：每次自动动作立即推一版（较吵）。开启「托管静默汇总」后生效。",
           "default": "window",
           "schema_type": "string",
-          "showIf": {
-            "key": "auto_approve_silent",
-            "eq": true
-          },
           "options": [
             {
               "value": "daily",
@@ -215,13 +211,9 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_push",
           "label": "推送时机",
           "type": "enum_cards",
-          "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。",
+          "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「托管静默汇总」后生效。",
           "default": "on_window_end",
           "schema_type": "string",
-          "showIf": {
-            "key": "auto_approve_silent",
-            "eq": true
-          },
           "options": [
             {
               "value": "on_window_end",
@@ -252,29 +244,21 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_include_failures",
           "label": "汇总含失败明细",
           "type": "bool",
-          "help": "开启时失败项在汇总里列明细（置顶展示）；关闭时只计失败次数、不列明细。",
+          "help": "开启时失败项在汇总里列明细（置顶展示）；关闭时只计失败次数、不列明细。开启「托管静默汇总」后生效。",
           "default": true,
           "schema_type": "bool",
           "boolLabels": [
             "关闭",
             "开启"
-          ],
-          "showIf": {
-            "key": "auto_approve_silent",
-            "eq": true
-          }
+          ]
         },
         {
           "key": "auto_approve_summary_max_detail_lines",
           "label": "明细行数上限",
           "type": "number",
-          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。",
+          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「托管静默汇总」后生效。",
           "default": 30,
-          "schema_type": "int",
-          "showIf": {
-            "key": "auto_approve_silent",
-            "eq": true
-          }
+          "schema_type": "int"
         }
       ],
       "advanced": null

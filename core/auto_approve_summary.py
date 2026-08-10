@@ -111,6 +111,11 @@ class AutoApproveSummaryService:
         self._sessions: dict[str, SessionSummaryState] = {}
         self._lock = asyncio.Lock()
         self._push_callback: Callable[[str, dict, str], Awaitable[bool]] | None = None
+        # 可选：flush 时附带 git 变更快照（main 注入；返回 dict 或 None=无 git/失败）
+        self._git_provider: Callable[[str], Awaitable[dict | None]] | None = None
+        # {sid: (monotonic_ts, data)}：git 快照 TTL 缓存，避免 per_event 高频 flush 重复查询
+        self._git_cache: dict[str, tuple[float, dict | None]] = {}
+        self._git_cache_ttl: float = 30.0
 
         # 配置（与 _conf_schema.json 默认一致，热更新覆盖）
         self._auto_approve_enabled: bool = False
@@ -166,6 +171,32 @@ class AutoApproveSummaryService:
     def set_push_callback(self, cb: Callable[[str, dict, str], Awaitable[bool]]) -> None:
         """注入推送回调：async (sid, view, fallback_text) -> 是否已发出。"""
         self._push_callback = cb
+
+    def set_git_provider(self, cb: Callable[[str], Awaitable[dict | None]]) -> None:
+        """注入 git 变更快照提供者：async (sid) -> dict | None（None=非 git 仓库/失败）。
+
+        快照在 flush 时取（TTL 缓存避免 per_event 高频重复查询），随汇总一并展示。
+        """
+        self._git_provider = cb
+
+    async def _git_snapshot(self, sid: str) -> dict | None:
+        """带 TTL 缓存的 git 快照获取（锁外调用；30s 内同一 sid 不重复查）。"""
+        import time as _time
+
+        provider = self._git_provider
+        if provider is None:
+            return None
+        now = _time.monotonic()
+        cached = self._git_cache.get(sid)
+        if cached is not None and now - cached[0] < self._git_cache_ttl:
+            return cached[1]
+        try:
+            data = await provider(sid)
+        except Exception as e:
+            logger.warning("git 快照获取失败 sid=%s: %s", sid[:8], e)
+            data = None
+        self._git_cache[sid] = (now, data)
+        return data
 
     # ──── 窗口判定（与 sse_listener._in_auto_approve_window 同规则，本地时区） ────
 
@@ -345,7 +376,7 @@ class AutoApproveSummaryService:
                 key=lambda e: e.at.isoformat(),
             )
         ]
-        return {
+        view = {
             "sid": sid,
             "title": title,
             "label": label,
@@ -364,7 +395,12 @@ class AutoApproveSummaryService:
             "in_window": self._in_window(now),
             "include_failures": bool(self._include_failures),
             "max_detail_lines": max(1, int(self._max_detail_lines or 30)),
+            "git": None,
         }
+        cached = self._git_cache.get(sid)
+        if cached is not None and cached[1]:
+            view["git"] = cached[1]
+        return view
 
     # ──── 推送 ────
 
@@ -374,6 +410,14 @@ class AutoApproveSummaryService:
         返回 {pushed: bool, reason: no_pending|no_change|pushed|push_failed, text: str}。
         手动命令与自动 flush 共用同一套 API（§2.7 规则）。
         """
+        async with self._lock:
+            state = self._sessions.get(sid)
+            if state is None or not state.pending:
+                return {"pushed": False, "reason": "no_pending", "text": ""}
+            if not self.need_flush(state):
+                return {"pushed": False, "reason": "no_change", "text": ""}
+        # 锁外取 git 变更快照（网络请求，避免长时间占锁；TTL 缓存防 per_event 高频查询）
+        await self._git_snapshot(sid)
         async with self._lock:
             state = self._sessions.get(sid)
             if state is None or not state.pending:

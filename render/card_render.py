@@ -910,6 +910,25 @@ def sample_payload(kind: str) -> dict[str, Any]:
             ],
             "footer": "/hapi diffstat  统计    /hapi diff <路径>  查看文件 diff",
         }
+    if kind == "auto_approve_summary":
+        return {
+            "title": "重构鉴权中间件",
+            "subtitle": "托管汇总 · 托管时段 2026-08-09 23:00 ~ 2026-08-10 07:00",
+            "rows": [
+                {"type": "kv", "label": "自动批准", "detail": "成功 12 · 失败 1"},
+                {"type": "kv", "label": "自动压缩", "detail": "成功 2 · 失败 0"},
+                {"type": "section", "label": "失败明细", "detail": "", "count": 0},
+                {"type": "row", "index": 0, "label": "06:12 ✗ 批准 [Bash] npm install 超时", "detail": ""},
+                {"type": "section", "label": "成功明细（最近 3 条）", "detail": "", "count": 0},
+                {"type": "row", "index": 0, "label": "06:11 ✓ 批准 [Edit] src/auth/middleware.ts", "detail": ""},
+                {"type": "row", "index": 0, "label": "05:47 ✓ 批准 [Bash] npm test", "detail": ""},
+                {"type": "row", "index": 0, "label": "05:02 ✓ 压缩 /compact", "detail": ""},
+                {"type": "section", "label": "git 变更", "detail": "3 文件 · +45 -12", "count": 0},
+                {"type": "row", "index": 0, "label": "+32 -8", "detail": "src/auth/middleware.ts"},
+                {"type": "row", "index": 0, "label": "+13 -4", "detail": "tests/test_auth.ts"},
+            ],
+            "footer": "上次汇总: 2026-08-09 07:00 · mode=按托管时段 push=托管结束时",
+        }
     return {
         "title": "Session 列表",
         "subtitle": "当前窗口 · 3 个 · 思考 1 / 运行 1 / 关闭 1",

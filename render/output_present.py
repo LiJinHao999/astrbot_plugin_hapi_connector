@@ -882,6 +882,35 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
                 "detail": "",
             })
 
+    git = view.get("git")
+    if isinstance(git, dict):
+        status_count = int(git.get("status_count") or 0)
+        added = int(git.get("added") or 0)
+        deleted = int(git.get("deleted") or 0)
+        entries = list(git.get("entries") or [])
+        if status_count or added or deleted:
+            rows.append({
+                "type": "section",
+                "label": "git 变更",
+                "detail": f"{status_count} 文件 · +{added} -{deleted}",
+                "count": 0,
+            })
+            for mark, path in entries:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": mark,
+                    "detail": _strip_emoji(path)[:120],
+                })
+            hidden = int(git.get("total_entries") or 0) - len(entries)
+            if hidden > 0:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": f"另有 {hidden} 个文件",
+                    "detail": "",
+                })
+
     if not rows:
         rows = [{
             "type": "row",

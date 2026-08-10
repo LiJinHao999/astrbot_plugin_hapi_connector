@@ -2025,6 +2025,8 @@ def format_auto_approve_summary(view: dict) -> str:
         if hidden > 0:
             lines.append(f"另有 {hidden} 条")
 
+    lines.extend(_format_git_summary_block(view))
+
     mode = str(view.get("mode") or "")
     push = str(view.get("push") or "")
     mode_label = _SUMMARY_MODE_LABELS.get(mode, mode or "?")
@@ -2033,6 +2035,26 @@ def format_auto_approve_summary(view: dict) -> str:
     lines.append(f"上次汇总: {_fmt_summary_dt(view.get('last_pushed_at'))}")
     lines.append(f"模式: {mode_label} · 推送: {push_label}")
     return "\n".join(lines)
+
+
+def _format_git_summary_block(view: dict) -> list[str]:
+    """汇总里的 git 变更区块（flush 时刻快照；无 git/失败时返回空列表）。"""
+    git = view.get("git")
+    if not isinstance(git, dict):
+        return []
+    status_count = int(git.get("status_count") or 0)
+    added = int(git.get("added") or 0)
+    deleted = int(git.get("deleted") or 0)
+    if status_count == 0 and added == 0 and deleted == 0:
+        return []
+    lines = ["── git 变更 ──"]
+    lines.append(f"· {status_count} 个文件变更（+{added} -{deleted}）")
+    for mark, path in git.get("entries") or []:
+        lines.append(f"· {mark:<12} {path[:80]}")
+    hidden = int(git.get("total_entries") or 0) - len(git.get("entries") or [])
+    if hidden > 0:
+        lines.append(f"另有 {hidden} 个文件")
+    return lines
 
 
 def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
