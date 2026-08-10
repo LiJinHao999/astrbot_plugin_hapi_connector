@@ -72,6 +72,7 @@ CARD_KINDS = (
     "permission",
     "routes",
     "message",
+    "auto_approve_summary",
 )
 DENSITY_OPTIONS = ("comfortable", "compact")
 PRESET_IDS = ("terminal_light", "terminal_dark", "clean", "compact")
@@ -82,6 +83,7 @@ DEFAULT_KINDS = (
     "permission",
     "routes",
     "message",
+    "auto_approve_summary",
 )
 
 # 默认 CSS：用户可在 WebUI 整段覆盖。

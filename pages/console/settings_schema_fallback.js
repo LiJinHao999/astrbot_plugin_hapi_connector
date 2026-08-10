@@ -161,12 +161,119 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "render_kinds",
           "label": "以下类型渲成图片",
           "type": "kind_checks",
-          "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话。没勾的仍发文字。",
-          "default": "session_list,pending,status,permission,routes,message",
+          "help": "勾选哪些内容用图片显示：会话列表、待审批、状态、权限请求、推送路由、AI 对话、托管汇总。没勾的仍发文字。",
+          "default": "session_list,pending,status,permission,routes,message,auto_approve_summary",
           "schema_type": "string",
           "showIf": {
             "key": "render_mode",
             "eq": "card"
+          }
+        },
+        {
+          "key": "auto_approve_silent",
+          "label": "托管静默汇总",
+          "type": "bool",
+          "help": "开启后，忙时托管时段内的自动批准 / 自动压缩不再逐条推送，改为按下方策略汇总推送（如早晨一版）。关闭则保持现状逐条推。静默不等于关闭托管：AI 仍会自动执行，只是不刷屏。",
+          "default": false,
+          "schema_type": "bool",
+          "warn": "静默只是把通知改成汇总推送，不会关掉自动批准本身。托管时段 AI 仍会自主执行全部操作。",
+          "boolLabels": [
+            "关闭（逐条推送）",
+            "开启（汇总推送）"
+          ]
+        },
+        {
+          "key": "auto_approve_summary_mode",
+          "label": "汇总方式",
+          "type": "enum_cards",
+          "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；每次触发：每次自动动作立即推一版（较吵）。",
+          "default": "window",
+          "schema_type": "string",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          },
+          "options": [
+            {
+              "value": "daily",
+              "title": "按天",
+              "desc": "自然日内的事件归一天，随时可手动推。"
+            },
+            {
+              "value": "window",
+              "title": "按托管时段（推荐）",
+              "desc": "夜间托管结束一次性结算，最贴合睡眠场景。"
+            },
+            {
+              "value": "per_event",
+              "title": "每次触发",
+              "desc": "每个自动动作立即推一版，接近实时但较吵。"
+            }
+          ]
+        },
+        {
+          "key": "auto_approve_summary_push",
+          "label": "推送时机",
+          "type": "enum_cards",
+          "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。",
+          "default": "on_window_end",
+          "schema_type": "string",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          },
+          "options": [
+            {
+              "value": "on_window_end",
+              "title": "托管结束时（推荐）",
+              "desc": "23:00–07:00 这种窗结束后立刻推一版。"
+            },
+            {
+              "value": "at_fixed_time",
+              "title": "每天固定时间",
+              "desc": "每天在下方设置的时间推送，如 08:00。"
+            }
+          ]
+        },
+        {
+          "key": "auto_approve_summary_time",
+          "label": "固定推送时间",
+          "type": "time",
+          "help": "仅在推送时机为「每天固定时间」时生效。到点对每个有内容的 session 各推一版；没内容不推。",
+          "default": "08:00",
+          "schema_type": "string",
+          "placeholder": "08:00",
+          "showIf": {
+            "key": "auto_approve_summary_push",
+            "eq": "at_fixed_time"
+          }
+        },
+        {
+          "key": "auto_approve_summary_include_failures",
+          "label": "汇总含失败明细",
+          "type": "bool",
+          "help": "开启时失败项在汇总里列明细（置顶展示）；关闭时只计失败次数、不列明细。",
+          "default": true,
+          "schema_type": "bool",
+          "boolLabels": [
+            "关闭",
+            "开启"
+          ],
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          }
+        },
+        {
+          "key": "auto_approve_summary_max_detail_lines",
+          "label": "明细行数上限",
+          "type": "number",
+          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。",
+          "default": 30,
+          "schema_type": "int",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
           }
         }
       ],
@@ -265,10 +372,16 @@ export const CONFIG_SCHEMA_FALLBACK = {
     "auto_approve_enabled": false,
     "auto_approve_start": "23:00",
     "auto_approve_end": "07:00",
+    "auto_approve_silent": false,
+    "auto_approve_summary_mode": "window",
+    "auto_approve_summary_push": "on_window_end",
+    "auto_approve_summary_time": "08:00",
+    "auto_approve_summary_include_failures": true,
+    "auto_approve_summary_max_detail_lines": 30,
     "default_notification_window": "",
     "render_mode": "text",
     "formula_mode": "off",
-    "render_kinds": "session_list,pending,status,permission,routes,message",
+    "render_kinds": "session_list,pending,status,permission,routes,message,auto_approve_summary",
     "card_style_preset": "terminal_light",
     "card_width": 720,
     "card_accent": "#0f6b3c",
@@ -294,6 +407,12 @@ export const CONFIG_SCHEMA_FALLBACK = {
     "summary_msg_count",
     "render_mode",
     "render_kinds",
+    "auto_approve_silent",
+    "auto_approve_summary_mode",
+    "auto_approve_summary_push",
+    "auto_approve_summary_time",
+    "auto_approve_summary_include_failures",
+    "auto_approve_summary_max_detail_lines",
     "remind_pending",
     "remind_interval",
     "auto_approve_enabled",

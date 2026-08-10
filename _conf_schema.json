@@ -117,6 +117,44 @@
     "default": "07:00",
     "hint": "例如开始 22:00、结束 08:00，即晚上10点到次日早上8点，支持跨午夜"
   },
+  "auto_approve_silent": {
+    "description": "忙时托管静默汇总：托管时段内的自动批准/自动压缩不逐条推送，改为按策略汇总推送",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后夜间托管不再刷屏；汇总方式与推送时机见下方三项。关闭时保持现状逐条推送"
+  },
+  "auto_approve_summary_mode": {
+    "description": "托管静默汇总方式",
+    "type": "string",
+    "default": "window",
+    "options": ["daily", "window", "per_event"],
+    "hint": "按天=自然日一个桶；按托管时段=每次进入托管窗一个桶（推荐）；每次触发=每次自动动作立即推一版"
+  },
+  "auto_approve_summary_push": {
+    "description": "托管静默汇总推送时机",
+    "type": "string",
+    "default": "on_window_end",
+    "options": ["on_window_end", "at_fixed_time"],
+    "hint": "托管结束时=窗口结束边沿推送（推荐）；每天固定时间=每天在下方时间推送。也可随时用 /hapi summary 手动推送"
+  },
+  "auto_approve_summary_time": {
+    "description": "托管静默汇总固定推送时间（HH:MM）",
+    "type": "string",
+    "default": "08:00",
+    "hint": "仅在推送时机为「每天固定时间」时生效，如 08:00（睡醒后一版）"
+  },
+  "auto_approve_summary_include_failures": {
+    "description": "托管静默汇总是否包含失败明细",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后失败只计次数、不列明细"
+  },
+  "auto_approve_summary_max_detail_lines": {
+    "description": "单 session 汇总明细行数上限",
+    "type": "int",
+    "default": 30,
+    "hint": "超出部分折叠为「另有 N 条」，防止长夜汇总刷屏"
+  },
   "default_notification_window": {
     "description": "默认通知发送窗口",
     "type": "string",
@@ -140,8 +178,8 @@
   "render_kinds": {
     "description": "允许出图的消息类型",
     "type": "string",
-    "default": "session_list,pending,status,permission,routes,message",
-    "hint": "插件 WebUI「交互优化 / 设置」里勾选保存。可选值：session_list,pending,status,permission,routes,message（message=Agent 对话）"
+    "default": "session_list,pending,status,permission,routes,message,auto_approve_summary",
+    "hint": "插件 WebUI「交互优化 / 设置」里勾选保存。可选值：session_list,pending,status,permission,routes,message,auto_approve_summary（message=Agent 对话，auto_approve_summary=托管汇总）"
   },
   "card_style_preset": {
     "description": "推送图片样式预设",

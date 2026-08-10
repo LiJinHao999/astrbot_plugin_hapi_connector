@@ -1377,6 +1377,7 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "allow",
     "answer",
     "deny",
+    "summary",
     "create",
     "abort", "stop",
     "archive",
@@ -1601,6 +1602,13 @@ HELP_COMMANDS = [
     },
     {
         "topic": "approve",
+        "usage": "/hapi summary [all|<序号|ID>|status]",
+        "summary": "推送忙时托管静默汇总：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列",
+        "example": "/hapi summary",
+        "home": False,
+    },
+    {
+        "topic": "approve",
         "usage": "戳一戳机器人",
         "summary": "批准全部权限请求（仅 QQ NapCat）",
         "example": None,
@@ -1809,9 +1817,6 @@ def export_help_data() -> dict:
 def _normalize_help_topic(topic: str) -> str | None:
     key = topic.strip().lower()
     return HELP_TOPIC_ALIASES.get(key)
-
-
-def _iter_help_commands(topic: str) -> list[dict]:
     if topic == "all":
         return HELP_COMMANDS
     return [item for item in HELP_COMMANDS if item["topic"] == topic]
@@ -1915,3 +1920,131 @@ def get_help_text(topic: str = "") -> str:
     if normalized == "config":
         return _format_help_commands("HAPI 帮助 / 模式与配置", "config")
     return _format_help_commands("HAPI 帮助 / 完整命令列表", "all")
+
+
+# ──── 忙时托管静默汇总（dev-docs/auto-approve-silent-summary.md §3） ────
+
+_SUMMARY_MODE_LABELS = {
+    "daily": "按天",
+    "window": "按托管时段",
+    "per_event": "每次触发",
+}
+_SUMMARY_PUSH_LABELS = {
+    "on_window_end": "托管结束时",
+    "at_fixed_time": "每天固定时间",
+}
+
+
+def _fmt_summary_dt(dt) -> str:
+    if not dt:
+        return "无"
+    if hasattr(dt, "strftime"):
+        return dt.strftime("%Y-%m-%d %H:%M")
+    return str(dt)
+
+
+def _summary_detail_line(event: dict, mark: str) -> str:
+    """单条事件明细行：· 07:12 ✓ approve [Bash] 或失败附错误摘要。"""
+    at = event.get("at")
+    time_part = ""
+    if hasattr(at, "strftime"):
+        time_part = at.strftime("%H:%M") + " "
+    kind = str(event.get("kind") or "approve")
+    kind_label = "批准" if kind == "approve" else "压缩"
+    tool = event.get("tool")
+    bits = [time_part + mark, kind_label]
+    if tool:
+        bits.append(f"[{tool}]")
+    detail = str(event.get("detail") or "").strip()
+    if detail:
+        bits.append(detail[:120])
+    return "· " + " ".join(bits)
+
+
+def format_auto_approve_summary(view: dict) -> str:
+    """托管静默汇总的纯文本（§3.1）。
+
+    消费 AutoApproveSummaryService.build_summary_view 的视图 dict。
+    """
+    title = str(view.get("title") or view.get("label") or (view.get("sid") or "")[:8])
+    lines = [f"[托管汇总] {title}", f"时段/日期: {view.get('bucket_desc') or '—'}"]
+
+    counters = view.get("counters") or {}
+    approve_ok = int(counters.get("approve_ok") or 0)
+    approve_fail = int(counters.get("approve_fail") or 0)
+    compact_ok = int(counters.get("compact_ok") or 0)
+    compact_fail = int(counters.get("compact_fail") or 0)
+    if approve_ok + approve_fail:
+        lines.append(f"自动批准  ✓{approve_ok} ✗{approve_fail}")
+    if compact_ok + compact_fail:
+        lines.append(f"自动压缩  ✓{compact_ok} ✗{compact_fail}")
+
+    failures = list(view.get("failures") or [])
+    successes = list(view.get("successes") or [])
+    max_lines = int(view.get("max_detail_lines") or 30)
+    include_failures = bool(view.get("include_failures"))
+
+    if failures:
+        if include_failures:
+            lines.append("── 失败明细 ──")
+            for evt in failures:
+                lines.append(_summary_detail_line(evt, "✗"))
+        else:
+            lines.append(f"── 失败 {len(failures)} 次（已隐藏明细）──")
+
+    if successes:
+        shown = successes[-max_lines:]
+        lines.append(f"── 成功明细（最近 {len(shown)} 条）──")
+        for evt in shown:
+            lines.append(_summary_detail_line(evt, "✓"))
+        hidden = len(successes) - len(shown)
+        if hidden > 0:
+            lines.append(f"另有 {hidden} 条")
+
+    mode = str(view.get("mode") or "")
+    push = str(view.get("push") or "")
+    mode_label = _SUMMARY_MODE_LABELS.get(mode, mode or "?")
+    push_label = _SUMMARY_PUSH_LABELS.get(push, push or "?")
+    lines.append("")
+    lines.append(f"上次汇总: {_fmt_summary_dt(view.get('last_pushed_at'))}")
+    lines.append(f"模式: {mode_label} · 推送: {push_label}")
+    return "\n".join(lines)
+
+
+def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
+    """/hapi summary status 的只读文本：队列、上次推送、配置。"""
+    enabled = bool(status.get("enabled"))
+    auto_approve = bool(status.get("auto_approve_enabled"))
+    silent = bool(status.get("silent"))
+    mode = str(status.get("mode") or "")
+    push = str(status.get("push") or "")
+    in_window = bool(status.get("in_window"))
+    sessions = status.get("sessions") or {}
+
+    lines = ["托管静默汇总状态"]
+    if enabled:
+        lines.append("总开关: 开启")
+    else:
+        why = []
+        if not auto_approve:
+            why.append("托管审批未开启")
+        if not silent:
+            why.append("静默汇总未开启")
+        lines.append(f"总开关: 关闭（{'；'.join(why) if why else '—'}）")
+    lines.append(f"模式: {_SUMMARY_MODE_LABELS.get(mode, mode or '?')}")
+    lines.append(f"推送: {_SUMMARY_PUSH_LABELS.get(push, push or '?')}"
+                 + (f"（{status.get('fixed_time')}）" if push == "at_fixed_time" else ""))
+    lines.append(f"当前在托管窗: {'是' if in_window else '否'}")
+
+    if not sessions:
+        lines.append("已收集: 无")
+        return "\n".join(lines)
+
+    lines.append(f"已收集 {len(sessions)} 个 session:")
+    for sid in sorted(sessions):
+        info = sessions[sid]
+        label = session_label_short(sid, sessions_cache).splitlines()[0]
+        pending = int(info.get("pending") or 0)
+        last = _fmt_summary_dt(info.get("last_pushed_at"))
+        lines.append(f"  {label[:40]}  pending={pending}  last={last}")
+    return "\n".join(lines)

@@ -37,6 +37,12 @@ CONFIG_KEYS = (
     "auto_approve_enabled",
     "auto_approve_start",
     "auto_approve_end",
+    "auto_approve_silent",
+    "auto_approve_summary_mode",
+    "auto_approve_summary_push",
+    "auto_approve_summary_time",
+    "auto_approve_summary_include_failures",
+    "auto_approve_summary_max_detail_lines",
     "default_notification_window",
     # 推送呈现（卡片可选依赖 Pillow / Playwright）
     "render_mode",
@@ -79,6 +85,8 @@ BOOL_KEYS = frozenset({
     "poke_approve",
     "remind_pending",
     "auto_approve_enabled",
+    "auto_approve_silent",
+    "auto_approve_summary_include_failures",
     "card_show_brand",
     "card_mono",
 })
@@ -89,8 +97,22 @@ INT_KEYS = frozenset({
     "refresh_before_expiry",
     "summary_msg_count",
     "remind_interval",
+    "auto_approve_summary_max_detail_lines",
     "card_width",
     "card_font_scale",
+})
+
+# 托管静默汇总相关键：改动后需要尝试 flush 补发（§2.3 防漏发）
+SUMMARY_KEYS = frozenset({
+    "auto_approve_silent",
+    "auto_approve_summary_mode",
+    "auto_approve_summary_push",
+    "auto_approve_summary_time",
+    "auto_approve_summary_include_failures",
+    "auto_approve_summary_max_detail_lines",
+    "auto_approve_enabled",
+    "auto_approve_start",
+    "auto_approve_end",
 })
 
 
@@ -1962,6 +1984,16 @@ async def save_plugin_config(plugin, patch: dict) -> dict:
 
     await _persist_config(plugin)
 
+    # 托管静默汇总（§2.3 防漏发）：关 silent / 关 auto_approve / 改 mode/push/time
+    # 都会让当前桶提前结束 → 先把已收集的补发出去，再切到新状态。
+    if any(k in SUMMARY_KEYS for k in cleaned):
+        summary_svc = getattr(plugin, "summary_service", None)
+        if summary_svc is not None:
+            try:
+                await summary_svc.flush_all()
+            except Exception as e:
+                logger.warning("config save 后托管汇总 flush 失败: %s", e)
+
     try:
         apply_runtime_config(plugin, cleaned)
     except Exception:
@@ -2086,8 +2118,30 @@ def validate_config_patch(patch: dict) -> dict[str, Any]:
             cleaned[key] = val
             continue
 
-        if key in ("auto_approve_start", "auto_approve_end"):
+        if key in ("auto_approve_start", "auto_approve_end", "auto_approve_summary_time"):
             cleaned[key] = _as_hhmm(raw_val, key)
+            continue
+
+        if key == "auto_approve_summary_mode":
+            from ..core.auto_approve_summary import SUMMARY_MODES
+
+            val = str(raw_val or "").strip()
+            if val not in SUMMARY_MODES:
+                raise ConfigValidationError(
+                    f"auto_approve_summary_mode 必须是 {'/'.join(SUMMARY_MODES)}"
+                )
+            cleaned[key] = val
+            continue
+
+        if key == "auto_approve_summary_push":
+            from ..core.auto_approve_summary import PUSH_TRIGGERS
+
+            val = str(raw_val or "").strip()
+            if val not in PUSH_TRIGGERS:
+                raise ConfigValidationError(
+                    f"auto_approve_summary_push 必须是 {'/'.join(PUSH_TRIGGERS)}"
+                )
+            cleaned[key] = val
             continue
 
         if key == "quick_prefix":
@@ -2255,6 +2309,35 @@ def apply_runtime_config(plugin, patch: dict) -> None:
         sse._auto_approve_start = patch["auto_approve_start"]
     if "auto_approve_end" in patch:
         sse._auto_approve_end = patch["auto_approve_end"]
+    if "auto_approve_silent" in patch:
+        sse._auto_approve_silent = patch["auto_approve_silent"]
+    if "auto_approve_summary_mode" in patch:
+        sse._auto_approve_summary_mode = patch["auto_approve_summary_mode"]
+    if "auto_approve_summary_push" in patch:
+        sse._auto_approve_summary_push = patch["auto_approve_summary_push"]
+    if "auto_approve_summary_time" in patch:
+        sse._auto_approve_summary_time = patch["auto_approve_summary_time"]
+    if "auto_approve_summary_include_failures" in patch:
+        sse._auto_approve_summary_include_failures = patch["auto_approve_summary_include_failures"]
+    if "auto_approve_summary_max_detail_lines" in patch:
+        sse._auto_approve_summary_max_detail_lines = patch["auto_approve_summary_max_detail_lines"]
+    # 托管静默汇总服务：同步同一份配置（不重连 SSE）
+    summary_svc = getattr(plugin, "summary_service", None)
+    if summary_svc is not None:
+        summary_svc.update_config(**{
+            k: v for k, v in patch.items()
+            if k in (
+                "auto_approve_enabled",
+                "auto_approve_start",
+                "auto_approve_end",
+                "auto_approve_silent",
+                "auto_approve_summary_mode",
+                "auto_approve_summary_push",
+                "auto_approve_summary_time",
+                "auto_approve_summary_include_failures",
+                "auto_approve_summary_max_detail_lines",
+            )
+        })
     if "max_reconnect_attempts" in patch:
         sse._max_reconnect = patch["max_reconnect_attempts"]
 

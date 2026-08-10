@@ -45,6 +45,7 @@ const RENDER_KIND_LABELS = {
   permission: "权限请求",
   routes: "推送路由",
   message: "AI 对话",
+  auto_approve_summary: "托管汇总",
 };
 
 const FLAVOR_ROUTE_KEYS = ["claude", "codex", "cursor", "gemini", "grok", "kimi", "opencode", "pi"];
@@ -90,6 +91,7 @@ const HELP_COMMANDS = [
   { topic: "approve", usage: "/hapi allow [序号]", summary: "批准全部或单个非 question 请求", example: "/hapi allow 2", home: false },
   { topic: "approve", usage: "/hapi answer [序号]", summary: "回答 question 请求", example: "/hapi answer 1", home: true },
   { topic: "approve", usage: "/hapi deny [序号]", summary: "拒绝请求", example: "/hapi deny 3", home: true },
+  { topic: "approve", usage: "/hapi summary [all|<序号|ID>|status]", summary: "推送忙时托管静默汇总：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列", example: "/hapi summary", home: false },
   { topic: "approve", usage: "戳一戳机器人", summary: "执行 WebUI 配置的快捷动作（默认批准待审；可改为 list/stop 等，仅 QQ NapCat）", example: null, home: false },
   { topic: "push", usage: "/hapi bind [<flavor>]", summary: "设置当前聊天为默认推送窗口；带 flavor（如 claude/codex）时只对对应 AI 代理生效", example: "/hapi bind claude", home: false },
   { topic: "push", usage: "/hapi bind status", summary: "查看默认推送窗口、flavor 推送窗口和 session 绑定状态", example: null, home: false },

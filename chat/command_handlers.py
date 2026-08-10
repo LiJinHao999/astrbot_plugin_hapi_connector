@@ -2138,6 +2138,78 @@ class CommandHandlers:
         ):
             yield result
 
+    # ── summary ──
+
+    async def cmd_summary(self, event: AstrMessageEvent, arg: str = ""):
+        """忙时托管静默汇总：/hapi summary [all|<序号|ID>|status]
+
+        无参 = 当前窗口可见且有 pending 的 session；all = 全部（各回各窗口）；
+        指定序号/ID = 只推该 session；status = 只读队列状态。
+        手动触发与自动 flush 共用同一套「推送成功 → 清 pending → 更新 last_*」。
+        """
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        summary_svc = getattr(self.plugin, "summary_service", None)
+        if summary_svc is None:
+            yield event.plain_result("托管汇总服务未就绪，请重载插件后再试")
+            return
+
+        normalized = (arg or "").strip()
+        if normalized == "status":
+            yield event.plain_result(
+                formatters.format_summary_status(
+                    summary_svc.status(), self.sessions_cache
+                )
+            )
+            return
+
+        status = summary_svc.status()
+        session_infos = status.get("sessions") or {}
+        pending_sids = [
+            sid for sid, info in session_infos.items()
+            if int(info.get("pending") or 0) > 0
+        ]
+
+        if normalized == "all":
+            target_sids = pending_sids
+        elif normalized:
+            target_sid, err = self._resolve_target_verbose(normalized)
+            if err:
+                yield event.plain_result(err)
+                return
+            target_sids = [target_sid] if target_sid else []
+        else:
+            visible = self._visible_sids(event)
+            target_sids = [sid for sid in pending_sids if sid in visible]
+
+        if not target_sids:
+            yield event.plain_result(
+                "没有待推送的托管汇总\n"
+                "（静默汇总未开启、暂无未推送事件，或当前窗口无相关 session；"
+                "可用 /hapi summary status 查看）"
+            )
+            return
+
+        results: dict[str, dict] = {}
+        for sid in target_sids:
+            results[sid] = await summary_svc.flush_session(sid)
+
+        pushed = [sid for sid, r in results.items() if r.get("pushed")]
+        no_change = [
+            sid for sid, r in results.items()
+            if r.get("reason") in ("no_pending", "no_change")
+        ]
+        failed = [sid for sid, r in results.items() if r.get("reason") == "push_failed"]
+
+        lines = []
+        if pushed:
+            lines.append(f"✓ 已推送 {len(pushed)} 个 session 的托管汇总（各回各窗口）")
+        if no_change:
+            lines.append(f"ℹ️ {len(no_change)} 个 session 无新的托管汇总（同日且内容无变化）")
+        if failed:
+            lines.append("⚠️ 推送失败: " + ", ".join(s[:8] for s in failed))
+        yield event.plain_result("\n".join(lines) or "没有可推送的托管汇总")
+
     # ── reset ──
 
     async def cmd_reset(self, event: AstrMessageEvent):

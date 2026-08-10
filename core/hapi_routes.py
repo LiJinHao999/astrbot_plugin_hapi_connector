@@ -37,6 +37,7 @@ ROUTE_TAKES_ARG: dict[str, bool] = {
     "allow": True,
     "answer": True,
     "deny": True,
+    "summary": True,
     "create": True,  # 可带模板名与目录（/hapi create [模板名] [目录]）
     "abort": True,
     "stop": True,
@@ -89,6 +90,7 @@ ROUTE_HANDLERS: dict[str, str] = {
     "allow": "cmd_allow",
     "answer": "cmd_answer",
     "deny": "cmd_deny",
+    "summary": "cmd_summary",
     "create": "cmd_create",
     "abort": "cmd_abort",
     "stop": "cmd_abort",

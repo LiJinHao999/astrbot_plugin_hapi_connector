@@ -146,6 +146,21 @@ hapi codex    # OpenAI Codex
 | `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24 小时制） | `23:00` |
 | `auto_approve_end` | 忙时托管审批结束时间（HH:MM，24 小时制，支持跨午夜） | `07:00` |
 
+### 托管静默汇总（可选）
+
+开启 `auto_approve_silent` 后，托管时段内的自动批准 / 自动压缩不再逐条推送，改为按策略汇总推送，夜间托管不再刷屏。详见 `dev-docs/auto-approve-silent-summary.md`。
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `auto_approve_silent` | 托管静默汇总总开关（关闭时保持旧版逐条推送） | 关闭 |
+| `auto_approve_summary_mode` | 汇总方式：`window` 按托管时段 / `daily` 按天 / `per_event` 每次触发 | window |
+| `auto_approve_summary_push` | 推送时机：`on_window_end` 托管结束时 / `at_fixed_time` 每天固定时间 | on_window_end |
+| `auto_approve_summary_time` | 固定推送时间（HH:MM，仅 `at_fixed_time` 生效） | `08:00` |
+| `auto_approve_summary_include_failures` | 汇总是否含失败明细 | 开启 |
+| `auto_approve_summary_max_detail_lines` | 单 session 明细行数上限，超出折叠 | 30 |
+
+> 汇总严格按 session 隔离：每个有变更的 session 各推一张（文本或卡片），带 session_id 走既有窗口路由；同一 session 同日同内容不重复推（内容指纹去重）；插件停止 / 关开关 / 改策略时会自动补发。聊天里可用 `/hapi summary` 手动触发，`/hapi summary status` 查看队列。
+
 ---
 
 ## 🖥️ Web 管理面板
@@ -252,6 +267,7 @@ hapi codex    # OpenAI Codex
 | `/hapi answer [序号]` | 交互式回答 question 请求 |
 | `/hapi deny` | 全部拒绝 |
 | `/hapi deny <序号>` | 拒绝单个请求 |
+| `/hapi summary [all\|<序号\|ID>\|status]` | 推送托管静默汇总：无参=当前窗口有变更的 session；`all`=全部（各回各窗口）；指定序号/ID 推单个；`status` 查看队列与上次推送时间 |
 | 戳一戳机器人 | 批准所有普通权限请求 + 交互式回答 question（仅 QQ NapCat，需开启 `poke_approve`） |
 
 #### 📁 文件操作

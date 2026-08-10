@@ -786,6 +786,129 @@ def build_permission_payload(
     }
 
 
+def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
+    """忙时托管静默汇总结构卡（§3.2）。
+
+    消费 AutoApproveSummaryService.build_summary_view 的视图 dict；
+    走通用结构卡渲染（kind=auto_approve_summary）。
+    """
+    from . import formatters
+
+    def _dt(dt) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%Y-%m-%d %H:%M") if hasattr(dt, "strftime") else str(dt)
+
+    def _event_line(evt: dict, mark: str) -> str:
+        at = evt.get("at")
+        time_part = _dt(at)[5:] if at else ""
+        kind_label = "批准" if str(evt.get("kind") or "approve") == "approve" else "压缩"
+        tool = evt.get("tool")
+        bits = [time_part, mark, kind_label]
+        if tool:
+            bits.append(f"[{tool}]")
+        detail = str(evt.get("detail") or "").strip()
+        if detail:
+            bits.append(detail[:100])
+        return " ".join(b for b in bits if b)
+
+    clean_title = _strip_emoji(str(view.get("title") or (view.get("sid") or "")[:8]))
+    title = clean_title or "托管汇总"
+    bucket = str(view.get("bucket_desc") or "—")
+    subtitle = f"托管汇总 · {bucket}"
+
+    counters = view.get("counters") or {}
+    approve_ok = int(counters.get("approve_ok") or 0)
+    approve_fail = int(counters.get("approve_fail") or 0)
+    compact_ok = int(counters.get("compact_ok") or 0)
+    compact_fail = int(counters.get("compact_fail") or 0)
+
+    rows: list[dict[str, Any]] = []
+    if approve_ok or approve_fail:
+        rows.append({
+            "type": "kv",
+            "label": "自动批准",
+            "detail": f"成功 {approve_ok} · 失败 {approve_fail}",
+        })
+    if compact_ok or compact_fail:
+        rows.append({
+            "type": "kv",
+            "label": "自动压缩",
+            "detail": f"成功 {compact_ok} · 失败 {compact_fail}",
+        })
+
+    failures = list(view.get("failures") or [])
+    successes = list(view.get("successes") or [])
+    max_lines = int(view.get("max_detail_lines") or 30)
+    include_failures = bool(view.get("include_failures"))
+
+    if failures:
+        rows.append({
+            "type": "section",
+            "label": "失败明细",
+            "detail": "" if include_failures else f"{len(failures)} 次（已隐藏）",
+            "count": 0,
+        })
+        if include_failures:
+            for evt in failures:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": _strip_emoji(_event_line(evt, "✗")),
+                    "detail": "",
+                })
+
+    if successes:
+        shown = successes[-max_lines:]
+        rows.append({
+            "type": "section",
+            "label": f"成功明细（最近 {len(shown)} 条）",
+            "detail": "",
+            "count": 0,
+        })
+        for evt in shown:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": _strip_emoji(_event_line(evt, "✓")),
+                "detail": "",
+            })
+        hidden = len(successes) - len(shown)
+        if hidden > 0:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": f"另有 {hidden} 条",
+                "detail": "",
+            })
+
+    if not rows:
+        rows = [{
+            "type": "row",
+            "index": 0,
+            "label": "(空)",
+            "detail": "暂无托管自动动作",
+        }]
+
+    mode_label = {
+        "daily": "按天",
+        "window": "按托管时段",
+        "per_event": "每次触发",
+    }.get(str(view.get("mode") or ""), str(view.get("mode") or "?"))
+    push_label = {
+        "on_window_end": "托管结束时",
+        "at_fixed_time": "每天固定时间",
+    }.get(str(view.get("push") or ""), str(view.get("push") or "?"))
+    footer_bits = [f"上次汇总: {_dt(view.get('last_pushed_at')) or '无'}"]
+    footer_bits.append(f"mode={mode_label} push={push_label}")
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "rows": rows,
+        "footer": " · ".join(footer_bits),
+    }
+
+
 def try_render_png(plugin, kind: str, data: dict[str, Any]) -> card_render.RenderResult | None:
     """若配置要求出卡且引擎可用，返回 RenderResult；否则 None（调用方发文本）。"""
     cfg = _cfg_dict(plugin)

@@ -1,5 +1,36 @@
 # 更新日志
 
+## v3.3.0 — 忙时托管「静默汇总」
+
+> 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)，完整设计见 `dev-docs/auto-approve-silent-summary.md`。
+
+1. **新增托管静默汇总**（`auto_approve_silent`，默认关闭，行为与旧版一致）  
+   开启后，忙时托管时段内的自动批准 / 自动压缩**不再逐条推送**，改为静默收集，按策略汇总推送。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
+
+2. **汇总方式与推送时机可配置**（WebUI「设置 → 推送通知」底部）  
+   - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `按天` / `每次触发`
+   - `auto_approve_summary_push`：`托管结束时`（默认）/ `每天固定时间`（`auto_approve_summary_time`，默认 08:00）
+   - 高级：`auto_approve_summary_include_failures`（失败明细，默认开）、`auto_approve_summary_max_detail_lines`（明细行数上限，默认 30）
+
+3. **严格隔离与防漏发**  
+   - 汇总按 session 分开，**每个有变更的 session 各推一张**（文本或结构卡），带 `session_id` 走既有窗口路由（session 绑定 → flavor 默认 → 用户默认窗口），不做全局广播
+   - `last_pushed_at + 内容指纹（sha256）` 去重：同日同内容不重复推；事件增删、失败转成功都会改变指纹触发再推
+   - 补发路径：插件 terminate / SSE stop / 关静默或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
+   - pending 与 `last_*` 持久化到 AstrBot KV（键 `auto_approve_summary_v1`），重启不丢
+
+4. **命令触发** `/hapi summary`  
+   - `summary`：推送当前窗口可见且有变更的 session 汇总
+   - `summary all`：全部有变更的 session（各回各窗口）
+   - `summary <序号|ID>`：指定 session；`summary status`：查看队列与上次推送时间
+   - 手动触发与自动 flush 共用同一套「推送成功 → 清 pending → 更新 last_*」；无变更时提示「无新的托管汇总」，不会空卡刷屏
+   - 帮助归类「审批」；`/hapi help 审批` 可查
+
+5. **汇总卡渲染**  
+   新增 `render_kinds` 选项 `auto_approve_summary`（默认勾选）；`render_mode=card` 时汇总出结构卡（统计 + 失败置顶 + 成功明细折叠），`text` 或未勾选时纯文本，未安装 Pillow 自动回退文本。
+
+6. **WebUI 热更新**  
+   改静默 / mode / push / time 无需重连 SSE，保存后立即生效；关静默或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
+
 ## v3.2.6
 
 1. **修复 SSE 权限请求收不到的问题（兼容 hapi v0.27.0+ 事件结构）**  

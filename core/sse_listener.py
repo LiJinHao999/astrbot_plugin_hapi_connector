@@ -52,6 +52,15 @@ class SSEListener:
         self._auto_approve_enabled: bool = False
         self._auto_approve_start: str = "23:00"
         self._auto_approve_end: str = "07:00"
+        # 忙时托管静默汇总（dev-docs/auto-approve-silent-summary.md）
+        self._auto_approve_silent: bool = False
+        self._auto_approve_summary_mode: str = "window"
+        self._auto_approve_summary_push: str = "on_window_end"
+        self._auto_approve_summary_time: str = "08:00"
+        self._auto_approve_summary_include_failures: bool = True
+        self._auto_approve_summary_max_detail_lines: int = 30
+        # 汇总服务（main 组装后注入；append 前必须已就绪）
+        self.summary_service = None
         self._summary_msg_count: int = 5
         # {session_id: seq}，记录已触发通知的消息序号，防止重复
         self._compact_notified_seqs: dict[str, int] = {}
@@ -68,7 +77,11 @@ class SSEListener:
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00",
-              summary_msg_count: int = 5, max_reconnect_attempts: int = 0):
+              summary_msg_count: int = 5, max_reconnect_attempts: int = 0,
+              auto_approve_silent: bool = False, auto_approve_summary_mode: str = "window",
+              auto_approve_summary_push: str = "on_window_end", auto_approve_summary_time: str = "08:00",
+              auto_approve_summary_include_failures: bool = True,
+              auto_approve_summary_max_detail_lines: int = 30):
         """启动 SSE 监听任务"""
         self.output_level = output_level
         self._summary_msg_count = summary_msg_count
@@ -77,6 +90,12 @@ class SSEListener:
         self._auto_approve_enabled = auto_approve_enabled
         self._auto_approve_start = auto_approve_start
         self._auto_approve_end = auto_approve_end
+        self._auto_approve_silent = auto_approve_silent
+        self._auto_approve_summary_mode = auto_approve_summary_mode
+        self._auto_approve_summary_push = auto_approve_summary_push
+        self._auto_approve_summary_time = auto_approve_summary_time
+        self._auto_approve_summary_include_failures = auto_approve_summary_include_failures
+        self._auto_approve_summary_max_detail_lines = auto_approve_summary_max_detail_lines
         self._max_reconnect = max_reconnect_attempts
         self._debounce_sids: set[str] = set()
         self._debounce_task: asyncio.Task | None = None
@@ -97,6 +116,14 @@ class SSEListener:
     async def stop(self):
         """停止 SSE 监听"""
         self._stream_live = False
+        # 防漏发：停止前把未推送的托管汇总补发（need_flush 去重）
+        summary_svc = getattr(self, "summary_service", None)
+        if summary_svc is not None:
+            try:
+                if summary_svc.has_pending():
+                    await summary_svc.flush_all()
+            except Exception as e:
+                logger.warning("SSE stop 时托管汇总 flush 失败: %s", e)
         for task in (self._task, self._remind_task,
                      getattr(self, '_debounce_task', None),
                      getattr(self, '_completion_task', None),
@@ -348,11 +375,18 @@ class SSEListener:
 
                 if self._auto_approve_enabled and self._in_auto_approve_window() and not is_question_request(req):
                     # 忙时托管审批：自动批准非 question 请求
-                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                    ok, msg = await session_ops.approve_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
-                    result_mark = "✓" if ok else "✗"
-                    notify_msg = f"[忙时托管审批] 已自动批准\n{label}\n  {result_mark} {tool}"
-                    queued_notifications.append(notify_msg)
+                    if self._auto_approve_silent and self.summary_service is not None:
+                        # 静默收集：进托管汇总管线，不再逐条推送
+                        await self.summary_service.append_event(
+                            sid, "approve", ok, tool=str(tool), request_id=rid,
+                            detail=(None if ok else str(msg or "审批失败"))[:200],
+                        )
+                    else:
+                        result_mark = "✓" if ok else "✗"
+                        notify_msg = f"[忙时托管审批] 已自动批准\n{label}\n  {result_mark} {tool}"
+                        queued_notifications.append(notify_msg)
                 else:
                     is_q = is_question_request(req)
                     if is_q:
@@ -585,10 +619,17 @@ class SSEListener:
                 self._compact_notified_seqs[sid] = seq
                 label = session_label_short(sid, self.sessions_cache)
                 if self._auto_approve_enabled and self._in_auto_approve_window():
-                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                    ok, msg = await session_ops.send_message(self.client, sid, "/compact")
                     mark = "✓" if ok else "✗"
-                    await self._push_notification(
-                        f"[忙时托管审批] 已自动压缩上下文\n{label}\n  {mark} /compact", sid)
+                    if self._auto_approve_silent and self.summary_service is not None:
+                        # 静默收集：进托管汇总管线，不再逐条推送
+                        await self.summary_service.append_event(
+                            sid, "compact", ok,
+                            detail=(None if ok else str(msg or "自动压缩失败"))[:200],
+                        )
+                    else:
+                        await self._push_notification(
+                            f"[忙时托管审批] 已自动压缩上下文\n{label}\n  {mark} /compact", sid)
                 else:
                     async with self._lock:
                         # 为压缩请求分配序号
@@ -1070,6 +1111,37 @@ class SSEListener:
         except Exception as e:
             logger.warning("permission card push failed: %s", e, exc_info=True)
             await self._push_notification(fallback_text, session_id)
+
+    async def push_auto_approve_summary(self, session_id: str, view: dict, fallback_text: str) -> bool:
+        """托管汇总推送：结构卡优先，失败回退文本（§5.4 路由带 session_id）。
+
+        供 AutoApproveSummaryService 注入为推送回调；返回值=是否已发出。
+        """
+        plugin = self.plugin
+        if plugin is None:
+            await self._push_notification(fallback_text, session_id)
+            return True
+        try:
+            from ..render import output_present
+            payload = output_present.build_auto_approve_summary_payload(view)
+            notif = getattr(plugin, "notification_mgr", None)
+            if notif is None:
+                await self._push_notification(fallback_text, session_id)
+                return True
+            await output_present.present_push(
+                plugin,
+                notif,
+                "auto_approve_summary",
+                payload,
+                fallback_text,
+                session_id,
+                self.sessions_cache,
+            )
+            return True
+        except Exception as e:
+            logger.warning("auto approve summary push failed: %s", e, exc_info=True)
+            await self._push_notification(fallback_text, session_id)
+            return True
 
     async def load_existing_pending(self):
         """启动时从已有 session 加载待审批请求"""
