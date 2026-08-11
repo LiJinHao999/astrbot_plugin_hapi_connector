@@ -845,6 +845,13 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
             "detail": f"{deny_n} 次",
         })
 
+    runtime_sec = float(view.get("runtime_sec") or 0)
+    if runtime_sec >= 1:
+        mins = int(runtime_sec // 60)
+        secs = int(runtime_sec % 60)
+        detail = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+        rows.append({"type": "kv", "label": "运行", "detail": detail})
+
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
     max_lines = int(view.get("max_detail_lines") or 30)
@@ -1083,16 +1090,18 @@ async def _push_plain_with_images(
     text: str,
     session_id: str,
     sessions_cache: list[dict],
-) -> None:
-    """先发改写后的正文（图位→「见下方图片」），再按顺序发本地图。"""
+) -> bool:
+    """先发改写后的正文（图位→「见下方图片」），再按顺序发本地图。返回是否至少发出一次。"""
     plain, images = extract_local_images_for_plain(text)
+    any_ok = False
     if plain.strip():
-        await notification_mgr.push_notification(
+        ok = await notification_mgr.push_notification(
             plain, session_id, sessions_cache
         )
+        any_ok = any_ok or bool(ok)
     for idx, (alt, path) in enumerate(images):
         try:
-            await notification_mgr.push_image_notification(
+            ok = await notification_mgr.push_image_notification(
                 path,
                 session_id,
                 sessions_cache,
@@ -1102,6 +1111,7 @@ async def _push_plain_with_images(
                     f"{hash(alt) & 0xFFFF:x}"
                 ),
             )
+            any_ok = any_ok or bool(ok)
         except Exception as e:
             logger.warning(
                 "plain embed image push failed idx=%s path=%s: %s",
@@ -1109,6 +1119,7 @@ async def _push_plain_with_images(
                 path[:60],
                 e,
             )
+    return any_ok
 
 
 async def present(
@@ -1194,35 +1205,36 @@ async def present_push(
     session_id: str,
     sessions_cache: list[dict],
 ) -> bool:
-    """SSE/后台推送路径：尝试发图，失败则发文本（可跟嵌图）。返回是否已发送。"""
+    """SSE/后台推送路径：尝试发图，失败则发文本（可跟嵌图）。
+
+    返回是否至少成功发出（无路由/全失败为 False；见 busy-hours-agent-push.md §6）。
+    """
     result = try_render_png(plugin, kind, data)
     if result is None or not result.png:
         source = _plain_source_text(kind, data, fallback_text)
-        await _push_plain_with_images(
+        return await _push_plain_with_images(
             notification_mgr, source, session_id, sessions_cache
         )
-        return True
 
     path = None
     try:
         path = write_temp_png(result.png)
         # 只发图：footer 已画在卡内，不再 caption 再冒一条文字
         logger.info("card push kind=%s path=%s sid=%s", kind, path, (session_id or "")[:8])
-        await notification_mgr.push_image_notification(
+        ok = await notification_mgr.push_image_notification(
             path,
             session_id,
             sessions_cache,
             caption="",
             dedupe_key=f"card:{kind}:{session_id}:{hash(fallback_text) & 0xFFFFFFFF:x}",
         )
-        return True
+        return bool(ok)
     except Exception as e:
         logger.warning("present_push image failed kind=%s: %s", kind, e)
         source = _plain_source_text(kind, data, fallback_text)
-        await _push_plain_with_images(
+        return await _push_plain_with_images(
             notification_mgr, source, session_id, sessions_cache
         )
-        return True
     finally:
         if path:
             # 稍延迟删除，避免部分适配器异步读文件时已被删

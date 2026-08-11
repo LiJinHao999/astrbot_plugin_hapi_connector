@@ -137,6 +137,31 @@ export const CONFIG_SCHEMA_FALLBACK = {
           }
         },
         {
+          "key": "busy_agent_push_level",
+          "label": "忙时消息",
+          "type": "enum_cards",
+          "help": "托管开启且在忙时段内生效。只管 Agent 对话推送，与操作记录汇总无关。",
+          "default": "inherit",
+          "schema_type": "string",
+          "options": [
+            {
+              "value": "none",
+              "title": "不推送",
+              "desc": "忙时不推对话与完成提示；question 仍推。"
+            },
+            {
+              "value": "summary",
+              "title": "仅摘要",
+              "desc": "忙时按摘要级别：完成时推最近几条。"
+            },
+            {
+              "value": "inherit",
+              "title": "跟随默认",
+              "desc": "与上方「消息推送详细程度」一致。"
+            }
+          ]
+        },
+        {
           "key": "render_mode",
           "label": "推送渲染模式",
           "type": "enum_cards",
@@ -343,6 +368,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
     "refresh_before_expiry": 180,
     "output_level": "simple",
     "summary_msg_count": 5,
+    "busy_agent_push_level": "inherit",
     "quick_prefix": ">",
     "poke_approve": true,
     "poke_action": "approve",
@@ -385,6 +411,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
     "refresh_before_expiry",
     "output_level",
     "summary_msg_count",
+    "busy_agent_push_level",
     "render_mode",
     "render_kinds",
     "auto_approve_silent",

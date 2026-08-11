@@ -56,6 +56,13 @@
     "type": "int",
     "default": 5
   },
+  "busy_agent_push_level": {
+    "description": "忙时消息推送",
+    "type": "string",
+    "default": "inherit",
+    "options": ["none", "summary", "inherit"],
+    "hint": "托管开启且在忙时段内：不推送 / 仅摘要 / 跟随默认。只管 Agent 对话，不管操作记录"
+  },
   "quick_prefix": {
     "description": "快捷发送前缀",
     "type": "string",

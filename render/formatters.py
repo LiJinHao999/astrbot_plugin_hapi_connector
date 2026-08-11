@@ -1606,7 +1606,7 @@ HELP_COMMANDS = [
     {
         "topic": "approve",
         "usage": "/hapi summary [all|<序号|ID>|status]",
-        "summary": "推送忙时托管操作记录：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列",
+        "summary": "操作记录（上一统计窗，可重复发送）",
         "example": "/hapi summary",
         "home": False,
     },
@@ -2006,6 +2006,15 @@ def format_auto_approve_summary(view: dict) -> str:
     if deny_n:
         lines.append(f"拒绝  {deny_n} 次")
 
+    runtime_sec = float(view.get("runtime_sec") or 0)
+    if runtime_sec >= 1:
+        mins = int(runtime_sec // 60)
+        secs = int(runtime_sec % 60)
+        if mins:
+            lines.append(f"运行约 {mins}m{secs:02d}s" if secs else f"运行约 {mins}m")
+        else:
+            lines.append(f"运行约 {secs}s")
+
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
     max_lines = int(view.get("max_detail_lines") or 30)
@@ -2095,7 +2104,13 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
         label = session_label_short(sid, sessions_cache).splitlines()[0]
         pending = int(info.get("pending") or 0)
         last = _fmt_summary_dt(info.get("last_pushed_at"))
-        lines.append(f"  {label[:40]}  pending={pending}  last={last}")
+        bits = [f"pending={pending}", f"last={last}"]
+        if info.get("has_snapshot"):
+            bits.append("有上一窗")
+        rt = float(info.get("runtime_sec") or 0)
+        if rt >= 1:
+            bits.append(f"运行{int(rt // 60)}m" if rt >= 60 else f"运行{int(rt)}s")
+        lines.append(f"  {label[:40]}  " + "  ".join(bits))
     return "\n".join(lines)
 
 

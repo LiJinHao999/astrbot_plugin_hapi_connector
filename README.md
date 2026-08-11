@@ -124,6 +124,7 @@ hapi codex    # OpenAI Codex
 |--------|------|--------|
 | `output_level` | SSE 推送级别：`silence` / `simple` / `summary` / `detail` | simple |
 | `summary_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
+| `busy_agent_push_level` | 忙时消息：`none` / `summary` / `inherit`（托管开启且在忙时段内覆盖 Agent 对话推送） | inherit |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 启用戳一戳快捷操作（仅 QQ NapCat 等） | 开启 |
 | `poke_action` | 戳一戳映射：`approve` / `pending` / `list` / `status` / `stop` / `output_cycle` / `none`（不含 deny，防误触） | approve |
@@ -159,7 +160,7 @@ hapi codex    # OpenAI Codex
 | `auto_approve_summary_include_failures` | 汇总是否含失败 / 拒绝明细 | 开启 |
 | `auto_approve_summary_max_detail_lines` | 单 session 明细行数上限，超出折叠 | 30 |
 
-> 汇总严格按 session 隔离：每个有变更的 session 各推一张（文本或卡片），带 session_id 走既有窗口路由；同一 session 同日同内容不重复推（内容指纹去重）；插件停止 / 关开关 / 改策略时会自动补发。聊天里可用 `/hapi summary` 手动触发，`/hapi summary status` 查看队列。
+> 汇总严格按 session 隔离：每个有变更的 session 各推一张，走既有窗口路由；自动推送用内容指纹防刷；`/hapi summary` 可重复发送上一统计窗。忙时 Agent 对话另见 `busy_agent_push_level`（`dev-docs/busy-hours-agent-push.md`）。
 
 ---
 
@@ -267,7 +268,7 @@ hapi codex    # OpenAI Codex
 | `/hapi answer [序号]` | 交互式回答 question 请求 |
 | `/hapi deny` | 全部拒绝 |
 | `/hapi deny <序号>` | 拒绝单个请求 |
-| `/hapi summary [all\|<序号\|ID>\|status]` | 推送托管操作记录：无参=当前窗口有变更的 session；`all`=全部（各回各窗口）；指定序号/ID 推单个；`status` 查看队列与上次推送时间 |
+| `/hapi summary [all\|<序号\|ID>\|status]` | 操作记录（上一统计窗，可重复发送）；`status` 查看队列 |
 | 戳一戳机器人 | 批准所有普通权限请求 + 交互式回答 question（仅 QQ NapCat，需开启 `poke_approve`） |
 
 #### 📁 文件操作

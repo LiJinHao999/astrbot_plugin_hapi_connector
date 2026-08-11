@@ -28,6 +28,7 @@ CONFIG_KEYS = (
     "refresh_before_expiry",
     "output_level",
     "summary_msg_count",
+    "busy_agent_push_level",
     "quick_prefix",
     "poke_approve",
     "poke_action",
@@ -76,6 +77,7 @@ RECONNECT_KEYS = frozenset({
 })
 
 OUTPUT_LEVELS = ("silence", "simple", "summary", "detail")
+BUSY_AGENT_PUSH_LEVELS = ("none", "summary", "inherit")
 RENDER_MODES = ("text", "card")
 FORMULA_MODES = ("off", "detect", "formula_only", "plain")
 CARD_PRESETS = ("terminal_light", "terminal_dark", "clean", "compact")
@@ -2118,6 +2120,15 @@ def validate_config_patch(patch: dict) -> dict[str, Any]:
             cleaned[key] = val
             continue
 
+        if key == "busy_agent_push_level":
+            val = str(raw_val or "").strip()
+            if val not in BUSY_AGENT_PUSH_LEVELS:
+                raise ConfigValidationError(
+                    f"busy_agent_push_level 必须是 {'/'.join(BUSY_AGENT_PUSH_LEVELS)}"
+                )
+            cleaned[key] = val
+            continue
+
         if key in ("auto_approve_start", "auto_approve_end", "auto_approve_summary_time"):
             cleaned[key] = _as_hhmm(raw_val, key)
             continue
@@ -2285,6 +2296,9 @@ def apply_runtime_config(plugin, patch: dict) -> None:
     if "summary_msg_count" in patch:
         plugin._summary_msg_count = patch["summary_msg_count"]
         sse._summary_msg_count = patch["summary_msg_count"]
+    if "busy_agent_push_level" in patch:
+        val = patch["busy_agent_push_level"]
+        sse._busy_agent_push_level = val if val in BUSY_AGENT_PUSH_LEVELS else "inherit"
     if "quick_prefix" in patch:
         plugin._quick_prefix = patch["quick_prefix"]
     if "poke_approve" in patch:

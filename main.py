@@ -526,6 +526,7 @@ class HapiConnectorPlugin(Star):
             auto_approve_summary_time=self.config.get("auto_approve_summary_time", "08:00"),
             auto_approve_summary_include_failures=self.config.get("auto_approve_summary_include_failures", True),
             auto_approve_summary_max_detail_lines=self.config.get("auto_approve_summary_max_detail_lines", 30),
+            busy_agent_push_level=self.config.get("busy_agent_push_level", "inherit"),
         )
 
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)

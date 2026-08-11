@@ -2182,17 +2182,15 @@ class CommandHandlers:
     # ── summary ──
 
     async def cmd_summary(self, event: AstrMessageEvent, arg: str = ""):
-        """忙时托管操作记录：/hapi summary [all|<序号|ID>|status]
+        """操作记录：/hapi summary [all|<序号|ID>|status]
 
-        无参 = 当前窗口可见且有 pending 的 session；all = 全部（各回各窗口）；
-        指定序号/ID = 只推该 session；status = 只读队列状态。
-        手动触发与自动 flush 共用同一套「推送成功 → 清 pending → 更新 last_*」。
+        优先上一统计窗快照，否则当前桶；可重复发送（busy-hours-agent-push.md §4）。
         """
         await self.state_mgr.ensure_primary_session(event)
         await self.state_mgr.set_user_state(event)
         summary_svc = getattr(self.plugin, "summary_service", None)
         if summary_svc is None:
-            yield event.plain_result("操作记录服务未就绪，请重载插件后再试")
+            yield event.plain_result("操作记录服务未就绪")
             return
 
         normalized = (arg or "").strip()
@@ -2206,13 +2204,14 @@ class CommandHandlers:
 
         status = summary_svc.status()
         session_infos = status.get("sessions") or {}
-        pending_sids = [
+        # 有当前桶或上一窗快照的 sid
+        record_sids = [
             sid for sid, info in session_infos.items()
-            if int(info.get("pending") or 0) > 0
+            if int(info.get("pending") or 0) > 0 or info.get("has_snapshot")
         ]
 
         if normalized == "all":
-            target_sids = pending_sids
+            target_sids = record_sids
         elif normalized:
             target_sid, err = self._resolve_target_verbose(normalized)
             if err:
@@ -2221,35 +2220,31 @@ class CommandHandlers:
             target_sids = [target_sid] if target_sid else []
         else:
             visible = self._visible_sids(event)
-            target_sids = [sid for sid in pending_sids if sid in visible]
+            target_sids = [sid for sid in record_sids if sid in visible]
 
         if not target_sids:
-            yield event.plain_result(
-                "没有待推送的操作记录\n"
-                "（操作记录未开启、暂无未推送事件，或当前窗口无相关 session；"
-                "可用 /hapi summary status 查看）"
-            )
+            yield event.plain_result("无记录")
             return
 
         results: dict[str, dict] = {}
         for sid in target_sids:
-            results[sid] = await summary_svc.flush_session(sid)
+            results[sid] = await summary_svc.push_for_command(sid)
 
         pushed = [sid for sid, r in results.items() if r.get("pushed")]
-        no_change = [
-            sid for sid, r in results.items()
-            if r.get("reason") in ("no_pending", "no_change")
-        ]
         failed = [sid for sid, r in results.items() if r.get("reason") == "push_failed"]
+        empty = [
+            sid for sid, r in results.items()
+            if r.get("reason") in ("no_record", "no_pending", "no_change")
+        ]
 
         lines = []
         if pushed:
-            lines.append(f"✓ 已推送 {len(pushed)} 个 session 的操作记录（各回各窗口）")
-        if no_change:
-            lines.append(f"ℹ️ {len(no_change)} 个 session 无新的操作记录（同日且内容无变化）")
+            lines.append(f"✓ 已发送 {len(pushed)} 个 session")
         if failed:
-            lines.append("⚠️ 推送失败: " + ", ".join(s[:8] for s in failed))
-        yield event.plain_result("\n".join(lines) or "没有可推送的操作记录")
+            lines.append("⚠ 失败: " + ", ".join(s[:8] for s in failed))
+        if empty and not pushed:
+            lines.append("无记录")
+        yield event.plain_result("\n".join(lines) or "无记录")
 
     # ── git 查看（只读） ──
 

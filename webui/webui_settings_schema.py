@@ -46,6 +46,7 @@ GROUPS: list[dict[str, Any]] = [
         "fields": [
             "output_level",
             "summary_msg_count",
+            "busy_agent_push_level",
             "render_mode",
             "render_kinds",
             "auto_approve_silent",
@@ -139,6 +140,16 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "control": "number",
         "show_if": {"key": "output_level", "eq": "summary"},
     },
+    "busy_agent_push_level": {
+        "label": "忙时消息",
+        "help": "托管开启且在忙时段内生效。只管 Agent 对话推送，与操作记录汇总无关。",
+        "control": "enum_cards",
+        "option_meta": {
+            "none": {"title": "不推送", "desc": "忙时不推对话与完成提示；question 仍推。"},
+            "summary": {"title": "仅摘要", "desc": "忙时按摘要级别：完成时推最近几条。"},
+            "inherit": {"title": "跟随默认", "desc": "与上方「消息推送详细程度」一致。"},
+        },
+    },
     "render_mode": {
         "label": "推送渲染模式",
         "help": "推到聊天里的内容以什么形式显示。图片模式对代码块、表格更友好（需安装 Pillow，可在「交互优化」页一键装）。",
@@ -164,21 +175,21 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_summary_mode": {
         "label": "汇总方式",
-        "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；手动触发：不自动推送，每次执行 /hapi summary 命令时推当前积累的一版。开启「Agent 操作记录汇总」后生效。",
+        "help": "统计窗划分。/hapi summary 可重复发送上一窗。",
         "control": "enum_cards",
         "option_meta": {
-            "window": {"title": "按托管时段（推荐）", "desc": "夜间托管结束一次性结算，最贴合睡眠场景。"},
-            "daily": {"title": "按天", "desc": "自然日内的事件归一天，随时可手动推。"},
-            "per_event": {"title": "手动触发", "desc": "不自动推送，每次手动 /hapi summary 命令推一版。"},
+            "window": {"title": "按托管时段（推荐）", "desc": "一段托管窗一个统计桶。"},
+            "daily": {"title": "按天", "desc": "自然日一个桶。"},
+            "per_event": {"title": "手动触发", "desc": "不自动推，命令发当前/上一窗。"},
         },
     },
     "auto_approve_summary_push": {
         "label": "推送时机",
-        "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「Agent 操作记录汇总」后生效。",
+        "help": "自动推送时机；命令始终可重发。",
         "control": "enum_cards",
         "option_meta": {
-            "on_window_end": {"title": "托管结束时（推荐）", "desc": "23:00–07:00 这种窗结束后立刻推一版。"},
-            "at_fixed_time": {"title": "每天固定时间", "desc": "每天在下方设置的时间推送，如 08:00。"},
+            "on_window_end": {"title": "托管结束时（推荐）", "desc": "窗结束边沿自动推一版。"},
+            "at_fixed_time": {"title": "每天固定时间", "desc": "每天到点推一版。"},
         },
     },
     "auto_approve_summary_time": {

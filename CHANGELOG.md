@@ -1,5 +1,14 @@
 # 更新日志
 
+## v3.3.0（补充）— 忙时 Agent 消息等级 + 操作记录可重发
+
+> 过程文档：`dev-docs/busy-hours-agent-push.md`
+
+1. **忙时消息**（`busy_agent_push_level`）：托管开启且在忙时段内，Agent 对话推送可为 `none`（不推）/ `summary`（仅完成摘要）/ `inherit`（跟随 `output_level`）。与操作记录汇总正交；question 仍推。
+2. **`/hapi summary` 可重发**：优先上一统计窗快照，否则当前桶；推送成功不再作为销毁数据的条件。窗结束归档 `last_closed_snapshot`。
+3. **推送失败可感知**：`NotificationManager` / `present_push` 返回是否发出；无路由或全失败时汇总不记「已推」。
+4. **运行时长**：thinking 边沿累加，操作记录中一行展示。
+
 ## v3.3.0 — 忙时托管「Agent 操作记录汇总」
 
 > 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)，完整设计见 `dev-docs/auto-approve-silent-summary.md`。
