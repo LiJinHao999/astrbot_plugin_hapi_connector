@@ -42,32 +42,32 @@ GROUPS: list[dict[str, Any]] = [
         "id": "push",
         "title": "推送通知",
         "nav": "推送",
-        "desc": "平时推多少、渲成什么形式。忙时免打扰看下方「忙时消息」与「操作记录汇总」（需先在「审批」开托管时段）。快捷前缀、戳一戳、图片样式在「交互优化」。",
+        "desc": "平时推多少、渲成什么形式。夜里少吵请到「审批」开托管，并设「忙时托管免打扰」与「操作记录汇总」。快捷前缀、戳一戳、图片样式在「交互优化」。",
         "fields": [
             "output_level",
             "summary_msg_count",
-            "busy_agent_push_level",
             "render_mode",
             "render_kinds",
-            "auto_approve_silent",
-            "auto_approve_summary_mode",
-            "auto_approve_summary_push",
-            "auto_approve_summary_time",
-            "auto_approve_summary_include_failures",
-            "auto_approve_summary_max_detail_lines",
         ],
     },
     {
         "id": "approve",
         "title": "权限审批与托管",
         "nav": "审批",
-        "desc": "待批提醒与忙时托管（时段内自动批权限）。对话少推看「推送 → 忙时消息」；操作少刷屏看「推送 → 操作记录汇总」。",
+        "desc": "待批提醒 + 忙时托管：设时段自动批权限，下面可再压对话推送、把操作收成汇总，睡醒再看。",
         "fields": [
             "remind_pending",
             "remind_interval",
             "auto_approve_enabled",
             "auto_approve_start",
             "auto_approve_end",
+            "busy_agent_push_level",
+            "auto_approve_silent",
+            "auto_approve_summary_mode",
+            "auto_approve_summary_push",
+            "auto_approve_summary_time",
+            "auto_approve_summary_include_failures",
+            "auto_approve_summary_max_detail_lines",
         ],
     },
 ]
@@ -141,13 +141,23 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "show_if": {"key": "output_level", "eq": "summary"},
     },
     "busy_agent_push_level": {
-        "label": "忙时消息",
-        "help": "托管开启且在忙时段内：压 Agent 对话推送。与操作记录汇总无关；question 提问始终推。",
+        "label": "忙时托管免打扰",
+        "help": "仅在托管开启且处于上方时段时生效：压 AI 对话刷屏。权限请求由托管自动放行，不会再弹批。下方「操作记录汇总」管的是自动批/拒绝等操作通知。",
         "control": "enum_cards",
+        "show_if": {"key": "auto_approve_enabled", "eq": True},
         "option_meta": {
-            "none": {"title": "不推送", "desc": "忙时不推对话与完成提示；question 仍推。"},
-            "summary": {"title": "仅摘要", "desc": "忙时只在任务完成时推最近几条。"},
-            "inherit": {"title": "跟随默认", "desc": "与上方「消息推送详细程度」一致。"},
+            "none": {
+                "title": "不推送",
+                "desc": "忙时段内不推 AI 对话与完成提示。权限已自动批，不弹批。仅当 AI 向你提问、必须作答时才会提醒（否则会话会卡住）。",
+            },
+            "summary": {
+                "title": "仅摘要",
+                "desc": "忙时段内不实时刷对话，只在任务完成时推最近几条。权限仍自动批，不弹批。",
+            },
+            "inherit": {
+                "title": "跟随默认",
+                "desc": "对话推送与「推送」页的「消息推送详细程度」一致。权限仍自动批。",
+            },
         },
     },
     "render_mode": {
@@ -168,16 +178,20 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_silent": {
         "label": "Agent 操作记录汇总",
-        "help": "托管时段内自动批/手动批/拒绝/压缩不逐条推，按下方策略汇总（可含 git 快照）。关=逐条推。托管仍自动执行。聊天可 /hapi summary 重发。",
+        "help": "托管时段内自动批/手动批/拒绝/压缩不逐条推，按下方策略汇总（可含 git 快照）。关=仍可能逐条推「已自动批准」。托管仍自动执行。聊天可 /hapi summary 重发。",
         "control": "bool",
         "warn": "开启后托管时段操作改为汇总推送，不再逐条刷屏；托管本身仍会自动批准。",
         "bool_labels": ["关闭（逐条推送）", "开启（汇总推送）"],
+        "show_if": {"key": "auto_approve_enabled", "eq": True},
     },
     "auto_approve_summary_mode": {
         "label": "汇总方式",
         "help": "统计窗怎么分桶；与推送时机无关。/hapi summary 可随时重发。",
         "control": "enum_cards",
-        "show_if": {"key": "auto_approve_silent", "eq": True},
+        "show_if": [
+            {"key": "auto_approve_enabled", "eq": True},
+            {"key": "auto_approve_silent", "eq": True},
+        ],
         "option_meta": {
             "window": {"title": "按托管时段（推荐）", "desc": "一段托管窗一个桶；关窗可归档快照。"},
             "rolling_24h": {"title": "最近24小时", "desc": "滚动 24h；过期事件自动丢掉。"},
@@ -187,7 +201,10 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "label": "推送时机",
         "help": "何时自动推汇总；命令始终可重发。",
         "control": "enum_cards",
-        "show_if": {"key": "auto_approve_silent", "eq": True},
+        "show_if": [
+            {"key": "auto_approve_enabled", "eq": True},
+            {"key": "auto_approve_silent", "eq": True},
+        ],
         "option_meta": {
             "on_window_end": {"title": "托管结束时（推荐）", "desc": "窗 True→False 边沿推一版。"},
             "at_fixed_time": {"title": "每天固定时间", "desc": "每天到点推；窗结束不自动推。"},
@@ -198,8 +215,9 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "help": "仅「每天固定时间」生效。到点对有内容的 session 各推一版。",
         "control": "time",
         "placeholder": "08:00",
-        # 须同时：汇总开 + 推送时机=定点
+        # 须同时：托管开 + 汇总开 + 推送时机=定点
         "show_if": [
+            {"key": "auto_approve_enabled", "eq": True},
             {"key": "auto_approve_silent", "eq": True},
             {"key": "auto_approve_summary_push", "eq": "at_fixed_time"},
         ],
@@ -209,13 +227,19 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "help": "开：失败/拒绝列明细（置顶）；关：只计次数。",
         "control": "bool",
         "bool_labels": ["关闭", "开启"],
-        "show_if": {"key": "auto_approve_silent", "eq": True},
+        "show_if": [
+            {"key": "auto_approve_enabled", "eq": True},
+            {"key": "auto_approve_silent", "eq": True},
+        ],
     },
     "auto_approve_summary_max_detail_lines": {
         "label": "明细行数上限",
         "help": "单 session 成功明细最多行数，超出折叠为「另有 N 条」。",
         "control": "number",
-        "show_if": {"key": "auto_approve_silent", "eq": True},
+        "show_if": [
+            {"key": "auto_approve_enabled", "eq": True},
+            {"key": "auto_approve_silent", "eq": True},
+        ],
     },
     "remind_pending": {
         "label": "待审批超时提醒",
@@ -231,7 +255,7 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_enabled": {
         "label": "忙时托管审批",
-        "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。",
+        "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。开启后可再设下方「忙时托管免打扰」压对话、以及「操作记录汇总」收操作通知。",
         "control": "bool",
         "warn": "开启后，时段内 AI 的所有操作都会自动批准，包括改文件、跑命令。请确认你信任正在跑的任务。",
         "bool_labels": ["关闭（更安全）", "开启"],

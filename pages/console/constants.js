@@ -58,7 +58,7 @@ const OUTPUT_LEVELS = [
   { value: "detail", title: "详细" },
 ];
 
-/** 忙时 Agent 消息推送（托管窗内覆盖 output_level） */
+/** 忙时托管免打扰（托管窗内覆盖 output_level，压 AI 对话） */
 const BUSY_AGENT_PUSH_LEVELS = [
   { value: "none", title: "不推送" },
   { value: "summary", title: "仅摘要" },

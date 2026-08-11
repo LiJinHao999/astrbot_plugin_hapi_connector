@@ -1,10 +1,15 @@
 # 更新日志
 
+## v3.3.0（补充 2）— 忙时托管免打扰归位审批页
+
+1. **文案与分组**：`busy_agent_push_level` 对外改称「**忙时托管免打扰**」，从「推送」迁到「审批」→ 忙时托管审批时段下方；操作记录汇总同组。三档文案写清：只压 AI 对话、权限由托管自动批不弹批、仅 AI 提问必须作答时仍提醒。
+2. **联动显示**：托管关时隐藏免打扰与操作记录汇总相关子项（概览页对应控件 disabled）。
+
 ## v3.3.0（补充）— 忙时 Agent 消息等级 + 操作记录可重发
 
 > 过程文档：`dev-docs/busy-hours-agent-push.md`
 
-1. **忙时消息**（`busy_agent_push_level`）：托管开启且在忙时段内，Agent 对话推送可为 `none`（不推）/ `summary`（仅完成摘要）/ `inherit`（跟随 `output_level`）。与操作记录汇总正交；question 仍推。
+1. **忙时托管免打扰**（`busy_agent_push_level`，原称「忙时消息」）：托管开启且在忙时段内，Agent 对话推送可为 `none`（不推）/ `summary`（仅完成摘要）/ `inherit`（跟随 `output_level`）。与操作记录汇总正交；AI 提问仍推。
 2. **`/hapi summary` 可重发**：优先上一统计窗快照，否则当前桶；推送成功不再作为销毁数据的条件。窗结束归档 `last_closed_snapshot`。
 3. **推送失败可感知**：`NotificationManager` / `present_push` 返回是否发出；无路由或全失败时汇总不记「已推」。
 4. **运行时长**：thinking 边沿累加，操作记录中一行展示。
@@ -19,7 +24,7 @@
 1. **新增 Agent 操作记录汇总**（`auto_approve_silent`，键名保留兼容，默认关闭，行为与旧版一致）  
    开启后，忙时托管时段内 agent 的**全部操作**（自动批准、手动批准的请求、拒绝、自动压缩，含工具与参数摘要）**不再逐条推送**，改为按策略收集汇总推送，并附带 git 变更快照。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
 
-2. **汇总方式与推送时机可配置**（WebUI「设置 → 推送通知」底部）  
+2. **汇总方式与推送时机可配置**（WebUI「设置 → 审批」托管时段下方；v3.3.0 补充 2 从推送页迁入）  
    - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `最近24小时`（滚动窗口，事件超 24h 过期）
    - `auto_approve_summary_push`：`托管结束时`（默认）/ `每天固定时间`（`auto_approve_summary_time`，默认 08:00）
    - 高级：`auto_approve_summary_include_failures`（失败明细，默认开）、`auto_approve_summary_max_detail_lines`（明细行数上限，默认 30）
@@ -41,7 +46,7 @@
    新增 `render_kinds` 选项 `auto_approve_summary`（默认勾选）；`render_mode=card` 时汇总出结构卡（统计 + 失败置顶 + 成功明细折叠），`text` 或未勾选时纯文本，未安装 Pillow 自动回退文本。
 
 6. **WebUI 热更新**  
-   改操作记录开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作记录或关托管时先把已收集的汇总补发（防漏发）。设置项位于「推送通知」分组。
+   改操作记录开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作记录或关托管时先把已收集的汇总补发（防漏发）。设置项位于「审批」分组（托管相关，v3.3.0 补充 2）。
 
 7. **git 状态 / 变更统计 / 文件 diff 查看（只读）**（dev-docs §10 关联能力落地）  
    - `/hapi git`：当前 session 工作区 git 状态（porcelain 解析为可读列表，含 修改/新增/删除/重命名/冲突/未跟踪）

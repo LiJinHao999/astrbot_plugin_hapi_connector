@@ -57,11 +57,11 @@
     "default": 5
   },
   "busy_agent_push_level": {
-    "description": "忙时消息推送",
+    "description": "忙时托管免打扰",
     "type": "string",
     "default": "inherit",
     "options": ["none", "summary", "inherit"],
-    "hint": "托管开启且在忙时段内：不推送 / 仅摘要 / 跟随默认。只管 Agent 对话，不管操作记录"
+    "hint": "托管开启且在忙时段内压 AI 对话：不推送 / 仅摘要 / 跟随默认。权限由托管自动批；操作记录汇总见 auto_approve_silent"
   },
   "quick_prefix": {
     "description": "快捷发送前缀",
