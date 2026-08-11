@@ -58,6 +58,13 @@ const OUTPUT_LEVELS = [
   { value: "detail", title: "详细" },
 ];
 
+/** 忙时 Agent 消息推送（托管窗内覆盖 output_level） */
+const BUSY_AGENT_PUSH_LEVELS = [
+  { value: "none", title: "不推送" },
+  { value: "summary", title: "仅摘要" },
+  { value: "inherit", title: "跟随默认" },
+];
+
 /* 与 formatters.HELP_COMMANDS / HELP_TOPICS 对齐 */
 const HELP_TOPICS = [
   { id: "session", name: "会话", desc: "Session 管理" },
@@ -125,6 +132,7 @@ export {
   RENDER_KIND_LABELS,
   FLAVOR_ROUTE_KEYS,
   OUTPUT_LEVELS,
+  BUSY_AGENT_PUSH_LEVELS,
   HELP_TOPICS,
   HELP_COMMANDS,
 };

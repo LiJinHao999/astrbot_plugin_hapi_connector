@@ -1,7 +1,7 @@
 /**
  * 概览页：连接指标 + 机器负载 + 常用设置
  */
-import { OUTPUT_LEVELS } from "../constants.js?v=3.0.1";
+import { OUTPUT_LEVELS, BUSY_AGENT_PUSH_LEVELS } from "../constants.js?v=3.0.1";
 import { state, store, wTitle } from "../state.js?v=3.0.1";
 import { $, $$, esc, attr } from "../utils.js?v=3.0.1";
 import {
@@ -274,6 +274,13 @@ function renderOverview() {
     (o) =>
       `<option value="${o.value}" ${cfg.output_level === o.value ? "selected" : ""}>${esc(o.title)}</option>`,
   ).join("");
+  const busyLevel = cfg.busy_agent_push_level || "inherit";
+  const busyLevelOpts = BUSY_AGENT_PUSH_LEVELS.map(
+    (o) =>
+      `<option value="${o.value}" ${busyLevel === o.value ? "selected" : ""}>${esc(o.title)}</option>`,
+  ).join("");
+  const autoApproveOn = !!cfg.auto_approve_enabled;
+  const opSummaryOn = !!cfg.auto_approve_silent;
 
   const primarySelectOpts =
     `<option value="">未设置</option>` +
@@ -343,32 +350,53 @@ function renderOverview() {
             <span class="switch-text">${cfg.poke_approve ? "开启" : "关闭"}</span>
           </label>
         </div>
+
+        <div class="qs-field qs-section">
+          <span class="qs-label">忙时免打扰</span>
+          <span class="qs-section-hint">托管自动批 + 压对话推送 + 可选操作汇总</span>
+        </div>
         <div class="qs-field qs-bool">
           <span class="qs-label">忙时托管审批</span>
           <label class="switch">
-            <input id="qs-auto" type="checkbox" ${cfg.auto_approve_enabled ? "checked" : ""} />
+            <input id="qs-auto" type="checkbox" ${autoApproveOn ? "checked" : ""} />
             <span class="switch-track" aria-hidden="true"></span>
-            <span class="switch-text">${cfg.auto_approve_enabled ? "开启" : "关闭"}</span>
+            <span class="switch-text">${autoApproveOn ? "开启" : "关闭"}</span>
           </label>
         </div>
         <label class="qs-field">
-          <span class="qs-label">自动批准 从</span>
+          <span class="qs-label">托管从</span>
           <input id="qs-auto-start" class="ctrl mono" type="text" inputmode="numeric" autocomplete="off"
             spellcheck="false" placeholder="23:00" maxlength="5"
-            value="${attr(cfg.auto_approve_start || "23:00")}" title="整段输入 HH:MM，如 23:00" />
+            value="${attr(cfg.auto_approve_start || "23:00")}" title="整段输入 HH:MM，如 23:00"
+            ${autoApproveOn ? "" : "disabled"} />
         </label>
         <label class="qs-field">
-          <span class="qs-label">自动批准 到</span>
+          <span class="qs-label">托管到</span>
           <input id="qs-auto-end" class="ctrl mono" type="text" inputmode="numeric" autocomplete="off"
             spellcheck="false" placeholder="07:00" maxlength="5"
-            value="${attr(cfg.auto_approve_end || "07:00")}" title="整段输入 HH:MM，如 07:00" />
+            value="${attr(cfg.auto_approve_end || "07:00")}" title="整段输入 HH:MM，如 07:00"
+            ${autoApproveOn ? "" : "disabled"} />
         </label>
+        <label class="qs-field">
+          <span class="qs-label">忙时消息</span>
+          <select id="qs-busy-level" class="ctrl" title="托管开启且在忙时段内压 Agent 对话">${busyLevelOpts}</select>
+        </label>
+        <div class="qs-field qs-bool">
+          <span class="qs-label">操作记录汇总</span>
+          <label class="switch">
+            <input id="qs-op-summary" type="checkbox" ${opSummaryOn ? "checked" : ""} />
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text">${opSummaryOn ? "开启" : "关闭"}</span>
+          </label>
+        </div>
         <div class="qs-field qs-note">
           <span class="qs-label">说明</span>
           <span class="qs-note-text">${
-            cfg.auto_approve_enabled
-              ? "这段时间内 AI 的操作请求会自动放行（适合睡觉时挂机），支持跨午夜"
-              : "开启后，设定时段内 AI 的操作请求自动放行，不用你半夜起来批"
+            autoApproveOn
+              ? `托管 ${esc(cfg.auto_approve_start || "23:00")}–${esc(cfg.auto_approve_end || "07:00")} 自动批权限；忙时消息=${esc(
+                  (BUSY_AGENT_PUSH_LEVELS.find((x) => x.value === busyLevel) || {}).title || busyLevel,
+                )}；操作记录=${opSummaryOn ? "汇总推送（细项在设置→推送）" : "仍逐条推"}。可 /hapi summary 重发。`
+              : "先开托管并设时段；再选忙时消息（不推/仅摘要/跟随），可选开操作记录汇总防刷屏。"
           }</span>
         </div>
       </div>
@@ -446,6 +474,16 @@ function renderOverview() {
       const txt = $("#qs-auto").closest(".switch")?.querySelector(".switch-text");
       if (txt) txt.textContent = on ? "开启" : "关闭";
       applyQuick({ auto_approve_enabled: on });
+    });
+  $("#qs-busy-level") &&
+    ($("#qs-busy-level").onchange = () =>
+      applyQuick({ busy_agent_push_level: $("#qs-busy-level").value || "inherit" }));
+  $("#qs-op-summary") &&
+    ($("#qs-op-summary").onchange = () => {
+      const on = $("#qs-op-summary").checked;
+      const txt = $("#qs-op-summary").closest(".switch")?.querySelector(".switch-text");
+      if (txt) txt.textContent = on ? "开启" : "关闭";
+      applyQuick({ auto_approve_silent: on });
     });
   const normalizeHm = (raw, fallback) => {
     const s = String(raw ?? "").trim();

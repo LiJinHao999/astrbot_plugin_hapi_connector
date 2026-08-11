@@ -42,7 +42,7 @@ GROUPS: list[dict[str, Any]] = [
         "id": "push",
         "title": "推送通知",
         "nav": "推送",
-        "desc": "AI 干活时，聊天里推多少内容、以什么形式显示。快捷前缀、戳一戳、图片样式细调在「交互优化」页。",
+        "desc": "平时推多少、渲成什么形式。忙时免打扰看下方「忙时消息」与「操作记录汇总」（需先在「审批」开托管时段）。快捷前缀、戳一戳、图片样式在「交互优化」。",
         "fields": [
             "output_level",
             "summary_msg_count",
@@ -61,7 +61,7 @@ GROUPS: list[dict[str, Any]] = [
         "id": "approve",
         "title": "权限审批与托管",
         "nav": "审批",
-        "desc": "AI 要跑命令、改文件前会先请求你批准。这里设置超时提醒和定时自动放行。",
+        "desc": "待批提醒与忙时托管（时段内自动批权限）。对话少推看「推送 → 忙时消息」；操作少刷屏看「推送 → 操作记录汇总」。",
         "fields": [
             "remind_pending",
             "remind_interval",
@@ -142,11 +142,11 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "busy_agent_push_level": {
         "label": "忙时消息",
-        "help": "托管开启且在忙时段内生效。只管 Agent 对话推送，与操作记录汇总无关。",
+        "help": "托管开启且在忙时段内：压 Agent 对话推送。与操作记录汇总无关；question 提问始终推。",
         "control": "enum_cards",
         "option_meta": {
             "none": {"title": "不推送", "desc": "忙时不推对话与完成提示；question 仍推。"},
-            "summary": {"title": "仅摘要", "desc": "忙时按摘要级别：完成时推最近几条。"},
+            "summary": {"title": "仅摘要", "desc": "忙时只在任务完成时推最近几条。"},
             "inherit": {"title": "跟随默认", "desc": "与上方「消息推送详细程度」一致。"},
         },
     },
@@ -168,48 +168,52 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_silent": {
         "label": "Agent 操作记录汇总",
-        "help": "开启后，忙时托管时段内 agent 的**全部操作**（自动批准、你手动批准的请求、拒绝、自动压缩）不再逐条推送，改为收集并按下方策略汇总推送（如早晨一版，含操作明细与 git 变更）。关闭则保持现状逐条推。托管本身不受影响，AI 仍会自主执行全部操作。",
+        "help": "托管时段内自动批/手动批/拒绝/压缩不逐条推，按下方策略汇总（可含 git 快照）。关=逐条推。托管仍自动执行。聊天可 /hapi summary 重发。",
         "control": "bool",
-        "warn": "开启后托管时段的 agent 操作不再逐条推送，改为汇总推送；托管本身不受影响，AI 仍会自主执行全部操作。",
+        "warn": "开启后托管时段操作改为汇总推送，不再逐条刷屏；托管本身仍会自动批准。",
         "bool_labels": ["关闭（逐条推送）", "开启（汇总推送）"],
     },
     "auto_approve_summary_mode": {
         "label": "汇总方式",
-        "help": "统计窗划分；命令 /hapi summary 随时可发当前数据。",
+        "help": "统计窗怎么分桶；与推送时机无关。/hapi summary 可随时重发。",
         "control": "enum_cards",
         "show_if": {"key": "auto_approve_silent", "eq": True},
         "option_meta": {
-            "window": {"title": "按托管时段（推荐）", "desc": "一段托管窗一个统计桶，窗结束结算。"},
-            "rolling_24h": {"title": "最近24小时", "desc": "滚动窗口，始终统计最近 24h 的操作。"},
+            "window": {"title": "按托管时段（推荐）", "desc": "一段托管窗一个桶；关窗可归档快照。"},
+            "rolling_24h": {"title": "最近24小时", "desc": "滚动 24h；过期事件自动丢掉。"},
         },
     },
     "auto_approve_summary_push": {
         "label": "推送时机",
-        "help": "自动推送时机；命令始终可重发。",
+        "help": "何时自动推汇总；命令始终可重发。",
         "control": "enum_cards",
         "show_if": {"key": "auto_approve_silent", "eq": True},
         "option_meta": {
-            "on_window_end": {"title": "托管结束时（推荐）", "desc": "窗结束边沿自动推一版。"},
-            "at_fixed_time": {"title": "每天固定时间", "desc": "每天到点推一版。"},
+            "on_window_end": {"title": "托管结束时（推荐）", "desc": "窗 True→False 边沿推一版。"},
+            "at_fixed_time": {"title": "每天固定时间", "desc": "每天到点推；窗结束不自动推。"},
         },
     },
     "auto_approve_summary_time": {
         "label": "固定推送时间",
-        "help": "仅在推送时机为「每天固定时间」时生效。到点对每个有内容的 session 各推一版；没内容不推。",
+        "help": "仅「每天固定时间」生效。到点对有内容的 session 各推一版。",
         "control": "time",
         "placeholder": "08:00",
-        "show_if": {"key": "auto_approve_silent", "eq": True},
+        # 须同时：汇总开 + 推送时机=定点
+        "show_if": [
+            {"key": "auto_approve_silent", "eq": True},
+            {"key": "auto_approve_summary_push", "eq": "at_fixed_time"},
+        ],
     },
     "auto_approve_summary_include_failures": {
         "label": "汇总含失败明细",
-        "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。",
+        "help": "开：失败/拒绝列明细（置顶）；关：只计次数。",
         "control": "bool",
         "bool_labels": ["关闭", "开启"],
         "show_if": {"key": "auto_approve_silent", "eq": True},
     },
     "auto_approve_summary_max_detail_lines": {
         "label": "明细行数上限",
-        "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。",
+        "help": "单 session 成功明细最多行数，超出折叠为「另有 N 条」。",
         "control": "number",
         "show_if": {"key": "auto_approve_silent", "eq": True},
     },
@@ -277,6 +281,25 @@ def _map_control(schema_type: str, overlay: dict[str, Any], has_options: bool) -
     return "text"
 
 
+def _normalize_show_if(show_if: Any) -> dict[str, Any] | list[dict[str, Any]] | None:
+    """show_if：单条件 dict，或 list[dict] 表示 AND。
+
+    单条件：{"key": "x", "eq": y} → 前端 showIf 同结构
+    多条件：[{"key": "a", "eq": True}, {"key": "b", "eq": "v"}] → 全部满足才显示
+    """
+    if show_if is None:
+        return None
+    if isinstance(show_if, dict) and show_if.get("key") is not None:
+        return {"key": show_if["key"], "eq": show_if.get("eq")}
+    if isinstance(show_if, list):
+        parts: list[dict[str, Any]] = []
+        for item in show_if:
+            if isinstance(item, dict) and item.get("key") is not None:
+                parts.append({"key": item["key"], "eq": item.get("eq")})
+        return parts or None
+    return None
+
+
 def _resolve_field(key: str, conf: dict[str, Any]) -> dict[str, Any] | None:
     spec = conf.get(key)
     if not isinstance(spec, dict):
@@ -315,8 +338,9 @@ def _resolve_field(key: str, conf: dict[str, Any]) -> dict[str, Any] | None:
             field["type"] = "password"
 
     show_if = ov.get("show_if")
-    if isinstance(show_if, dict) and show_if.get("key") is not None:
-        field["showIf"] = {"key": show_if["key"], "eq": show_if.get("eq")}
+    normalized_show_if = _normalize_show_if(show_if)
+    if normalized_show_if is not None:
+        field["showIf"] = normalized_show_if
 
     option_meta = ov.get("option_meta") or {}
     if has_options:

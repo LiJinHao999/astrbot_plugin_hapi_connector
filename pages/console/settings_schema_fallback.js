@@ -91,7 +91,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
       "id": "push",
       "title": "推送通知",
       "nav": "推送",
-      "desc": "AI 干活时，聊天里推多少内容、以什么形式显示。快捷前缀、戳一戳、图片样式细调在「交互优化」页。",
+      "desc": "平时推多少、渲成什么形式。忙时免打扰看下方「忙时消息」与「操作记录汇总」（需先在「审批」开托管时段）。快捷前缀、戳一戳、图片样式在「交互优化」。",
       "fields": [
         {
           "key": "output_level",
@@ -140,7 +140,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "busy_agent_push_level",
           "label": "忙时消息",
           "type": "enum_cards",
-          "help": "托管开启且在忙时段内生效。只管 Agent 对话推送，与操作记录汇总无关。",
+          "help": "托管开启且在忙时段内：压 Agent 对话推送。与操作记录汇总无关；question 提问始终推。",
           "default": "inherit",
           "schema_type": "string",
           "options": [
@@ -152,7 +152,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
             {
               "value": "summary",
               "title": "仅摘要",
-              "desc": "忙时按摘要级别：完成时推最近几条。"
+              "desc": "忙时只在任务完成时推最近几条。"
             },
             {
               "value": "inherit",
@@ -198,10 +198,10 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_silent",
           "label": "Agent 操作记录汇总",
           "type": "bool",
-          "help": "开启后，忙时托管时段内 agent 的**全部操作**（自动批准、你手动批准的请求、拒绝、自动压缩）不再逐条推送，改为收集并按下方策略汇总推送（如早晨一版，含操作明细与 git 变更）。关闭则保持现状逐条推。托管本身不受影响，AI 仍会自主执行全部操作。",
+          "help": "托管时段内自动批/手动批/拒绝/压缩不逐条推，按下方策略汇总（可含 git 快照）。关=逐条推。托管仍自动执行。聊天可 /hapi summary 重发。",
           "default": false,
           "schema_type": "bool",
-          "warn": "开启后托管时段的 agent 操作不再逐条推送，改为汇总推送；托管本身不受影响，AI 仍会自主执行全部操作。",
+          "warn": "开启后托管时段操作改为汇总推送，不再逐条刷屏；托管本身仍会自动批准。",
           "boolLabels": [
             "关闭（逐条推送）",
             "开启（汇总推送）"
@@ -211,7 +211,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_mode",
           "label": "汇总方式",
           "type": "enum_cards",
-          "help": "统计窗划分；命令 /hapi summary 随时可发当前数据。",
+          "help": "统计窗怎么分桶；与推送时机无关。/hapi summary 可随时重发。",
           "default": "window",
           "schema_type": "string",
           "showIf": {
@@ -222,12 +222,12 @@ export const CONFIG_SCHEMA_FALLBACK = {
             {
               "value": "window",
               "title": "按托管时段（推荐）",
-              "desc": "一段托管窗一个统计桶，窗结束结算。"
+              "desc": "一段托管窗一个桶；关窗可归档快照。"
             },
             {
               "value": "rolling_24h",
               "title": "最近24小时",
-              "desc": "滚动窗口，始终统计最近 24h 的操作。"
+              "desc": "滚动 24h；过期事件自动丢掉。"
             }
           ]
         },
@@ -235,7 +235,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_push",
           "label": "推送时机",
           "type": "enum_cards",
-          "help": "自动推送时机；命令始终可重发。",
+          "help": "何时自动推汇总；命令始终可重发。",
           "default": "on_window_end",
           "schema_type": "string",
           "showIf": {
@@ -246,12 +246,12 @@ export const CONFIG_SCHEMA_FALLBACK = {
             {
               "value": "on_window_end",
               "title": "托管结束时（推荐）",
-              "desc": "23:00–07:00 这种窗结束后立刻推一版。"
+              "desc": "窗 True→False 边沿推一版。"
             },
             {
               "value": "at_fixed_time",
               "title": "每天固定时间",
-              "desc": "每天在下方设置的时间推送，如 08:00。"
+              "desc": "每天到点推；窗结束不自动推。"
             }
           ]
         },
@@ -259,36 +259,42 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_time",
           "label": "固定推送时间",
           "type": "time",
-          "help": "仅在推送时机为「每天固定时间」时生效。到点对每个有内容的 session 各推一版；没内容不推。",
+          "help": "仅「每天固定时间」生效。到点对有内容的 session 各推一版。",
           "default": "08:00",
           "schema_type": "string",
           "placeholder": "08:00",
+          "showIf": [
+            {
+              "key": "auto_approve_silent",
+              "eq": true
+            },
+            {
+              "key": "auto_approve_summary_push",
+              "eq": "at_fixed_time"
+            }
+          ]
+        },
+        {
+          "key": "auto_approve_summary_include_failures",
+          "label": "汇总含失败明细",
+          "type": "bool",
+          "help": "开：失败/拒绝列明细（置顶）；关：只计次数。",
+          "default": true,
+          "schema_type": "bool",
+          "boolLabels": [
+            "关闭",
+            "开启"
+          ],
           "showIf": {
             "key": "auto_approve_silent",
             "eq": true
           }
         },
         {
-          "key": "auto_approve_summary_include_failures",
-          "label": "汇总含失败明细",
-          "type": "bool",
-          "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。",
-          "default": true,
-          "schema_type": "bool",
-          "showIf": {
-            "key": "auto_approve_silent",
-            "eq": true
-          },
-          "boolLabels": [
-            "关闭",
-            "开启"
-          ]
-        },
-        {
           "key": "auto_approve_summary_max_detail_lines",
           "label": "明细行数上限",
           "type": "number",
-          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。",
+          "help": "单 session 成功明细最多行数，超出折叠为「另有 N 条」。",
           "default": 30,
           "schema_type": "int",
           "showIf": {
@@ -303,7 +309,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
       "id": "approve",
       "title": "权限审批与托管",
       "nav": "审批",
-      "desc": "AI 要跑命令、改文件前会先请求你批准。这里设置超时提醒和定时自动放行。",
+      "desc": "待批提醒与忙时托管（时段内自动批权限）。对话少推看「推送 → 忙时消息」；操作少刷屏看「推送 → 操作记录汇总」。",
       "fields": [
         {
           "key": "remind_pending",
