@@ -5,8 +5,8 @@
 - 收集维度 (session_id → 事件)，推送每 session 一张，严格走既有窗口路由。
 - 防漏发：last_pushed_at（本地日历日）+ last_content_fingerprint（sha256 规范化事件）
   + last_bucket_id；need_flush 见 §2.3 规则。
-- 桶：daily=day:YYYY-MM-DD；window=window:进入日Tstart:结束日Tend（跨午夜一段窗一个 id）；
-  per_event=event:uuid。
+- 桶：window=window:进入日Tstart:结束日Tend（跨午夜一段窗一个 id）；
+  rolling_24h=rolling24h（固定 id，事件超过 24h 过期清理）。
 - 纯逻辑：不依赖 AstrBot Event；推送经注入回调完成（SSEListener.push_auto_approve_summary）。
 """
 
@@ -17,7 +17,6 @@ import datetime
 import hashlib
 import json
 import logging
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -36,7 +35,7 @@ MAX_STORED_DETAIL_LEN = 200
 EDGE_SAMPLE_INTERVAL_SEC = 60
 PERSIST_DEBOUNCE_SEC = 5
 
-SUMMARY_MODES = ("daily", "window", "per_event")
+SUMMARY_MODES = ("window", "rolling_24h")
 PUSH_TRIGGERS = ("on_window_end", "at_fixed_time")
 
 COUNT_KEYS = ("approve_ok", "approve_fail", "compact_ok", "compact_fail", "deny_fail")
@@ -121,7 +120,7 @@ class AutoApproveSummaryService:
         self._push_callback: Callable[[str, dict, str], Awaitable[bool]] | None = None
         # 可选：flush 时附带 git 变更快照（main 注入；返回 dict 或 None=无 git/失败）
         self._git_provider: Callable[[str], Awaitable[dict | None]] | None = None
-        # {sid: (monotonic_ts, data)}：git 快照 TTL 缓存，避免 per_event 高频 flush 重复查询
+        # {sid: (monotonic_ts, data)}：git 快照 TTL 缓存，避免高频 flush 重复查询
         self._git_cache: dict[str, tuple[float, dict | None]] = {}
         self._git_cache_ttl: float = 30.0
 
@@ -183,7 +182,7 @@ class AutoApproveSummaryService:
     def set_git_provider(self, cb: Callable[[str], Awaitable[dict | None]]) -> None:
         """注入 git 变更快照提供者：async (sid) -> dict | None（None=非 git 仓库/失败）。
 
-        快照在 flush 时取（TTL 缓存避免 per_event 高频重复查询），随汇总一并展示。
+        快照在 flush 时取（TTL 缓存避免高频重复查询），随汇总一并展示。
         """
         self._git_provider = cb
 
@@ -226,10 +225,9 @@ class AutoApproveSummaryService:
 
     def _bucket_for(self, now: datetime.datetime) -> str:
         mode = self.mode
-        if mode == "daily":
-            return f"day:{now:%Y-%m-%d}"
-        if mode == "per_event":
-            return f"event:{uuid.uuid4().hex[:12]}"
+        if mode == "rolling_24h":
+            # 滚动 24h：固定桶 id（事件带时间戳，超 24h 由边沿采样过期清理）
+            return "rolling24h"
         # window：一段窗（可跨午夜）一个 id，以进入窗口的本地日生成
         if self._window_enter_day is None:
             self._window_enter_day = now.date()
@@ -242,28 +240,12 @@ class AutoApproveSummaryService:
             end_day = enter_day
         return f"window:{enter_day}T{start}:{end_day}T{end}"
 
-    @staticmethod
-    def _bucket_day(bucket_id: str | None) -> datetime.date | None:
-        """从桶 ID 抽归属日（daily=桶日；window=进入日；event=无）。"""
-        if not bucket_id:
-            return None
-        try:
-            if bucket_id.startswith("day:"):
-                return datetime.date.fromisoformat(bucket_id[4:])
-            if bucket_id.startswith("window:"):
-                rest = bucket_id[len("window:"):]
-                day_part = rest.split("T", 1)[0]
-                return datetime.date.fromisoformat(day_part)
-        except ValueError:
-            return None
-        return None
-
     def _bucket_desc(self, bucket_id: str | None) -> str:
         """桶的可读描述（供汇总文案/卡片副标题）。"""
         if not bucket_id:
             return "—"
-        if bucket_id.startswith("day:"):
-            return bucket_id[4:]
+        if bucket_id == "rolling24h":
+            return "最近 24 小时"
         if bucket_id.startswith("window:"):
             rest = bucket_id[len("window:"):]
             try:
@@ -274,8 +256,6 @@ class AutoApproveSummaryService:
                 return f"托管时段 {enter_part} {h}:{m} ~ {end_day} {end_time}"
             except Exception:
                 return bucket_id
-        if bucket_id.startswith("event:"):
-            return "手动触发"
         return bucket_id
 
     # ──── 事件收集 ────
@@ -290,11 +270,7 @@ class AutoApproveSummaryService:
         detail: str | None = None,
         request_id: str | None = None,
     ) -> None:
-        """操作记录开启时收集一条托管自动动作（approve / compact）。
-
-        per_event（手动触发）模式不做即时推送：等每次手动 /hapi summary 命令
-        或防漏发补发点（stop/关开关）才推送。
-        """
+        """操作记录开启时收集一条托管自动动作（approve / compact）。"""
         if not self.enabled:
             return
         now = datetime.datetime.now()
@@ -530,7 +506,7 @@ class AutoApproveSummaryService:
         """推送单个 session 的操作记录。
 
         - 自动路径：force=False，受 need_flush 约束；成功只更新 last_*，
-          close_bucket=True 时才归档快照并清当前桶（窗结束/日切）。
+          close_bucket=True 时才归档快照并清当前桶（窗结束/定点；rolling 模式不清空）。
         - 命令路径：force=True；prefer_snapshot=True 时优先上一关闭窗，
           否则当前桶；**不**因推送清空数据（busy-hours-agent-push.md §4）。
         """
@@ -644,27 +620,43 @@ class AutoApproveSummaryService:
                 self._window_enter_day = datetime.date.today()
             self._was_in_window = in_window
 
-            # daily / window 桶过期检查：存在「归属日早于今天」且有 pending 的桶 → 结算
-            today = datetime.date.today()
-            bucket_rollover = False
-            for st in self._sessions.values():
-                if not st.pending:
-                    continue
-                day = self._bucket_day(st.current_bucket_id)
-                if day is not None and day < today:
-                    bucket_rollover = True
-                    break
-        # per_event（手动触发）模式：自动触发点不推，只等 /hapi summary 命令
-        # 窗结束/日切：推送后 close_bucket 归档快照，供命令重发
-        if (window_ended or bucket_rollover) and self.mode != "per_event":
-            await self.flush_all(close_bucket=True)
-        elif window_ended or bucket_rollover:
-            # 手动模式不自动推，但仍归档关闭桶，避免命令只能看到空 pending
-            async with self._lock:
-                for sid, st in list(self._sessions.items()):
-                    if st.pending:
-                        self._archive_and_clear_bucket(sid, st)
-                await self._save()
+            # rolling 模式：剔除超过 24h 的事件（滚动窗口过期）
+            if self.mode == "rolling_24h":
+                self._expire_rolling_events_locked()
+
+        # 窗结束边沿：仅 push=on_window_end 时自动推；window 模式推完归档快照供命令重发
+        # （push=at_fixed_time 时窗结束不推不归档，数据保留到每天定点推送）
+        if window_ended and self._push == "on_window_end":
+            if self.mode == "window":
+                await self._flush_and_close_buckets()
+            else:
+                await self.flush_all()
+
+    async def _flush_and_close_buckets(self) -> None:
+        """window 模式：推送并归档快照；被指纹防刷跳过（no_change）的也归档清空，
+        避免残留事件跨窗混桶（命令仍可重发快照）。"""
+        await self.flush_all(close_bucket=True)
+        async with self._lock:
+            for sid, st in list(self._sessions.items()):
+                if st.pending:
+                    self._archive_and_clear_bucket(sid, st)
+            await self._save()
+
+    def _expire_rolling_events_locked(self) -> None:
+        """rolling 模式：剔除超过 24h 的事件并重算计数（须在锁内调用）。"""
+        cutoff = datetime.datetime.now() - datetime.timedelta(hours=24)
+        for sid, st in self._sessions.items():
+            if not st.pending:
+                continue
+            kept = [e for e in st.pending if e.at >= cutoff]
+            if len(kept) == len(st.pending):
+                continue
+            st.pending = kept
+            st.counters = {}
+            for e in kept:
+                key = f"{e.kind}_{'ok' if e.ok else 'fail'}"
+                st.counters[key] = st.counters.get(key, 0) + 1
+            self._mark_dirty()
 
     async def _edge_loop(self) -> None:
         while True:
@@ -677,7 +669,7 @@ class AutoApproveSummaryService:
                 logger.warning("auto approve summary 边沿采样异常: %s", e)
 
     async def _fixed_time_loop(self) -> None:
-        """每天本地 HH:MM 推送（§2.5 at_fixed_time）。per_event（手动触发）模式不自动推。"""
+        """每天本地 HH:MM 推送（§2.5 at_fixed_time）。仅 push=at_fixed_time 生效。"""
         while True:
             try:
                 now = datetime.datetime.now()
@@ -686,8 +678,12 @@ class AutoApproveSummaryService:
                 if target <= now:
                     target += datetime.timedelta(days=1)
                 await asyncio.sleep(max(1, (target - now).total_seconds()))
-                if self.mode != "per_event":
-                    await self.flush_all()
+                if self._push == "at_fixed_time":
+                    # window 模式推完归档快照（命令可重发）；rolling 不清空（事件自然过期）
+                    if self.mode == "window":
+                        await self._flush_and_close_buckets()
+                    else:
+                        await self.flush_all()
             except asyncio.CancelledError:
                 raise
             except Exception as e:

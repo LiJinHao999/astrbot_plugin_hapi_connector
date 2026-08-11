@@ -935,9 +935,8 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
         }]
 
     mode_label = {
-        "daily": "按天",
         "window": "按托管时段",
-        "per_event": "手动触发",
+        "rolling_24h": "最近24小时",
     }.get(str(view.get("mode") or ""), str(view.get("mode") or "?"))
     push_label = {
         "on_window_end": "托管结束时",

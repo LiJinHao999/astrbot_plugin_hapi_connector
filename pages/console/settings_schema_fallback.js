@@ -211,24 +211,23 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_mode",
           "label": "汇总方式",
           "type": "enum_cards",
-          "help": "按托管时段：每次进入托管窗一个桶，窗结束结算（推荐）；按天：自然日一个桶；手动触发：不自动推送，每次执行 /hapi summary 命令时推当前积累的一版。开启「Agent 操作记录汇总」后生效。",
+          "help": "统计窗划分；命令 /hapi summary 随时可发当前数据。",
           "default": "window",
           "schema_type": "string",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          },
           "options": [
-            {
-              "value": "daily",
-              "title": "按天",
-              "desc": "自然日内的事件归一天，随时可手动推。"
-            },
             {
               "value": "window",
               "title": "按托管时段（推荐）",
-              "desc": "夜间托管结束一次性结算，最贴合睡眠场景。"
+              "desc": "一段托管窗一个统计桶，窗结束结算。"
             },
             {
-              "value": "per_event",
-              "title": "手动触发",
-              "desc": "不自动推送，每次手动 /hapi summary 命令推一版。"
+              "value": "rolling_24h",
+              "title": "最近24小时",
+              "desc": "滚动窗口，始终统计最近 24h 的操作。"
             }
           ]
         },
@@ -236,9 +235,13 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_push",
           "label": "推送时机",
           "type": "enum_cards",
-          "help": "托管结束时：窗口结束边沿自动推送；每天固定时间：每天到点推「当前已积累」的一版。两种都可以随时用 /hapi summary 手动提前推。开启「Agent 操作记录汇总」后生效。",
+          "help": "自动推送时机；命令始终可重发。",
           "default": "on_window_end",
           "schema_type": "string",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          },
           "options": [
             {
               "value": "on_window_end",
@@ -259,15 +262,23 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "help": "仅在推送时机为「每天固定时间」时生效。到点对每个有内容的 session 各推一版；没内容不推。",
           "default": "08:00",
           "schema_type": "string",
-          "placeholder": "08:00"
+          "placeholder": "08:00",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          }
         },
         {
           "key": "auto_approve_summary_include_failures",
           "label": "汇总含失败明细",
           "type": "bool",
-          "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。开启「Agent 操作记录汇总」后生效。",
+          "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。",
           "default": true,
           "schema_type": "bool",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          },
           "boolLabels": [
             "关闭",
             "开启"
@@ -277,9 +288,13 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_max_detail_lines",
           "label": "明细行数上限",
           "type": "number",
-          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「Agent 操作记录汇总」后生效。",
+          "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。",
           "default": 30,
-          "schema_type": "int"
+          "schema_type": "int",
+          "showIf": {
+            "key": "auto_approve_silent",
+            "eq": true
+          }
         }
       ],
       "advanced": null

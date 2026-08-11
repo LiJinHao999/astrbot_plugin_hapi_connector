@@ -154,7 +154,7 @@ hapi codex    # OpenAI Codex
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `auto_approve_silent` | Agent 操作记录汇总总开关（关闭时保持旧版逐条推送） | 关闭 |
-| `auto_approve_summary_mode` | 汇总方式：`window` 按托管时段 / `daily` 按天 / `per_event` 手动触发（不自动推，每次 `/hapi summary` 推当前积累） | window |
+| `auto_approve_summary_mode` | 汇总方式：`window` 按托管时段（一段窗一个统计桶）/ `rolling_24h` 最近24小时（滚动窗口） | window |
 | `auto_approve_summary_push` | 推送时机：`on_window_end` 托管结束时 / `at_fixed_time` 每天固定时间 | on_window_end |
 | `auto_approve_summary_time` | 固定推送时间（HH:MM，仅 `at_fixed_time` 生效） | `08:00` |
 | `auto_approve_summary_include_failures` | 汇总是否含失败 / 拒绝明细 | 开启 |

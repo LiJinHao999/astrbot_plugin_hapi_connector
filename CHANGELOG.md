@@ -8,6 +8,9 @@
 2. **`/hapi summary` 可重发**：优先上一统计窗快照，否则当前桶；推送成功不再作为销毁数据的条件。窗结束归档 `last_closed_snapshot`。
 3. **推送失败可感知**：`NotificationManager` / `present_push` 返回是否发出；无路由或全失败时汇总不记「已推」。
 4. **运行时长**：thinking 边沿累加，操作记录中一行展示。
+5. **统计窗重构**：汇总方式只保留 `window` 按托管时段 / `rolling_24h` 最近24小时（移除「按天」「手动触发」——统计窗只代表分桶，与推送无关）；rolling 模式事件超 24h 自动过期、命令直接发当前滚动窗数据。
+6. **推送时机修复**：`auto_approve_summary_push` 此前未生效（窗结束边沿与定点都会推）；现在 `on_window_end` 只在窗结束推、`at_fixed_time` 只在每天定点推。
+7. **设置项联动**：关闭「Agent 操作记录汇总」开关时，汇总方式 / 推送时机 / 固定推送时间 / 失败明细 / 行数上限 5 项隐藏。
 
 ## v3.3.0 — 忙时托管「Agent 操作记录汇总」
 
@@ -17,7 +20,7 @@
    开启后，忙时托管时段内 agent 的**全部操作**（自动批准、手动批准的请求、拒绝、自动压缩，含工具与参数摘要）**不再逐条推送**，改为按策略收集汇总推送，并附带 git 变更快照。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
 
 2. **汇总方式与推送时机可配置**（WebUI「设置 → 推送通知」底部）  
-   - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `按天` / `手动触发`（不自动推，每次执行 `/hapi summary` 命令时推当前积累）
+   - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `最近24小时`（滚动窗口，事件超 24h 过期）
    - `auto_approve_summary_push`：`托管结束时`（默认）/ `每天固定时间`（`auto_approve_summary_time`，默认 08:00）
    - 高级：`auto_approve_summary_include_failures`（失败明细，默认开）、`auto_approve_summary_max_detail_lines`（明细行数上限，默认 30）
 

@@ -134,8 +134,8 @@
     "description": "托管操作记录方式",
     "type": "string",
     "default": "window",
-    "options": ["daily", "window", "per_event"],
-    "hint": "按托管时段=每次进入托管窗一个桶（推荐）；按天=自然日一个桶；手动触发=不自动推送，每次执行 /hapi summary 命令时推当前积累"
+    "options": ["window", "rolling_24h"],
+    "hint": "按托管时段=每次进入托管窗一个桶（推荐）；最近24小时=滚动窗口，始终统计最近 24h 的操作"
   },
   "auto_approve_summary_push": {
     "description": "托管操作记录推送时机",

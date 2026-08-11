@@ -214,6 +214,7 @@ function renderSettings() {
     else state.draft[input.name] = input.value;
     if (
       input.name === "auto_approve_enabled" ||
+      input.name === "auto_approve_silent" ||
       input.name === "output_level" ||
       input.name === "remind_pending" ||
       input.name === "render_mode" ||

@@ -1949,9 +1949,8 @@ def get_help_text(topic: str = "") -> str:
 # ──── 忙时托管操作记录（dev-docs/auto-approve-silent-summary.md §3） ────
 
 _SUMMARY_MODE_LABELS = {
-    "daily": "按天",
     "window": "按托管时段",
-    "per_event": "手动触发",
+    "rolling_24h": "最近24小时",
 }
 _SUMMARY_PUSH_LABELS = {
     "on_window_end": "托管结束时",

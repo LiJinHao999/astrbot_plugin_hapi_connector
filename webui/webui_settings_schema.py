@@ -175,18 +175,19 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
     },
     "auto_approve_summary_mode": {
         "label": "汇总方式",
-        "help": "统计窗划分。/hapi summary 可重复发送上一窗。",
+        "help": "统计窗划分；命令 /hapi summary 随时可发当前数据。",
         "control": "enum_cards",
+        "show_if": {"key": "auto_approve_silent", "eq": True},
         "option_meta": {
-            "window": {"title": "按托管时段（推荐）", "desc": "一段托管窗一个统计桶。"},
-            "daily": {"title": "按天", "desc": "自然日一个桶。"},
-            "per_event": {"title": "手动触发", "desc": "不自动推，命令发当前/上一窗。"},
+            "window": {"title": "按托管时段（推荐）", "desc": "一段托管窗一个统计桶，窗结束结算。"},
+            "rolling_24h": {"title": "最近24小时", "desc": "滚动窗口，始终统计最近 24h 的操作。"},
         },
     },
     "auto_approve_summary_push": {
         "label": "推送时机",
         "help": "自动推送时机；命令始终可重发。",
         "control": "enum_cards",
+        "show_if": {"key": "auto_approve_silent", "eq": True},
         "option_meta": {
             "on_window_end": {"title": "托管结束时（推荐）", "desc": "窗结束边沿自动推一版。"},
             "at_fixed_time": {"title": "每天固定时间", "desc": "每天到点推一版。"},
@@ -197,17 +198,20 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "help": "仅在推送时机为「每天固定时间」时生效。到点对每个有内容的 session 各推一版；没内容不推。",
         "control": "time",
         "placeholder": "08:00",
+        "show_if": {"key": "auto_approve_silent", "eq": True},
     },
     "auto_approve_summary_include_failures": {
         "label": "汇总含失败明细",
-        "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。开启「Agent 操作记录汇总」后生效。",
+        "help": "开启时失败 / 拒绝（未执行）项在汇总里列明细（置顶展示）；关闭时只计次数、不列明细。",
         "control": "bool",
         "bool_labels": ["关闭", "开启"],
+        "show_if": {"key": "auto_approve_silent", "eq": True},
     },
     "auto_approve_summary_max_detail_lines": {
         "label": "明细行数上限",
-        "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。开启「Agent 操作记录汇总」后生效。",
+        "help": "单个 session 汇总里成功明细最多显示多少条，超出折叠为「另有 N 条」。",
         "control": "number",
+        "show_if": {"key": "auto_approve_silent", "eq": True},
     },
     "remind_pending": {
         "label": "待审批超时提醒",
