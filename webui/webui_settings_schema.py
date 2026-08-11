@@ -222,7 +222,7 @@ FIELD_OVERLAY: dict[str, dict[str, Any]] = {
         "show_if": {"key": "remind_pending", "eq": True},
     },
     "auto_approve_enabled": {
-        "label": "定时自动批准（托管）",
+        "label": "忙时托管审批",
         "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。",
         "control": "bool",
         "warn": "开启后，时段内 AI 的所有操作都会自动批准，包括改文件、跑命令。请确认你信任正在跑的任务。",

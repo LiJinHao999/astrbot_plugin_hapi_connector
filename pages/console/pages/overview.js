@@ -344,7 +344,7 @@ function renderOverview() {
           </label>
         </div>
         <div class="qs-field qs-bool">
-          <span class="qs-label">定时自动批准</span>
+          <span class="qs-label">忙时托管审批</span>
           <label class="switch">
             <input id="qs-auto" type="checkbox" ${cfg.auto_approve_enabled ? "checked" : ""} />
             <span class="switch-track" aria-hidden="true"></span>

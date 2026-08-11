@@ -316,7 +316,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
         },
         {
           "key": "auto_approve_enabled",
-          "label": "定时自动批准（托管）",
+          "label": "忙时托管审批",
           "type": "bool",
           "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。",
           "default": false,
