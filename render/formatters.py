@@ -1955,6 +1955,7 @@ _SUMMARY_MODE_LABELS = {
 _SUMMARY_PUSH_LABELS = {
     "on_window_end": "托管结束时",
     "at_fixed_time": "每天固定时间",
+    "manual": "不主动推送",
 }
 
 
@@ -1985,7 +1986,7 @@ def _summary_detail_line(event: dict, mark: str) -> str:
 
 
 def format_auto_approve_summary(view: dict) -> str:
-    """托管操作记录汇总的纯文本（§3.1）。
+    """托管操作记录统计的纯文本（§3.1）。
 
     消费 AutoApproveSummaryService.build_summary_view 的视图 dict。
     """

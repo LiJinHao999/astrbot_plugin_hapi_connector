@@ -36,7 +36,7 @@ EDGE_SAMPLE_INTERVAL_SEC = 60
 PERSIST_DEBOUNCE_SEC = 5
 
 SUMMARY_MODES = ("window", "rolling_24h")
-PUSH_TRIGGERS = ("on_window_end", "at_fixed_time")
+PUSH_TRIGGERS = ("on_window_end", "at_fixed_time", "manual")
 
 COUNT_KEYS = ("approve_ok", "approve_fail", "compact_ok", "compact_fail", "deny_fail")
 
@@ -624,13 +624,18 @@ class AutoApproveSummaryService:
             if self.mode == "rolling_24h":
                 self._expire_rolling_events_locked()
 
-        # 窗结束边沿：仅 push=on_window_end 时自动推；window 模式推完归档快照供命令重发
-        # （push=at_fixed_time 时窗结束不推不归档，数据保留到每天定点推送）
-        if window_ended and self._push == "on_window_end":
-            if self.mode == "window":
-                await self._flush_and_close_buckets()
-            else:
-                await self.flush_all()
+        # 窗结束边沿：
+        # - on_window_end：自动推；window 模式推完归档快照供命令重发
+        # - at_fixed_time：不推不归档，数据保留到每天定点推送
+        # - manual：不主动推；window 模式仅归档快照，命令可 /hapi summary 重发
+        if window_ended:
+            if self._push == "on_window_end":
+                if self.mode == "window":
+                    await self._flush_and_close_buckets()
+                else:
+                    await self.flush_all()
+            elif self._push == "manual" and self.mode == "window":
+                await self._archive_all_without_push()
 
     async def _flush_and_close_buckets(self) -> None:
         """window 模式：推送并归档快照；被指纹防刷跳过（no_change）的也归档清空，
@@ -639,6 +644,14 @@ class AutoApproveSummaryService:
         async with self._lock:
             for sid, st in list(self._sessions.items()):
                 if st.pending:
+                    self._archive_and_clear_bucket(sid, st)
+            await self._save()
+
+    async def _archive_all_without_push(self) -> None:
+        """window + manual：窗结束只归档快照、不推送（命令可重发）。"""
+        async with self._lock:
+            for sid, st in list(self._sessions.items()):
+                if st.pending or st.runtime_sec:
                     self._archive_and_clear_bucket(sid, st)
             await self._save()
 

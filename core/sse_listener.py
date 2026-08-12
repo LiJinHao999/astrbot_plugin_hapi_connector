@@ -393,7 +393,7 @@ class SSEListener:
                     ok, msg = await session_ops.approve_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
                     if self._auto_approve_silent and self.summary_service is not None:
-                        # 操作记录汇总开启：进汇总管线，不再逐条推送
+                        # 操作记录统计开启：进汇总管线，不再逐条推送
                         await self.summary_service.append_event(
                             sid, "approve", ok, tool=str(tool), request_id=rid,
                             detail=(format_request_detail(req) if ok else str(msg or "审批失败"))[:200],
@@ -663,7 +663,7 @@ class SSEListener:
                     ok, msg = await session_ops.send_message(self.client, sid, "/compact")
                     mark = "✓" if ok else "✗"
                     if self._auto_approve_silent and self.summary_service is not None:
-                        # 操作记录汇总开启：进汇总管线，不再逐条推送
+                        # 操作记录统计开启：进汇总管线，不再逐条推送
                         await self.summary_service.append_event(
                             sid, "compact", ok,
                             detail=(("压缩上下文 (/compact)") if ok else str(msg or "自动压缩失败"))[:200],

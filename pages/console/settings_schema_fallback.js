@@ -91,7 +91,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
       "id": "push",
       "title": "推送通知",
       "nav": "推送",
-      "desc": "平时推多少、渲成什么形式。夜里少吵请到「审批」开托管，并设「忙时托管免打扰」与「操作记录汇总」。快捷前缀、戳一戳、图片样式在「交互优化」。",
+      "desc": "平时推多少、渲成什么形式。夜里少吵请到「审批」开托管，并设「忙时托管免打扰」与「操作记录统计」。快捷前缀、戳一戳、图片样式在「交互优化」。",
       "fields": [
         {
           "key": "output_level",
@@ -206,7 +206,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_enabled",
           "label": "忙时托管审批",
           "type": "bool",
-          "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。开启后可再设下方「忙时托管免打扰」压对话、以及「操作记录汇总」收操作通知。",
+          "help": "设定一个时间段（比如睡觉时间），期间 AI 的操作请求自动放行，不用你起来批。开启后可再设下方「忙时托管免打扰」压对话、以及「操作记录统计」收操作通知。",
           "default": false,
           "schema_type": "bool",
           "warn": "开启后，时段内 AI 的所有操作都会自动批准，包括改文件、跑命令。请确认你信任正在跑的任务。",
@@ -245,7 +245,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "busy_agent_push_level",
           "label": "忙时托管免打扰",
           "type": "enum_cards",
-          "help": "仅在托管开启且处于上方时段时生效：压 AI 对话刷屏。权限请求由托管自动放行，不会再弹批。下方「操作记录汇总」管的是自动批/拒绝等操作通知。",
+          "help": "仅在托管开启且处于上方时段时生效：压 AI 对话刷屏。权限请求由托管自动放行，不会再弹批。下方「操作记录统计」管的是自动批/拒绝等操作通知。",
           "default": "inherit",
           "schema_type": "string",
           "showIf": {
@@ -272,7 +272,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
         },
         {
           "key": "auto_approve_silent",
-          "label": "Agent 操作记录汇总",
+          "label": "Agent 操作记录统计",
           "type": "bool",
           "help": "托管时段内自动批/手动批/拒绝/压缩不逐条推，按下方策略汇总（可含 git 快照）。关=仍可能逐条推「已自动批准」。托管仍自动执行。聊天可 /hapi summary 重发。",
           "default": false,
@@ -321,7 +321,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_summary_push",
           "label": "推送时机",
           "type": "enum_cards",
-          "help": "何时自动推汇总；命令始终可重发。",
+          "help": "何时自动推统计；命令始终可重发。「不主动推送」=不自动推，只归档快照，需要时 /hapi summary 手动重发。",
           "default": "on_window_end",
           "schema_type": "string",
           "showIf": [
@@ -344,6 +344,11 @@ export const CONFIG_SCHEMA_FALLBACK = {
               "value": "at_fixed_time",
               "title": "每天固定时间",
               "desc": "每天到点推；窗结束不自动推。"
+            },
+            {
+              "value": "manual",
+              "title": "不主动推送",
+              "desc": "不自动推，只归档快照；需要时 /hapi summary 手动重发。"
             }
           ]
         },

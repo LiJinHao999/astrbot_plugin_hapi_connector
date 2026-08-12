@@ -147,15 +147,15 @@ hapi codex    # OpenAI Codex
 | `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24 小时制） | `23:00` |
 | `auto_approve_end` | 忙时托管审批结束时间（HH:MM，24 小时制，支持跨午夜） | `07:00` |
 
-### Agent 操作记录汇总（可选）
+### Agent 操作记录统计（可选）
 
 开启 `auto_approve_silent`（键名保留兼容）后，托管时段内 agent 的**全部操作**——自动批准、你手动批准的请求、拒绝、自动压缩——不再逐条推送，改为按策略汇总推送（记录每条操作的工具与参数摘要，并附带 git 变更快照），夜间托管不再刷屏。详见 `dev-docs/auto-approve-silent-summary.md`。
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `auto_approve_silent` | Agent 操作记录汇总总开关（关闭时保持旧版逐条推送） | 关闭 |
+| `auto_approve_silent` | Agent 操作记录统计总开关（关闭时保持旧版逐条推送） | 关闭 |
 | `auto_approve_summary_mode` | 汇总方式：`window` 按托管时段（一段窗一个统计桶）/ `rolling_24h` 最近24小时（滚动窗口） | window |
-| `auto_approve_summary_push` | 推送时机：`on_window_end` 托管结束时 / `at_fixed_time` 每天固定时间 | on_window_end |
+| `auto_approve_summary_push` | 推送时机：`on_window_end` 托管结束时 / `at_fixed_time` 每天固定时间 / `manual` 不主动推送（仅归档，`/hapi summary` 手动重发） | on_window_end |
 | `auto_approve_summary_time` | 固定推送时间（HH:MM，仅 `at_fixed_time` 生效） | `08:00` |
 | `auto_approve_summary_include_failures` | 汇总是否含失败 / 拒绝明细 | 开启 |
 | `auto_approve_summary_max_detail_lines` | 单 session 明细行数上限，超出折叠 | 30 |

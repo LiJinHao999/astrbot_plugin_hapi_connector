@@ -2203,6 +2203,13 @@ class CommandHandlers:
             return
 
         status = summary_svc.status()
+        if not bool(self.plugin.config.get("auto_approve_silent", False)):
+            yield event.plain_result(
+                "操作记录统计未开启：托管时段内的操作不会记录。\n"
+                "请在 WebUI「设置 → 审批」开启「Agent 操作记录统计」（auto_approve_silent）后再试；"
+                "当前配置可用 /hapi summary status 查看。"
+            )
+            return
         session_infos = status.get("sessions") or {}
         # 有当前桶或上一窗快照的 sid
         record_sids = [

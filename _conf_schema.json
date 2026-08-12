@@ -61,7 +61,7 @@
     "type": "string",
     "default": "inherit",
     "options": ["none", "summary", "inherit"],
-    "hint": "托管开启且在忙时段内压 AI 对话：不推送 / 仅摘要 / 跟随默认。权限由托管自动批；操作记录汇总见 auto_approve_silent"
+    "hint": "托管开启且在忙时段内压 AI 对话：不推送 / 仅摘要 / 跟随默认。权限由托管自动批；操作记录统计见 auto_approve_silent"
   },
   "quick_prefix": {
     "description": "快捷发送前缀",
@@ -125,7 +125,7 @@
     "hint": "例如开始 22:00、结束 08:00，即晚上10点到次日早上8点，支持跨午夜"
   },
   "auto_approve_silent": {
-    "description": "Agent 操作记录汇总：托管时段内 agent 的全部操作（自动批准、手动批准、拒绝、自动压缩）不逐条推送，改为按策略汇总推送",
+    "description": "Agent 操作记录统计：托管时段内 agent 的全部操作（自动批准、手动批准、拒绝、自动压缩）不逐条推送，改为按策略汇总推送",
     "type": "bool",
     "default": false,
     "hint": "开启后夜间托管不再刷屏，早晨一版汇总可看 agent 干了什么（操作明细 + git 变更）。汇总方式与推送时机见下方三项。关闭时保持现状逐条推送"
@@ -141,8 +141,8 @@
     "description": "托管操作记录推送时机",
     "type": "string",
     "default": "on_window_end",
-    "options": ["on_window_end", "at_fixed_time"],
-    "hint": "托管结束时=窗口结束边沿推送（推荐）；每天固定时间=每天在下方时间推送。也可随时用 /hapi summary 手动推送"
+    "options": ["on_window_end", "at_fixed_time", "manual"],
+    "hint": "托管结束时=窗口结束边沿推送（推荐）；每天固定时间=每天在下方时间推送；不主动推送=不自动推，需要时用 /hapi summary 手动重发"
   },
   "auto_approve_summary_time": {
     "description": "托管操作记录固定推送时间（HH:MM）",

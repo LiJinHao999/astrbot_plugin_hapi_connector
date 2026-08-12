@@ -383,7 +383,7 @@ function renderOverview() {
             ${autoApproveOn ? "" : "disabled"}>${busyLevelOpts}</select>
         </label>
         <div class="qs-field qs-bool">
-          <span class="qs-label">操作记录汇总</span>
+          <span class="qs-label">操作记录统计</span>
           <label class="switch">
             <input id="qs-op-summary" type="checkbox" ${opSummaryOn ? "checked" : ""} ${autoApproveOn ? "" : "disabled"} />
             <span class="switch-track" aria-hidden="true"></span>
@@ -397,7 +397,7 @@ function renderOverview() {
               ? `托管 ${esc(cfg.auto_approve_start || "23:00")}–${esc(cfg.auto_approve_end || "07:00")} 自动批权限；免打扰=${esc(
                   (BUSY_AGENT_PUSH_LEVELS.find((x) => x.value === busyLevel) || {}).title || busyLevel,
                 )}（只压对话，不弹批）；操作记录=${opSummaryOn ? "汇总推送（细项在设置→审批）" : "仍可能逐条推已自动批准"}。AI 提问仍会提醒。可 /hapi summary 重发。`
-              : "先开托管并设时段；再选免打扰（不推/仅摘要/跟随），可选开操作记录汇总。细项在「设置 → 审批」。"
+              : "先开托管并设时段；再选免打扰（不推/仅摘要/跟随），可选开操作记录统计。细项在「设置 → 审批」。"
           }</span>
         </div>
       </div>
