@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,20 @@ _SYSTEM_MONO = (
     "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
     "C:\\Windows\\Fonts\\consola.ttf",
     "/System/Library/Fonts/Menlo.ttc",
+)
+
+_SYSTEM_FALLBACKS = (
+    # Windows supplementary CJK and symbol fonts.
+    "C:\\Windows\\Fonts\\SimsunExtG.ttf",
+    "C:\\Windows\\Fonts\\NotoSansSC-VF.ttf",
+    "C:\\Windows\\Fonts\\NotoSerifSC-VF.ttf",
+    "C:\\Windows\\Fonts\\seguisym.ttf",
+    "C:\\Windows\\Fonts\\segoeui.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+    # Common Linux symbol/CJK fallbacks.
+    "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 )
 
 
@@ -350,6 +365,77 @@ def load_image_font(
                 if try_path.suffix.lower() not in (".ttc", ".otc"):
                     break
     raise RuntimeError(f"无法加载字体 {path}: {last_err}")
+
+
+@lru_cache(maxsize=32)
+def _load_fallback_fonts(size: int) -> tuple[Any, ...]:
+    """Load optional system fonts used for characters absent from the card font."""
+    from PIL import ImageFont
+
+    fonts = []
+    for raw_path in _SYSTEM_FALLBACKS:
+        path = Path(raw_path)
+        try:
+            if not path.is_file() or path.stat().st_size <= 1024:
+                continue
+            fonts.append(ImageFont.truetype(str(path), size=size))
+        except (OSError, ValueError):
+            continue
+    return tuple(fonts)
+
+
+def _glyph_signature(font: Any, character: str) -> tuple[Any, bytes]:
+    mask = font.getmask(character)
+    return mask.size, bytes(mask)
+
+
+def _font_supports(font: Any, text: str) -> bool:
+    """Return whether a font maps every visible character to a real glyph."""
+    try:
+        missing = {
+            _glyph_signature(font, "\u0378"),
+            _glyph_signature(font, "\U0010FFFF"),
+        }
+        for character in text:
+            if character.isspace() or unicodedata.category(character) in {"Cc", "Cf"}:
+                continue
+            if _glyph_signature(font, character) in missing:
+                return False
+        return True
+    except (OSError, TypeError, UnicodeError, ValueError):
+        return False
+
+
+def get_font_runs(text: str, primary_font: Any) -> list[tuple[str, Any]]:
+    """Split text into runs whose fonts contain the required glyphs.
+
+    Combining marks and variation selectors remain attached to their base
+    character so a fallback font can render the complete visible cluster.
+    """
+    if not text:
+        return []
+    size = max(1, int(getattr(primary_font, "size", 16)))
+    candidates = (primary_font, *_load_fallback_fonts(size))
+    clusters: list[str] = []
+    for character in text:
+        if clusters and (
+            unicodedata.combining(character)
+            or character == "\u200d"
+            or 0xFE00 <= ord(character) <= 0xFE0F
+            or 0xE0100 <= ord(character) <= 0xE01EF
+        ):
+            clusters[-1] += character
+        else:
+            clusters.append(character)
+
+    runs: list[tuple[str, Any]] = []
+    for cluster in clusters:
+        font = next((candidate for candidate in candidates if _font_supports(candidate, cluster)), primary_font)
+        if runs and runs[-1][1] is font:
+            runs[-1] = (runs[-1][0] + cluster, font)
+        else:
+            runs.append((cluster, font))
+    return runs
 
 
 def _source_label(src: str | None) -> str:

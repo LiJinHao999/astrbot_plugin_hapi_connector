@@ -2428,14 +2428,17 @@ def _load_font(size: int, mono: bool, style: CardStyle, *, bold: bool = False):
 
 
 def _text_size(draw, text: str, font, *, stroke_width: int = 0) -> tuple[int, int]:
-    kwargs: dict[str, Any] = {}
-    if stroke_width:
-        kwargs["stroke_width"] = stroke_width
-    try:
-        bbox = draw.textbbox((0, 0), text or " ", font=font, **kwargs)
-    except TypeError:
-        bbox = draw.textbbox((0, 0), text or " ", font=font)
-    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    width = 0
+    height = 0
+    kwargs: dict[str, Any] = {"stroke_width": stroke_width} if stroke_width else {}
+    for run, run_font in font_manager.get_font_runs(text or " ", font):
+        try:
+            bbox = draw.textbbox((0, 0), run, font=run_font, **kwargs)
+        except TypeError:
+            bbox = draw.textbbox((0, 0), run, font=run_font)
+        width += bbox[2] - bbox[0]
+        height = max(height, bbox[3] - bbox[1])
+    return width, height
 
 
 def _draw_text(
@@ -2450,20 +2453,18 @@ def _draw_text(
     """绘制文字；bold_stroke 时用 1px stroke 合成加粗（无粗体字文件时的兜底）。"""
     if not text:
         return
-    if bold_stroke:
+    current_x = xy[0]
+    for run, run_font in font_manager.get_font_runs(text, font):
+        kwargs: dict[str, Any] = {"font": run_font, "fill": fill}
+        if bold_stroke:
+            kwargs.update(stroke_width=1, stroke_fill=fill)
         try:
-            draw.text(
-                xy,
-                text,
-                font=font,
-                fill=fill,
-                stroke_width=1,
-                stroke_fill=fill,
-            )
-            return
+            draw.text((current_x, xy[1]), run, **kwargs)
         except TypeError:
-            pass
-    draw.text(xy, text, font=font, fill=fill)
+            kwargs.pop("stroke_width", None)
+            kwargs.pop("stroke_fill", None)
+            draw.text((current_x, xy[1]), run, **kwargs)
+        current_x += _text_size(draw, run, run_font, stroke_width=1 if bold_stroke else 0)[0]
 
 
 # 行内：图片 / 链接 / `code` / **bold** / __bold__ / *em*（不含嵌套）
@@ -2889,11 +2890,11 @@ def _draw_status_png(
     )
 
     y = pad
-    draw.text((pad, y), title, font=font_title, fill=fg)
+    _draw_text(draw, (pad, y), title, font_title, fg)
     y += _text_size(draw, title, font_title)[1] + 8
     if subtitle:
         for line in _wrap_text(draw, subtitle, font_sub, content_w):
-            draw.text((pad, y), line, font=font_sub, fill=sub_fg)
+            _draw_text(draw, (pad, y), line, font_sub, sub_fg)
             y += _text_size(draw, line or " ", font_sub)[1] + 3
         y += 6
 
@@ -2911,11 +2912,12 @@ def _draw_status_png(
         cr = badge_dot
         cy = y + badge_h // 2
         draw.ellipse((pad + badge_pad_x - 6, cy - cr, pad + badge_pad_x - 6 + cr * 2, cy + cr), fill=sc)
-        draw.text(
+        _draw_text(
+            draw,
             (pad + badge_pad_x - 6 + cr * 2 + 8, y + (badge_h - bh) // 2),
             status,
-            font=font_badge,
-            fill=sc,
+            font_badge,
+            sc,
         )
         y += badge_h + 14
     else:
@@ -2939,17 +2941,18 @@ def _draw_status_png(
         )
         # 左标签
         lw, lh = _text_size(draw, label, font_label)
-        draw.text(
+        _draw_text(
+            draw,
             (pad + 14, y + (h - lh) // 2),
             label,
-            font=font_label,
-            fill=sub_fg,
+            font_label,
+            sub_fg,
         )
         # 右值（可多行）
         vx = pad + label_w + 8
         vy = y + 8
         for line in val_lines:
-            draw.text((vx, vy), line, font=font_value, fill=fg)
+            _draw_text(draw, (vx, vy), line, font_value, fg)
             vy += _text_size(draw, line or " ", font_value)[1] + 3
         y += h + row_gap
 
@@ -2958,15 +2961,13 @@ def _draw_status_png(
         draw.line((pad, y, width - pad, y), fill=border, width=1)
         y += 12
         for line in _wrap_text(draw, footer, font_foot, content_w):
-            draw.text((pad, y), line, font=font_foot, fill=accent)
+            _draw_text(draw, (pad, y), line, font_foot, accent)
             y += _text_size(draw, line or " ", font_foot)[1] + 2
 
     if style.show_brand:
         brand = "hapi connector"
         bw, bh = _text_size(draw, brand, font_foot)
-        draw.text(
-            (width - pad - bw, height - pad - bh), brand, font=font_foot, fill=sub_fg
-        )
+        _draw_text(draw, (width - pad - bw, height - pad - bh), brand, font_foot, sub_fg)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -3080,11 +3081,11 @@ def _draw_session_list_png(
     draw = ImageDraw.Draw(img)
 
     y = pad
-    draw.text((pad, y), title, font=font_title, fill=fg)
+    _draw_text(draw, (pad, y), title, font_title, fg)
     y += _text_size(draw, title, font_title)[1] + 6
     if subtitle:
         for line in _wrap_text(draw, subtitle, font_sub, content_w):
-            draw.text((pad, y), line, font=font_sub, fill=sub_fg)
+            _draw_text(draw, (pad, y), line, font_sub, sub_fg)
             y += _text_size(draw, line or " ", font_sub)[1] + 2
         y += 6
     draw.rectangle((pad, y, pad + min(140, content_w // 3), y + 4), fill=accent)
@@ -3112,13 +3113,13 @@ def _draw_session_list_png(
             tx = pad + 14
             ty = y + (sec_h - _text_size(draw, "测", font_meta)[1]) // 2
             for line in _wrap_text(draw, label, font_meta, content_w - 90)[:1]:
-                draw.text((tx, ty), line, font=font_meta, fill=accent)
+                _draw_text(draw, (tx, ty), line, font_meta, accent)
             if count_txt:
                 badge = f"{count_txt} 个" if not str(count_txt).endswith("个") else str(count_txt)
                 bw, bh = _text_size(draw, badge, font_meta)
                 bx = width - pad - bw - 12
                 by = y + (sec_h - bh) // 2
-                draw.text((bx, by), badge, font=font_meta, fill=sub_fg)
+                _draw_text(draw, (bx, by), badge, font_meta, sub_fg)
             y += sec_h + 8
             continue
 
@@ -3172,17 +3173,18 @@ def _draw_session_list_png(
         )
         ix = idx_box_left + (idx_box_w - tw) // 2 - toff_x
         iy = idx_box_top + (idx_box_h - th) // 2 - toff_y
-        draw.text(
+        _draw_text(
+            draw,
             (ix, iy),
             idx_txt,
-            font=font_idx,
-            fill=accent if is_current else sub_fg,
+            font_idx,
+            accent if is_current else sub_fg,
         )
 
         tx = pad + row_pad_x + idx_box_w + 12
         ty = y + row_pad_y
         for line in title_lines:
-            draw.text((tx, ty), line, font=font_body, fill=fg)
+            _draw_text(draw, (tx, ty), line, font_body, fg)
             ty += _text_size(draw, line or " ", font_body)[1] + 3
 
         sc = _status_color(status_key, accent, muted, fg)
@@ -3196,15 +3198,16 @@ def _draw_session_list_png(
             m_th, m_toff = meta_h, 0
         cy = my - m_toff + m_th // 2 + 10
         draw.ellipse((tx, cy - dot_r, tx + dot_r * 2, cy + dot_r), fill=sc)
-        draw.text((tx + 14, my), meta_line, font=font_meta, fill=sub_fg)
+        _draw_text(draw, (tx + 14, my), meta_line, font_meta, sub_fg)
 
         if sid:
             sw, sh = _text_size(draw, sid, font_meta)
-            draw.text(
+            _draw_text(
+                draw,
                 (width - pad - row_pad_x - sw, y + row_pad_y),
                 sid,
-                font=font_meta,
-                fill=sub_fg,
+                font_meta,
+                sub_fg,
             )
 
         y += row_h + row_gap
@@ -3214,7 +3217,7 @@ def _draw_session_list_png(
         draw.line((pad, y, width - pad, y), fill=border, width=1)
         y += 12
         for line in _wrap_text(draw, footer, font_foot, content_w):
-            draw.text((pad, y), line, font=font_foot, fill=accent)
+            _draw_text(draw, (pad, y), line, font_foot, accent)
             y += _text_size(draw, line or " ", font_foot)[1] + 2
 
     # 按实际内容高度裁剪多余空白；若内容超出预估则扩展
@@ -3353,11 +3356,11 @@ def _draw_struct_png(
     draw = ImageDraw.Draw(img)
 
     y = pad
-    draw.text((pad, y), title, font=font_title, fill=fg)
+    _draw_text(draw, (pad, y), title, font_title, fg)
     y += _text_size(draw, title, font_title)[1] + 6
     if subtitle:
         for line in _wrap_text(draw, subtitle, font_sub, content_w):
-            draw.text((pad, y), line, font=font_sub, fill=muted)
+            _draw_text(draw, (pad, y), line, font_sub, muted)
             y += _text_size(draw, line or " ", font_sub)[1] + 2
         y += 8
     draw.rectangle((pad, y, pad + min(120, content_w // 3), y + 3), fill=accent)
@@ -3369,7 +3372,7 @@ def _draw_struct_png(
         detail = str(row.get("detail") or "")
         if rtype == "section":
             for line in _wrap_text(draw, head, font_sub, content_w):
-                draw.text((pad, y), line, font=font_sub, fill=accent)
+                _draw_text(draw, (pad, y), line, font_sub, accent)
                 y += _text_size(draw, line or " ", font_sub)[1] + 2
             y += row_gap // 2
             continue
@@ -3391,10 +3394,10 @@ def _draw_struct_png(
         )
         yy = y + row_pad_y
         for line in head_lines:
-            draw.text((pad + 10, yy), line, font=font_body, fill=fg)
+            _draw_text(draw, (pad + 10, yy), line, font_body, fg)
             yy += _text_size(draw, line or " ", font_body)[1] + 2
         for line in detail_lines:
-            draw.text((pad + 14, yy), line, font=font_sub, fill=muted)
+            _draw_text(draw, (pad + 14, yy), line, font_sub, muted)
             yy += _text_size(draw, line or " ", font_sub)[1] + 2
         y += block_h + row_gap
 
@@ -3403,7 +3406,7 @@ def _draw_struct_png(
         draw.line((pad, y, width - pad, y), fill=border, width=1)
         y += foot_gap_after
         for line in _wrap_text(draw, footer, font_foot, content_w):
-            draw.text((pad, y), line, font=font_foot, fill=accent)
+            _draw_text(draw, (pad, y), line, font_foot, accent)
             y += _text_size(draw, line or " ", font_foot)[1] + 3
 
     brand_h = 0
@@ -3428,11 +3431,12 @@ def _draw_struct_png(
     if style.show_brand:
         brand = "hapi connector"
         bw, bh = _text_size(draw, brand, font_foot)
-        draw.text(
+        _draw_text(
+            draw,
             (width - pad - bw, height - pad - bh),
             brand,
-            font=font_foot,
-            fill=muted,
+            font_foot,
+            muted,
         )
 
     # 外框最后画，避免扩展后丢失
@@ -3940,11 +3944,11 @@ def _draw_message_png(
     )
 
     y = pad
-    draw.text((pad, y), title, font=font_title, fill=fg)
+    _draw_text(draw, (pad, y), title, font_title, fg)
     y += _text_size(draw, title, font_title)[1] + 8
     if subtitle:
         for line in _wrap_text(draw, subtitle, font_sub, content_w):
-            draw.text((pad, y), line, font=font_sub, fill=sub_fg)
+            _draw_text(draw, (pad, y), line, font_sub, sub_fg)
             y += _text_size(draw, line or " ", font_sub)[1] + line_extra
         y += 8
     draw.rectangle((pad, y, pad + min(160, content_w // 3), y + 4), fill=accent)
@@ -3977,7 +3981,7 @@ def _draw_message_png(
                     try:
                         img.paste(im, (x, yy))
                     except Exception:
-                        draw.text((x, y), str(p.get("text") or ""), font=font_body, fill=fg)
+                        _draw_text(draw, (x, y), str(p.get("text") or ""), font_body, fg)
                     x += im.width + 3
                 else:
                     t = str(p.get("text") or "")
@@ -4062,14 +4066,14 @@ def _draw_message_png(
                     for line in _wrap_text(
                         draw, str(b.get("text") or ""), font_body, content_w
                     ):
-                        draw.text((pad, y), line, font=font_body, fill=fg)
+                        _draw_text(draw, (pad, y), line, font_body, fg)
                         y += _text_size(draw, line or " ", font_body)[1] + line_extra
                     y += 8
             else:
                 for line in _wrap_text(
                     draw, str(b.get("text") or ""), font_body, content_w
                 ):
-                    draw.text((pad, y), line, font=font_body, fill=fg)
+                    _draw_text(draw, (pad, y), line, font_body, fg)
                     y += _text_size(draw, line or " ", font_body)[1] + line_extra
                 y += 8
             continue
@@ -4128,7 +4132,7 @@ def _draw_message_png(
             if not inner_blocks:
                 body = str(b.get("text") or "")
                 for ln in _wrap_text(draw, body, font_body, inner_w) or [""]:
-                    draw.text((text_x, yy), ln, font=font_body, fill=fg)
+                    _draw_text(draw, (text_x, yy), ln, font_body, fg)
                     yy += _text_size(draw, ln or " ", font_body)[1] + line_loose
             else:
                 for idx, ib in enumerate(inner_blocks):
@@ -4182,7 +4186,7 @@ def _draw_message_png(
                                 col = _hex_to_rgb(style.diff_add)
                             elif s.startswith("-"):
                                 col = _hex_to_rgb(style.diff_del)
-                            draw.text((text_x + 10, dyy), ln, font=font_code, fill=col)
+                            _draw_text(draw, (text_x + 10, dyy), ln, font_code, col)
                             dyy += _text_size(draw, ln or " ", font_code)[1] + 4
                         yy += ih + inner_gap
                     elif ibt == "code":
@@ -4211,14 +4215,14 @@ def _draw_message_png(
                         )
                         cyy = yy + 8
                         for ln in clines:
-                            draw.text((text_x + 10, cyy), ln, font=font_code, fill=fg)
+                            _draw_text(draw, (text_x + 10, cyy), ln, font_code, fg)
                             cyy += _text_size(draw, ln or " ", font_code)[1] + 4
                         yy += ch + inner_gap
                     else:
                         prefix = "●  " if ibt == "li" else ""
                         raw = prefix + str(ib.get("text") or "")
                         for ln in _wrap_text(draw, raw, font_body, inner_w) or [""]:
-                            draw.text((text_x, yy), ln, font=font_body, fill=fg)
+                            _draw_text(draw, (text_x, yy), ln, font_body, fg)
                             yy += (
                                 _text_size(draw, ln or " ", font_body)[1] + line_loose
                             )
@@ -4296,7 +4300,7 @@ def _draw_message_png(
                     col = add_fg
                 elif s.startswith("-"):
                     col = del_fg
-                draw.text((text_x, yy), ln, font=font_code, fill=col)
+                _draw_text(draw, (text_x, yy), ln, font_code, col)
                 yy += _text_size(draw, ln or " ", font_code)[1] + 3
             y += block_h + tool_gap
             continue
@@ -4309,7 +4313,7 @@ def _draw_message_png(
             for ln in _wrap_text(draw, line, font_body, content_w - 16) or [""]:
                 # 完成项略淡
                 col = _mix_rgb(fg, muted, 0.35) if status == "done" else mark_fg
-                draw.text((pad + 8, y), ln, font=font_body, fill=col)
+                _draw_text(draw, (pad + 8, y), ln, font_body, col)
                 y += _text_size(draw, ln or " ", font_body)[1] + line_extra
             y += 4
             continue
@@ -4336,7 +4340,7 @@ def _draw_message_png(
             )
             yy = y + 10
             for line in lines:
-                draw.text((pad + 12, yy), line, font=font_code, fill=fg)
+                _draw_text(draw, (pad + 12, yy), line, font_code, fg)
                 yy += _text_size(draw, line or " ", font_code)[1] + line_extra
             y += block_h + 12
             continue
@@ -4506,12 +4510,12 @@ def _draw_message_png(
                     y += im.height + 18
                 except Exception:
                     for line in _wrap_text(draw, f"[图片] {alt}", font_body, content_w):
-                        draw.text((pad, y), line, font=font_body, fill=sub_fg)
+                        _draw_text(draw, (pad, y), line, font_body, sub_fg)
                         y += _text_size(draw, line or " ", font_body)[1] + line_extra
                     y += 8
             else:
                 for line in _wrap_text(draw, f"[图片] {alt}", font_body, content_w):
-                    draw.text((pad, y), line, font=font_body, fill=sub_fg)
+                    _draw_text(draw, (pad, y), line, font_body, sub_fg)
                     y += _text_size(draw, line or " ", font_body)[1] + line_extra
                 y += 8
             continue
@@ -4548,7 +4552,7 @@ def _draw_message_png(
                 img = bigger
                 draw = ImageDraw.Draw(img)
                 height = need
-            draw.text((pad, y), line, font=font_foot, fill=accent)
+            _draw_text(draw, (pad, y), line, font_foot, accent)
             y += _text_size(draw, line or " ", font_foot)[1] + line_extra + 2
 
     brand_h = 0
@@ -4571,9 +4575,7 @@ def _draw_message_png(
     if style.show_brand:
         brand = "hapi connector"
         bw, bh = _text_size(draw, brand, font_foot)
-        draw.text(
-            (width - pad - bw, height - pad - bh), brand, font=font_foot, fill=sub_fg
-        )
+        _draw_text(draw, (width - pad - bw, height - pad - bh), brand, font_foot, sub_fg)
 
     # 外框最后画，扩展后不丢边框
     _draw_rounded_rect(
