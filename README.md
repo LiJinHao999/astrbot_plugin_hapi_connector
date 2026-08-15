@@ -149,7 +149,7 @@ hapi codex    # OpenAI Codex
 
 ### Agent 操作记录统计（可选）
 
-开启 `auto_approve_silent`（键名保留兼容）后，托管时段内 agent 的**全部操作**——自动批准、你手动批准的请求、拒绝、自动压缩——不再逐条推送，改为按策略汇总推送（记录每条操作的工具与参数摘要，并附带 git 变更快照），夜间托管不再刷屏。详见 `dev-docs/auto-approve-silent-summary.md`。
+开启 `auto_approve_silent`（键名保留兼容）后，托管时段内**有会话活动**（思考/运行）的 session 按策略汇总推送——不必等自动批准 / 压缩。审批类操作不再逐条刷屏，卡上带最近消息、操作明细与 git 快照。详见 `dev-docs/auto-approve-silent-summary.md`。
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|

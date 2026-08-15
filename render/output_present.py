@@ -813,10 +813,18 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
             bits.append(detail[:100])
         return " ".join(b for b in bits if b)
 
-    clean_title = _strip_emoji(str(view.get("title") or (view.get("sid") or "")[:8]))
-    title = clean_title or "操作记录"
+    sid = str(view.get("sid") or "")
+    sid_short = str(view.get("sid_short") or sid[:8] or "?")
+    flavor = _strip_emoji(str(view.get("flavor") or "?").strip() or "?")
+    path = str(view.get("path") or "").strip()
+    clean_title = _strip_emoji(str(view.get("title") or "").strip())
+    # 标题退化成路径时已在 view 层改成「(无标题)」；这里再兜底一次
+    if not clean_title or clean_title == path:
+        clean_title = "(无标题)"
+    title = clean_title
     bucket = str(view.get("bucket_desc") or "—")
-    subtitle = f"操作记录 · {bucket}"
+    # 副标题显式带 flavor · sid，避免多 session 汇总时只剩 cwd 路径
+    subtitle = f"操作记录 · {flavor} · {sid_short} · {bucket}"
 
     counters = view.get("counters") or {}
     approve_ok = int(counters.get("approve_ok") or 0)
@@ -826,6 +834,26 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
     deny_n = int(counters.get("deny_fail") or 0)
 
     rows: list[dict[str, Any]] = []
+    # 身份行：路径单独列出（标题不再用 cwd 顶替）
+    if path:
+        path_show = path
+        if "/" in path:
+            parts = [p for p in path.split("/") if p]
+            if len(parts) > 2:
+                path_show = "…/" + "/".join(parts[-2:])
+        rows.append({
+            "type": "kv",
+            "label": "路径",
+            "detail": _strip_emoji(path_show),
+            "full": path,
+        })
+    rows.append({
+        "type": "kv",
+        "label": "会话",
+        "detail": f"{flavor} · {sid_short}",
+        "full": sid,
+    })
+
     if approve_ok or approve_fail:
         rows.append({
             "type": "kv",
@@ -844,6 +872,12 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
             "label": "拒绝",
             "detail": f"{deny_n} 次",
         })
+    if not (approve_ok or approve_fail or compact_ok or compact_fail or deny_n):
+        rows.append({
+            "type": "kv",
+            "label": "审批",
+            "detail": "无（窗内有会话活动）",
+        })
 
     runtime_sec = float(view.get("runtime_sec") or 0)
     if runtime_sec >= 1:
@@ -851,6 +885,43 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
         secs = int(runtime_sec % 60)
         detail = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
         rows.append({"type": "kv", "label": "运行", "detail": detail})
+
+    last_message = str(view.get("last_message") or "").strip()
+    if last_message:
+        rows.append({
+            "type": "section",
+            "label": "最近消息",
+            "detail": "",
+            "count": 0,
+        })
+        # 多行预览：首行作 label，后续行作独立 row；过长截断避免撑爆卡片
+        msg_lines = [ln for ln in last_message.splitlines() if ln.strip()] or [last_message]
+        max_msg_lines = 8
+        shown_msg = msg_lines[:max_msg_lines]
+        for i, ln in enumerate(shown_msg):
+            text = _strip_emoji(ln)[:160]
+            if i == 0:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": text,
+                    "detail": "",
+                })
+            else:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": text,
+                    "detail": "",
+                })
+        hidden_msg = len(msg_lines) - len(shown_msg)
+        if hidden_msg > 0:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": f"…另有 {hidden_msg} 行",
+                "detail": "",
+            })
 
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
@@ -910,12 +981,12 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
                 "detail": f"{status_count} 文件 · +{added} -{deleted}",
                 "count": 0,
             })
-            for mark, path in entries:
+            for mark, gpath in entries:
                 rows.append({
                     "type": "row",
                     "index": 0,
                     "label": mark,
-                    "detail": _strip_emoji(path)[:120],
+                    "detail": _strip_emoji(gpath)[:120],
                 })
             hidden = int(git.get("total_entries") or 0) - len(entries)
             if hidden > 0:
@@ -941,12 +1012,15 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
     push_label = {
         "on_window_end": "托管结束时",
         "at_fixed_time": "每天固定时间",
+        "manual": "不主动推送",
     }.get(str(view.get("push") or ""), str(view.get("push") or "?"))
     footer_bits = [f"上次汇总: {_dt(view.get('last_pushed_at')) or '无'}"]
     footer_bits.append(f"mode={mode_label} push={push_label}")
     return {
         "title": title,
         "subtitle": subtitle,
+        "sid_short": sid_short,
+        "flavor": flavor,
         "rows": rows,
         "footer": " · ".join(footer_bits),
     }

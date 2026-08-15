@@ -2,7 +2,8 @@
 
 设计对照 dev-docs/auto-approve-silent-summary.md（§2/§4/§5.3）：
 
-- 收集维度 (session_id → 事件)，推送每 session 一张，严格走既有窗口路由。
+- 收集维度 (session_id → 事件 / 窗内活动)，推送每 session 一张，严格走既有窗口路由。
+- 窗内思考/运行即占桶：无审批/压缩也会在结算时出卡（最近消息 + 运行时长 + git）。
 - 防漏发：last_pushed_at（本地日历日）+ last_content_fingerprint（sha256 规范化事件）
   + last_bucket_id；need_flush 见 §2.3 规则。
 - 桶：window=window:进入日Tstart:结束日Tend（跨午夜一段窗一个 id）；
@@ -98,11 +99,22 @@ class SessionSummaryState:
     current_bucket_id: str | None = None
     # 当前窗内累计 Agent 运行秒（SSE 边沿写入）
     runtime_sec: float = 0.0
+    # 窗内已有思考/运行（尚无审批事件也要出卡）
+    occupied: bool = False
+    occupied_at: datetime.datetime | None = None
     # 上一关闭统计窗快照（命令重放；每 sid 只保留一份）
     last_closed_snapshot: dict[str, Any] | None = None
 
     def counter(self, key: str) -> int:
         return self.counters.get(key, 0)
+
+    def has_current_activity(self) -> bool:
+        """当前桶是否有可汇总内容：审批事件、运行时长，或窗内已占桶的会话活动。"""
+        return bool(
+            self.pending
+            or float(self.runtime_sec or 0) > 0
+            or self.occupied
+        )
 
 
 class AutoApproveSummaryService:
@@ -141,6 +153,7 @@ class AutoApproveSummaryService:
         self._edge_task: asyncio.Task | None = None
         self._fixed_time_task: asyncio.Task | None = None
         self._persist_task: asyncio.Task | None = None
+        self._catchup_task: asyncio.Task | None = None
         self._dirty: bool = False
 
     # ──── 配置 ────
@@ -221,6 +234,20 @@ class AutoApproveSummaryService:
         except Exception:
             return False
 
+    def _infer_enter_day(self, now: datetime.datetime | None = None) -> datetime.date:
+        """推断当前这段托管窗的进入日（跨午夜时，07:00 前应算作昨天进入）。"""
+        now = now or datetime.datetime.now()
+        try:
+            h_s, m_s = map(int, self._start.split(":"))
+            h_e, m_e = map(int, self._end.split(":"))
+            start = datetime.time(h_s, m_s)
+            end = datetime.time(h_e, m_e)
+        except Exception:
+            return now.date()
+        if start > end and now.time() <= end:
+            return now.date() - datetime.timedelta(days=1)
+        return now.date()
+
     # ──── 桶 ────
 
     def _bucket_for(self, now: datetime.datetime) -> str:
@@ -230,7 +257,7 @@ class AutoApproveSummaryService:
             return "rolling24h"
         # window：一段窗（可跨午夜）一个 id，以进入窗口的本地日生成
         if self._window_enter_day is None:
-            self._window_enter_day = now.date()
+            self._window_enter_day = self._infer_enter_day(now)
         enter_day = self._window_enter_day
         start = self._start
         end = self._end
@@ -289,11 +316,34 @@ class AutoApproveSummaryService:
         async with self._lock:
             state = self._sessions.setdefault(session_id, SessionSummaryState())
             state.current_bucket_id = self._bucket_for(now)
+            state.occupied = True
+            if state.occupied_at is None:
+                state.occupied_at = now
             state.pending.append(evt)
             if len(state.pending) > MAX_PENDING_EVENTS_PER_SESSION:
                 state.pending = state.pending[-MAX_PENDING_EVENTS_PER_SESSION:]
             key = f"{kind}_{'ok' if ok else 'fail'}"
             state.counters[key] = state.counters.get(key, 0) + 1
+            self._mark_dirty()
+
+    async def touch_session(self, session_id: str) -> None:
+        """窗内有会话活动（思考 / 运行 / 新消息）即占桶，不必等审批事件。
+
+        早报应对「夜里干过活」的 session 出卡（最近消息 + 运行时长 + git），
+        而不是只在有自动批准 / 压缩时才推。
+        """
+        if not self.enabled or not session_id:
+            return
+        if not self._in_window():
+            return
+        now = datetime.datetime.now()
+        async with self._lock:
+            state = self._sessions.setdefault(session_id, SessionSummaryState())
+            if state.occupied and state.current_bucket_id:
+                return
+            state.current_bucket_id = self._bucket_for(now)
+            state.occupied = True
+            state.occupied_at = now
             self._mark_dirty()
 
     async def record_operation(
@@ -335,6 +385,8 @@ class AutoApproveSummaryService:
             "approve_fail": state.counter("approve_fail"),
             "compact_ok": state.counter("compact_ok"),
             "compact_fail": state.counter("compact_fail"),
+            "runtime_sec": int(state.runtime_sec or 0),
+            "occupied": bool(state.occupied),
             "events": [
                 {
                     "t": e.at.isoformat(),
@@ -350,8 +402,13 @@ class AutoApproveSummaryService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def need_flush(self, state: SessionSummaryState, now: datetime.datetime | None = None) -> bool:
-        """§2.3：有未推事件 且 非「同日 + 同指纹」。"""
-        if not state.pending:
+        """防漏发：有 pending 且非「同日 + 同指纹」。
+
+        只约束 stop / 关开关 / 热更新这类补发，避免重载连推两张。
+        窗结束 / 定点结算（``close_bucket=True``）是定时交付，不走此判定——
+        否则窗内手动 ``/hapi summary`` 会把 07:00 主动推送吃掉。
+        """
+        if not state.has_current_activity():
             return False
         now = now or datetime.datetime.now()
         if state.last_pushed_at is None:
@@ -363,13 +420,50 @@ class AutoApproveSummaryService:
 
     # ──── 汇总视图 ────
 
+    def _session_identity(self, sid: str) -> dict[str, Any]:
+        """汇总展示用的 session 身份：标题 / flavor / 路径 / 短 ID。
+
+        get_session_title 在无名称时会回退到 cwd 路径，卡片会把整条路径当标题，
+        看起来像「只有路径、没有 session」。这里把「标题==路径」视作无标题，
+        路径单独字段展示；sid / flavor 始终给出。
+        """
+        session = next((s for s in self.plugin.sessions_cache if s.get("id") == sid), None)
+        label = formatters.session_label_short(sid, self.plugin.sessions_cache)
+        sid_short = (sid or "")[:8] or "?"
+        if not session:
+            return {
+                "session": None,
+                "title": f"(无标题 · {sid_short})",
+                "label": label,
+                "sid_short": sid_short,
+                "flavor": "?",
+                "path": "",
+            }
+        meta = session.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        path = str(meta.get("path") or meta.get("cwd") or "").strip()
+        flavor = str(meta.get("flavor") or "?").strip() or "?"
+        raw_title = str(formatters.get_session_title(session) or "").strip()
+        # 标题退化成 cwd 时不当作会话名
+        if not raw_title or raw_title == path or raw_title == "(无标题)":
+            title = "(无标题)"
+        else:
+            title = raw_title
+        return {
+            "session": session,
+            "title": title,
+            "label": label,
+            "sid_short": sid_short,
+            "flavor": flavor,
+            "path": path,
+        }
+
     def build_summary_view(self, sid: str, state: SessionSummaryState | None = None) -> dict[str, Any]:
         """构造展示视图：formatters 与卡片 builder 只消费这份 dict。"""
         state = state or self._sessions.get(sid)
         now = datetime.datetime.now()
-        session = next((s for s in self.plugin.sessions_cache if s.get("id") == sid), None)
-        label = formatters.session_label_short(sid, self.plugin.sessions_cache)
-        title = formatters.get_session_title(session) if session else label.splitlines()[0] if label else sid[:8]
+        ident = self._session_identity(sid)
 
         failures = [
             _event_view(e)
@@ -384,8 +478,11 @@ class AutoApproveSummaryService:
         ]
         view = {
             "sid": sid,
-            "title": title,
-            "label": label,
+            "sid_short": ident["sid_short"],
+            "title": ident["title"],
+            "label": ident["label"],
+            "flavor": ident["flavor"],
+            "path": ident["path"],
             "bucket_id": state.current_bucket_id,
             "bucket_desc": self._bucket_desc(state.current_bucket_id),
             "counters": {
@@ -403,6 +500,7 @@ class AutoApproveSummaryService:
             "max_detail_lines": max(1, int(self._max_detail_lines or 30)),
             "runtime_sec": float(state.runtime_sec or 0),
             "git": None,
+            "last_message": None,
         }
         cached = self._git_cache.get(sid)
         if cached is not None and cached[1]:
@@ -430,9 +528,7 @@ class AutoApproveSummaryService:
     def _view_from_snapshot(self, sid: str, snap: dict[str, Any]) -> dict[str, Any]:
         """关闭窗快照 → 展示视图（命令重放）。"""
         now = datetime.datetime.now()
-        session = next((s for s in self.plugin.sessions_cache if s.get("id") == sid), None)
-        label = formatters.session_label_short(sid, self.plugin.sessions_cache)
-        title = formatters.get_session_title(session) if session else label.splitlines()[0] if label else sid[:8]
+        ident = self._session_identity(sid)
         events = [
             AutoApproveEvent.from_dict(e) for e in (snap.get("events") or []) if isinstance(e, dict)
         ]
@@ -443,8 +539,11 @@ class AutoApproveSummaryService:
         counters_raw = snap.get("counters") or {}
         view = {
             "sid": sid,
-            "title": title,
-            "label": label,
+            "sid_short": ident["sid_short"],
+            "title": ident["title"],
+            "label": ident["label"],
+            "flavor": ident["flavor"],
+            "path": ident["path"],
             "bucket_id": snap.get("bucket_id"),
             "bucket_desc": snap.get("bucket_desc") or self._bucket_desc(snap.get("bucket_id")),
             "counters": {k: int(counters_raw.get(k) or 0) for k in COUNT_KEYS},
@@ -459,26 +558,75 @@ class AutoApproveSummaryService:
             "max_detail_lines": max(1, int(self._max_detail_lines or 30)),
             "runtime_sec": float(snap.get("runtime_sec") or 0),
             "git": None,
+            "last_message": None,
             "from_snapshot": True,
         }
         return view
+
+    async def _last_message_preview(self, sid: str, *, max_len: int = 360) -> str | None:
+        """拉取 session 最近一条可展示的 agent/用户消息预览（失败返回 None，不阻断汇总）。"""
+        client = getattr(self.plugin, "client", None)
+        if client is None or not sid:
+            return None
+        try:
+            from . import session_ops
+
+            msgs = await session_ops.fetch_messages(client, sid, limit=40)
+        except Exception as e:
+            logger.warning("汇总最近消息拉取失败 sid=%s: %s", sid[:8], e)
+            return None
+        if not msgs:
+            return None
+
+        def _pick(roles: set[str]) -> str | None:
+            for m in reversed(msgs):
+                if not isinstance(m, dict):
+                    continue
+                role = formatters._get_message_role(m)
+                if role not in roles:
+                    continue
+                text = formatters.extract_text_preview(
+                    m.get("content", {}),
+                    max_len=max_len,
+                )
+                if text and str(text).strip():
+                    cleaned = str(text).strip()
+                    # 去掉纯文本推送前缀，卡片/汇总里更干净
+                    if cleaned.startswith("[Message]:"):
+                        cleaned = cleaned[len("[Message]:"):].lstrip()
+                    elif cleaned.startswith("【消息】"):
+                        cleaned = cleaned[len("【消息】"):].lstrip()
+                    return cleaned or None
+            return None
+
+        # 优先 agent/assistant 终态回复；没有则退到最近用户输入
+        return _pick({"agent", "assistant"}) or _pick({"user"})
 
     async def add_runtime_sec(self, sid: str, delta: float) -> None:
         """SSE 完成边沿累加运行秒（仅 enabled 时有意义；调用方已判断）。"""
         if delta <= 0:
             return
+        now = datetime.datetime.now()
         async with self._lock:
             state = self._sessions.setdefault(sid, SessionSummaryState())
+            if not state.current_bucket_id:
+                state.current_bucket_id = self._bucket_for(now)
+            state.occupied = True
+            if state.occupied_at is None:
+                state.occupied_at = now
             state.runtime_sec = float(state.runtime_sec or 0) + float(delta)
             self._mark_dirty()
 
     def _archive_and_clear_bucket(self, sid: str, state: SessionSummaryState) -> None:
         """桶切换/自动结算：写入 last_closed_snapshot 并清空当前桶事件。"""
-        if state.pending or state.runtime_sec:
+        if state.has_current_activity():
             state.last_closed_snapshot = self._snapshot_from_state(sid, state)
         state.pending = []
         state.counters = {}
         state.runtime_sec = 0.0
+        state.occupied = False
+        state.occupied_at = None
+        state.current_bucket_id = None
 
     # ──── 推送 ────
 
@@ -507,6 +655,7 @@ class AutoApproveSummaryService:
 
         - 自动路径：force=False，受 need_flush 约束；成功只更新 last_*，
           close_bucket=True 时才归档快照并清当前桶（窗结束/定点；rolling 模式不清空）。
+          **close_bucket 不受 need_flush 约束**（定时交付，窗内预览过也要再推）。
         - 命令路径：force=True；prefer_snapshot=True 时优先上一关闭窗，
           否则当前桶；**不**因推送清空数据（busy-hours-agent-push.md §4）。
         """
@@ -519,14 +668,20 @@ class AutoApproveSummaryService:
                     snap.get("events")
                     or any((snap.get("counters") or {}).values())
                     or snap.get("runtime_sec")
+                    or snap.get("bucket_id")
                 )
             )
-            has_pending = bool(state and state.pending)
+            has_pending = bool(state and state.has_current_activity())
 
             if force and prefer_snapshot and has_snap:
                 source = "snapshot"
             elif has_pending:
-                if not force and state is not None and not self.need_flush(state):
+                if (
+                    not force
+                    and not close_bucket
+                    and state is not None
+                    and not self.need_flush(state)
+                ):
                     return {"pushed": False, "reason": "no_change", "text": ""}
                 source = "pending"
             elif force and has_snap:
@@ -538,17 +693,18 @@ class AutoApproveSummaryService:
                     "text": "",
                 }
 
-        # 锁外取 git（仅当前桶展示附带；快照重放也可附当前 git 作参考）
+        # 锁外取 git + 最近消息（展示附加；不进 fingerprint / 不入 KV）
         await self._git_snapshot(sid)
+        last_message = await self._last_message_preview(sid)
 
         async with self._lock:
             state = self._sessions.get(sid)
             if state is None:
                 return {"pushed": False, "reason": "no_record" if force else "no_pending", "text": ""}
             if source == "pending":
-                if not state.pending:
+                if not state.has_current_activity():
                     return {"pushed": False, "reason": "no_pending", "text": ""}
-                if not force and not self.need_flush(state):
+                if not force and not close_bucket and not self.need_flush(state):
                     return {"pushed": False, "reason": "no_change", "text": ""}
                 view = self.build_summary_view(sid, state)
                 fp_before = self._fingerprint(state)
@@ -564,6 +720,8 @@ class AutoApproveSummaryService:
         cached = self._git_cache.get(sid)
         if cached is not None and cached[1]:
             view["git"] = cached[1]
+        if last_message:
+            view["last_message"] = last_message
 
         ok, text = await self._emit_view(sid, view)
         if not ok:
@@ -574,7 +732,7 @@ class AutoApproveSummaryService:
             if state is None:
                 return {"pushed": True, "reason": "pushed", "text": text}
             state.last_pushed_at = datetime.datetime.now()
-            if source == "pending" and state.pending:
+            if source == "pending" and state.has_current_activity():
                 state.last_content_fingerprint = fp_before or self._fingerprint(state)
                 state.last_bucket_id = bucket_id
                 if close_bucket:
@@ -585,7 +743,7 @@ class AutoApproveSummaryService:
     async def flush_all(self, *, close_bucket: bool = False) -> dict[str, dict[str, Any]]:
         """对所有有 pending 的 session 各推一张（need_flush 过滤无变更）。"""
         async with self._lock:
-            sids = [sid for sid, st in self._sessions.items() if st.pending]
+            sids = [sid for sid, st in self._sessions.items() if st.has_current_activity()]
         results: dict[str, dict[str, Any]] = {}
         for sid in sids:
             results[sid] = await self.flush_session(sid, close_bucket=close_bucket)
@@ -596,7 +754,7 @@ class AutoApproveSummaryService:
         return await self.flush_session(sid, force=True, prefer_snapshot=True)
 
     def has_pending(self) -> bool:
-        return any(st.pending for st in self._sessions.values())
+        return any(st.has_current_activity() for st in self._sessions.values())
 
     def has_record(self, sid: str | None = None) -> bool:
         """是否有可展示记录（当前桶或上一窗快照）。"""
@@ -604,8 +762,11 @@ class AutoApproveSummaryService:
             st = self._sessions.get(sid)
             if st is None:
                 return False
-            return bool(st.pending or st.last_closed_snapshot)
-        return any(st.pending or st.last_closed_snapshot for st in self._sessions.values())
+            return bool(st.has_current_activity() or st.last_closed_snapshot)
+        return any(
+            st.has_current_activity() or st.last_closed_snapshot
+            for st in self._sessions.values()
+        )
 
     # ──── 触发点：窗边沿 / 桶结算 / 定点 ────
 
@@ -617,7 +778,9 @@ class AutoApproveSummaryService:
             if window_ended:
                 self._window_enter_day = None
             if window_started:
-                self._window_enter_day = datetime.date.today()
+                self._window_enter_day = self._infer_enter_day()
+            if window_ended or window_started:
+                self._mark_dirty()
             self._was_in_window = in_window
 
             # rolling 模式：剔除超过 24h 的事件（滚动窗口过期）
@@ -636,6 +799,19 @@ class AutoApproveSummaryService:
                     await self.flush_all()
             elif self._push == "manual" and self.mode == "window":
                 await self._archive_all_without_push()
+        elif window_started and self.enabled:
+            # 进窗时已经在思考/运行的 session 立刻占桶（不必等下一次 thinking 边沿）
+            await self._occupy_live_sessions()
+
+    async def _occupy_live_sessions(self) -> None:
+        """把缓存里当前 thinking/active 的 session 记入本窗。"""
+        cache = getattr(self.plugin, "sessions_cache", None) or []
+        for sess in cache:
+            if not (sess.get("thinking") or sess.get("active")):
+                continue
+            sid = sess.get("id")
+            if sid:
+                await self.touch_session(str(sid))
 
     async def _flush_and_close_buckets(self) -> None:
         """window 模式：推送并归档快照；被指纹防刷跳过（no_change）的也归档清空，
@@ -643,7 +819,7 @@ class AutoApproveSummaryService:
         await self.flush_all(close_bucket=True)
         async with self._lock:
             for sid, st in list(self._sessions.items()):
-                if st.pending:
+                if st.has_current_activity():
                     self._archive_and_clear_bucket(sid, st)
             await self._save()
 
@@ -651,7 +827,7 @@ class AutoApproveSummaryService:
         """window + manual：窗结束只归档快照、不推送（命令可重发）。"""
         async with self._lock:
             for sid, st in list(self._sessions.items()):
-                if st.pending or st.runtime_sec:
+                if st.has_current_activity():
                     self._archive_and_clear_bucket(sid, st)
             await self._save()
 
@@ -670,6 +846,19 @@ class AutoApproveSummaryService:
                 key = f"{e.kind}_{'ok' if e.ok else 'fail'}"
                 st.counters[key] = st.counters.get(key, 0) + 1
             self._mark_dirty()
+        # occupied 超过 24h 且无剩余事件 → 不再空推
+        for st in self._sessions.values():
+            if not st.occupied:
+                continue
+            if st.pending:
+                continue
+            occupied_at = st.occupied_at
+            if occupied_at is None or occupied_at < cutoff:
+                st.occupied = False
+                st.occupied_at = None
+                if float(st.runtime_sec or 0) > 0:
+                    st.runtime_sec = 0.0
+                self._mark_dirty()
 
     async def _edge_loop(self) -> None:
         while True:
@@ -708,10 +897,53 @@ class AutoApproveSummaryService:
             self._edge_task = asyncio.create_task(self._edge_loop())
         if self._fixed_time_task is None or self._fixed_time_task.done():
             self._fixed_time_task = asyncio.create_task(self._fixed_time_loop())
+        if self._catchup_task is None or self._catchup_task.done():
+            self._catchup_task = asyncio.create_task(self._catchup_missed_window_end())
+
+    async def _catchup_missed_window_end(self) -> None:
+        """启动补发：上次停在窗内、现在已出窗 → 视为错过了窗结束边沿。
+
+        _was_in_window 不落盘时，首次启动会从 False 起步，只能靠「有 pending
+        且当前不在窗内」推断错过了结算。
+        """
+        try:
+            in_window = self._in_window()
+            missed = False
+            async with self._lock:
+                if self._was_in_window and not in_window:
+                    missed = True
+                elif (
+                    not in_window
+                    and self.has_pending()
+                    and self._push == "on_window_end"
+                ):
+                    # 重启后内存边沿丢失：窗外仍有未结算 pending，按错过结算处理
+                    missed = True
+                self._was_in_window = in_window
+                if in_window and self._window_enter_day is None:
+                    self._window_enter_day = self._infer_enter_day()
+                self._mark_dirty()
+
+            if not missed:
+                if in_window and self.enabled:
+                    await self._occupy_live_sessions()
+                return
+            logger.info("操作记录：启动检测到错过的托管窗结束，补发结算")
+            if self._push == "on_window_end":
+                if self.mode == "window":
+                    await self._flush_and_close_buckets()
+                else:
+                    await self.flush_all()
+            elif self._push == "manual" and self.mode == "window":
+                await self._archive_all_without_push()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("操作记录启动补发异常: %s", e)
 
     async def stop(self) -> None:
         """停止任务并落盘（flush 由调用方先执行）。"""
-        for task in (self._edge_task, self._fixed_time_task, self._persist_task):
+        for task in (self._edge_task, self._fixed_time_task, self._persist_task, self._catchup_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -721,6 +953,7 @@ class AutoApproveSummaryService:
         self._edge_task = None
         self._fixed_time_task = None
         self._persist_task = None
+        self._catchup_task = None
         await self._save()
 
     # ──── KV 持久化 ────
@@ -745,6 +978,8 @@ class AutoApproveSummaryService:
             "last_bucket_id": state.last_bucket_id,
             "current_bucket_id": state.current_bucket_id,
             "runtime_sec": float(state.runtime_sec or 0),
+            "occupied": bool(state.occupied),
+            "occupied_at": state.occupied_at.isoformat() if state.occupied_at else None,
             "last_closed_snapshot": state.last_closed_snapshot,
         }
 
@@ -764,6 +999,8 @@ class AutoApproveSummaryService:
             last_bucket_id=data.get("last_bucket_id"),
             current_bucket_id=data.get("current_bucket_id"),
             runtime_sec=float(data.get("runtime_sec") or 0),
+            occupied=bool(data.get("occupied")),
+            occupied_at=_parse_dt(data.get("occupied_at")),
             last_closed_snapshot=snap,
         )
 
@@ -776,12 +1013,25 @@ class AutoApproveSummaryService:
             return
         if not isinstance(raw, dict):
             return
+        self._was_in_window = bool(raw.get("was_in_window"))
+        enter_raw = raw.get("window_enter_day")
+        if enter_raw:
+            try:
+                self._window_enter_day = datetime.date.fromisoformat(str(enter_raw))
+            except ValueError:
+                self._window_enter_day = None
         sessions = raw.get("sessions") or {}
         for sid, data in sessions.items():
             if not isinstance(sid, str) or not isinstance(data, dict):
                 continue
             state = self._state_from_dict(data)
-            if state.pending or state.last_pushed_at or state.last_closed_snapshot:
+            if (
+                state.pending
+                or state.last_pushed_at
+                or state.last_closed_snapshot
+                or state.runtime_sec
+                or state.occupied
+            ):
                 self._sessions[sid] = state
 
     async def _save(self) -> None:
@@ -790,14 +1040,22 @@ class AutoApproveSummaryService:
             # prune：已不在 session 列表且无 pending 的条目（保留 last_* 供 status）
             for sid in list(self._sessions.keys()):
                 st = self._sessions[sid]
-                if sid not in live_ids and not st.pending:
+                if sid not in live_ids and not st.has_current_activity() and not st.last_closed_snapshot:
                     del self._sessions[sid]
             data = {
+                "was_in_window": bool(self._was_in_window),
+                "window_enter_day": (
+                    self._window_enter_day.isoformat() if self._window_enter_day else None
+                ),
                 "sessions": {
                     sid: self._state_to_dict(st)
                     for sid, st in self._sessions.items()
-                    if st.pending or st.last_pushed_at or st.last_closed_snapshot
-                }
+                    if (
+                        st.has_current_activity()
+                        or st.last_pushed_at
+                        or st.last_closed_snapshot
+                    )
+                },
             }
             await self.plugin.put_kv_data(KV_KEY, data)
         except Exception as e:
@@ -824,6 +1082,7 @@ class AutoApproveSummaryService:
                     "last_pushed_at": st.last_pushed_at.isoformat() if st.last_pushed_at else None,
                     "last_bucket_id": st.last_bucket_id,
                     "runtime_sec": float(st.runtime_sec or 0),
+                    "has_activity": st.has_current_activity(),
                     "has_snapshot": bool(st.last_closed_snapshot),
                     "snapshot_closed_at": (
                         (st.last_closed_snapshot or {}).get("closed_at")
@@ -831,7 +1090,7 @@ class AutoApproveSummaryService:
                     ),
                 }
                 for sid, st in self._sessions.items()
-                if st.pending or st.last_pushed_at or st.last_closed_snapshot
+                if st.has_current_activity() or st.last_pushed_at or st.last_closed_snapshot
             },
         }
 

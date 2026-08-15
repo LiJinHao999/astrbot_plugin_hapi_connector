@@ -1990,8 +1990,18 @@ def format_auto_approve_summary(view: dict) -> str:
 
     消费 AutoApproveSummaryService.build_summary_view 的视图 dict。
     """
-    title = str(view.get("title") or view.get("label") or (view.get("sid") or "")[:8])
-    lines = [f"[操作记录] {title}", f"时段/日期: {view.get('bucket_desc') or '—'}"]
+    sid = str(view.get("sid") or "")
+    sid_short = str(view.get("sid_short") or sid[:8] or "?")
+    title = str(view.get("title") or "").strip() or "(无标题)"
+    flavor = str(view.get("flavor") or "?").strip() or "?"
+    path = str(view.get("path") or "").strip()
+    lines = [
+        f"[操作记录] {title}",
+        f"会话: {flavor} · {sid_short}",
+    ]
+    if path:
+        lines.append(f"路径: {path}")
+    lines.append(f"时段/日期: {view.get('bucket_desc') or '—'}")
 
     counters = view.get("counters") or {}
     approve_ok = int(counters.get("approve_ok") or 0)
@@ -2005,6 +2015,8 @@ def format_auto_approve_summary(view: dict) -> str:
         lines.append(f"压缩  ✓{compact_ok} ✗{compact_fail}")
     if deny_n:
         lines.append(f"拒绝  {deny_n} 次")
+    if not (approve_ok + approve_fail + compact_ok + compact_fail + deny_n):
+        lines.append("审批/压缩: 无（窗内有会话活动）")
 
     runtime_sec = float(view.get("runtime_sec") or 0)
     if runtime_sec >= 1:
@@ -2014,6 +2026,14 @@ def format_auto_approve_summary(view: dict) -> str:
             lines.append(f"运行约 {mins}m{secs:02d}s" if secs else f"运行约 {mins}m")
         else:
             lines.append(f"运行约 {secs}s")
+
+    last_message = str(view.get("last_message") or "").strip()
+    if last_message:
+        lines.append("── 最近消息 ──")
+        # 多行预览缩进，避免与明细行混淆
+        for i, part in enumerate(last_message.splitlines() or [last_message]):
+            prefix = "· " if i == 0 else "  "
+            lines.append(prefix + part)
 
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
@@ -2105,6 +2125,8 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
         pending = int(info.get("pending") or 0)
         last = _fmt_summary_dt(info.get("last_pushed_at"))
         bits = [f"pending={pending}", f"last={last}"]
+        if info.get("has_activity") and pending == 0:
+            bits.append("有活动")
         if info.get("has_snapshot"):
             bits.append("有上一窗")
         rt = float(info.get("runtime_sec") or 0)

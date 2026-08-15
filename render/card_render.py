@@ -913,10 +913,16 @@ def sample_payload(kind: str) -> dict[str, Any]:
     if kind == "auto_approve_summary":
         return {
             "title": "重构鉴权中间件",
-            "subtitle": "操作记录 · 托管时段 2026-08-09 23:00 ~ 2026-08-10 07:00",
+            "subtitle": "操作记录 · claude · a1b2c3d4 · 托管时段 2026-08-09 23:00 ~ 2026-08-10 07:00",
+            "sid_short": "a1b2c3d4",
+            "flavor": "claude",
             "rows": [
-                {"type": "kv", "label": "自动批准", "detail": "成功 12 · 失败 1"},
-                {"type": "kv", "label": "自动压缩", "detail": "成功 2 · 失败 0"},
+                {"type": "kv", "label": "路径", "detail": "…/codes/proj-auth"},
+                {"type": "kv", "label": "会话", "detail": "claude · a1b2c3d4"},
+                {"type": "kv", "label": "批准", "detail": "成功 12 · 失败 1"},
+                {"type": "kv", "label": "压缩", "detail": "成功 2 · 失败 0"},
+                {"type": "section", "label": "最近消息", "detail": "", "count": 0},
+                {"type": "row", "index": 0, "label": "鉴权中间件已改完，单测通过。", "detail": ""},
                 {"type": "section", "label": "失败明细", "detail": "", "count": 0},
                 {"type": "row", "index": 0, "label": "06:12 ✗ 批准 [Bash] npm install 超时", "detail": ""},
                 {"type": "section", "label": "成功明细（最近 3 条）", "detail": "", "count": 0},

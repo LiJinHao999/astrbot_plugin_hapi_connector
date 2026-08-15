@@ -2214,7 +2214,11 @@ class CommandHandlers:
         # 有当前桶或上一窗快照的 sid
         record_sids = [
             sid for sid, info in session_infos.items()
-            if int(info.get("pending") or 0) > 0 or info.get("has_snapshot")
+            if (
+                int(info.get("pending") or 0) > 0
+                or info.get("has_snapshot")
+                or info.get("has_activity")
+            )
         ]
 
         if normalized == "all":

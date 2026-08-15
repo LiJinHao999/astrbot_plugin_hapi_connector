@@ -274,7 +274,7 @@ export const CONFIG_SCHEMA_FALLBACK = {
           "key": "auto_approve_silent",
           "label": "Agent 操作记录统计",
           "type": "bool",
-          "help": "托管时段内自动批/手动批/拒绝/压缩不逐条推，按下方策略汇总（可含 git 快照）。关=仍可能逐条推「已自动批准」。托管仍自动执行。聊天可 /hapi summary 重发。",
+          "help": "托管时段内有思考/运行的 session 按下方策略汇总（最近消息 + 操作 + git）。没有审批也会出卡。关=仍可能逐条推「已自动批准」。聊天可 /hapi summary 重发。",
           "default": false,
           "schema_type": "bool",
           "warn": "开启后托管时段操作改为汇总推送，不再逐条刷屏；托管本身仍会自动批准。",

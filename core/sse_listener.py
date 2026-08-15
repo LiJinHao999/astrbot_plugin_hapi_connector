@@ -76,6 +76,8 @@ class SSEListener:
         self._compaction_completed_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已发送“任务完成”通知时的 lastSeq，防止状态抖动重复提醒
         self._completion_notified_seqs: dict[str, int] = {}
+        # 本托管窗内已占操作记录桶的 sid，避免每次 SSE 都 create_task
+        self._summary_touched_sids: set[str] = set()
         # {session_id: [text|dict, ...]}，短暂排队权限类通知，先补普通消息再发送
         self._queued_request_notifications: dict[str, list] = {}
         self._request_notify_sids: set[str] = set()
@@ -1024,9 +1026,26 @@ class SSEListener:
         import time as _time
 
         now = _time.monotonic()
+        in_window = self._in_auto_approve_window()
+        if not in_window:
+            self._summary_touched_sids.clear()
         # 开始：thinking 或 active 拉高且尚无 started
         if (is_thinking or is_active) and sid not in self._run_started_mono:
             self._run_started_mono[sid] = now
+        # 窗内正在跑：每个 sid 本窗只占一次桶
+        svc = self.summary_service
+        if (
+            in_window
+            and (is_thinking or is_active)
+            and sid not in self._summary_touched_sids
+            and svc is not None
+            and getattr(svc, "enabled", False)
+        ):
+            self._summary_touched_sids.add(sid)
+            try:
+                asyncio.create_task(svc.touch_session(sid))
+            except Exception:
+                pass
         # 结束：thinking True→False（与完成边沿一致）
         if old_thinking and not is_thinking:
             started = self._run_started_mono.pop(sid, None)
