@@ -2245,7 +2245,9 @@ class CommandHandlers:
         failed = [sid for sid, r in results.items() if r.get("reason") == "push_failed"]
         empty = [
             sid for sid, r in results.items()
-            if r.get("reason") in ("no_record", "no_pending", "no_change")
+            if r.get("reason") in (
+                "no_record", "no_pending", "no_change", "no_in_window_content",
+            )
         ]
 
         lines = []

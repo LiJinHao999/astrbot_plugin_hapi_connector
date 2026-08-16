@@ -921,8 +921,7 @@ def sample_payload(kind: str) -> dict[str, Any]:
                 {"type": "kv", "label": "会话", "detail": "claude · a1b2c3d4"},
                 {"type": "kv", "label": "批准", "detail": "成功 12 · 失败 1"},
                 {"type": "kv", "label": "压缩", "detail": "成功 2 · 失败 0"},
-                {"type": "section", "label": "最近消息", "detail": "", "count": 0},
-                {"type": "row", "index": 0, "label": "鉴权中间件已改完，单测通过。", "detail": ""},
+                {"type": "kv", "label": "最近消息", "detail": "鉴权中间件已改完，单测通过。"},
                 {"type": "section", "label": "失败明细", "detail": "", "count": 0},
                 {"type": "row", "index": 0, "label": "06:12 ✗ 批准 [Bash] npm install 超时", "detail": ""},
                 {"type": "section", "label": "成功明细（最近 3 条）", "detail": "", "count": 0},
@@ -933,7 +932,7 @@ def sample_payload(kind: str) -> dict[str, Any]:
                 {"type": "row", "index": 0, "label": "+32 -8", "detail": "src/auth/middleware.ts"},
                 {"type": "row", "index": 0, "label": "+13 -4", "detail": "tests/test_auth.ts"},
             ],
-            "footer": "上次汇总: 2026-08-09 07:00 · mode=按托管时段 push=托管结束时",
+            "footer": "上次汇总：2026-08-09 07:00 · 按托管时段统计汇总，托管结束时推送",
         }
     return {
         "title": "Session 列表",

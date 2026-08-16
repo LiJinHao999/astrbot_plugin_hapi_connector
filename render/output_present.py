@@ -888,40 +888,14 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
 
     last_message = str(view.get("last_message") or "").strip()
     if last_message:
+        preview = " ".join(_strip_emoji(last_message).split())
+        if len(preview) > 280:
+            preview = preview[:279] + "…"
         rows.append({
-            "type": "section",
+            "type": "kv",
             "label": "最近消息",
-            "detail": "",
-            "count": 0,
+            "detail": preview,
         })
-        # 多行预览：首行作 label，后续行作独立 row；过长截断避免撑爆卡片
-        msg_lines = [ln for ln in last_message.splitlines() if ln.strip()] or [last_message]
-        max_msg_lines = 8
-        shown_msg = msg_lines[:max_msg_lines]
-        for i, ln in enumerate(shown_msg):
-            text = _strip_emoji(ln)[:160]
-            if i == 0:
-                rows.append({
-                    "type": "row",
-                    "index": 0,
-                    "label": text,
-                    "detail": "",
-                })
-            else:
-                rows.append({
-                    "type": "row",
-                    "index": 0,
-                    "label": text,
-                    "detail": "",
-                })
-        hidden_msg = len(msg_lines) - len(shown_msg)
-        if hidden_msg > 0:
-            rows.append({
-                "type": "row",
-                "index": 0,
-                "label": f"…另有 {hidden_msg} 行",
-                "detail": "",
-            })
 
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
@@ -1005,24 +979,20 @@ def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
             "detail": "暂无托管自动动作",
         }]
 
-    mode_label = {
-        "window": "按托管时段",
-        "rolling_24h": "最近24小时",
-    }.get(str(view.get("mode") or ""), str(view.get("mode") or "?"))
-    push_label = {
-        "on_window_end": "托管结束时",
-        "at_fixed_time": "每天固定时间",
-        "manual": "不主动推送",
-    }.get(str(view.get("push") or ""), str(view.get("push") or "?"))
-    footer_bits = [f"上次汇总: {_dt(view.get('last_pushed_at')) or '无'}"]
-    footer_bits.append(f"mode={mode_label} push={push_label}")
+    last = _dt(view.get("last_pushed_at")) or "无"
+    policy = formatters.format_summary_policy_line(
+        str(view.get("mode") or ""),
+        str(view.get("push") or ""),
+        fixed_time=str(view.get("fixed_time") or ""),
+    )
+    footer = f"上次汇总：{last} · {policy}"
     return {
         "title": title,
         "subtitle": subtitle,
         "sid_short": sid_short,
         "flavor": flavor,
         "rows": rows,
-        "footer": " · ".join(footer_bits),
+        "footer": footer,
     }
 
 

@@ -1959,6 +1959,23 @@ _SUMMARY_PUSH_LABELS = {
 }
 
 
+def format_summary_policy_line(mode: str, push: str, *, fixed_time: str = "") -> str:
+    """操作记录卡页脚：白话一句，不要 mode=/push=。"""
+    mode = str(mode or "")
+    push = str(push or "")
+    if mode == "rolling_24h":
+        scope = "按最近 24 小时统计汇总"
+    else:
+        scope = "按托管时段统计汇总"
+    if push == "at_fixed_time":
+        when = f"每天 {fixed_time} 推送" if fixed_time else "每天固定时间推送"
+    elif push == "manual":
+        when = "不主动推送"
+    else:
+        when = "托管结束时推送"
+    return f"{scope}，{when}"
+
+
 def _fmt_summary_dt(dt) -> str:
     if not dt:
         return "无"
@@ -2029,11 +2046,10 @@ def format_auto_approve_summary(view: dict) -> str:
 
     last_message = str(view.get("last_message") or "").strip()
     if last_message:
-        lines.append("── 最近消息 ──")
-        # 多行预览缩进，避免与明细行混淆
-        for i, part in enumerate(last_message.splitlines() or [last_message]):
-            prefix = "· " if i == 0 else "  "
-            lines.append(prefix + part)
+        preview = " ".join(last_message.split())
+        if len(preview) > 280:
+            preview = preview[:279] + "…"
+        lines.append(f"最近消息: {preview}")
 
     failures = list(view.get("failures") or [])
     successes = list(view.get("successes") or [])
@@ -2059,13 +2075,14 @@ def format_auto_approve_summary(view: dict) -> str:
 
     lines.extend(_format_git_summary_block(view))
 
-    mode = str(view.get("mode") or "")
-    push = str(view.get("push") or "")
-    mode_label = _SUMMARY_MODE_LABELS.get(mode, mode or "?")
-    push_label = _SUMMARY_PUSH_LABELS.get(push, push or "?")
+    last = _fmt_summary_dt(view.get("last_pushed_at"))
+    policy = format_summary_policy_line(
+        str(view.get("mode") or ""),
+        str(view.get("push") or ""),
+        fixed_time=str(view.get("fixed_time") or ""),
+    )
     lines.append("")
-    lines.append(f"上次汇总: {_fmt_summary_dt(view.get('last_pushed_at'))}")
-    lines.append(f"模式: {mode_label} · 推送: {push_label}")
+    lines.append(f"上次汇总：{last} · {policy}")
     return "\n".join(lines)
 
 
@@ -2109,9 +2126,9 @@ def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
         if not silent:
             why.append("操作记录未开启")
         lines.append(f"总开关: 关闭（{'；'.join(why) if why else '—'}）")
-    lines.append(f"模式: {_SUMMARY_MODE_LABELS.get(mode, mode or '?')}")
-    lines.append(f"推送: {_SUMMARY_PUSH_LABELS.get(push, push or '?')}"
-                 + (f"（{status.get('fixed_time')}）" if push == "at_fixed_time" else ""))
+    lines.append(format_summary_policy_line(
+        mode, push, fixed_time=str(status.get("fixed_time") or ""),
+    ))
     lines.append(f"当前在托管窗: {'是' if in_window else '否'}")
 
     if not sessions:

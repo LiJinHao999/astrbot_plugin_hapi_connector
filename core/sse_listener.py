@@ -1029,14 +1029,17 @@ class SSEListener:
         in_window = self._in_auto_approve_window()
         if not in_window:
             self._summary_touched_sids.clear()
-        # 开始：thinking 或 active 拉高且尚无 started
-        if (is_thinking or is_active) and sid not in self._run_started_mono:
+            # 窗外开始的思考不带进托管汇总
+            if not is_thinking:
+                self._run_started_mono.pop(sid, None)
+        # 只在窗内开始计时，避免 17:00 托管把白天 20 小时也算进去
+        if in_window and is_thinking and sid not in self._run_started_mono:
             self._run_started_mono[sid] = now
-        # 窗内正在跑：每个 sid 本窗只占一次桶
+        # 窗内正在思考：每个 sid 本窗只占一次桶
         svc = self.summary_service
         if (
             in_window
-            and (is_thinking or is_active)
+            and is_thinking
             and sid not in self._summary_touched_sids
             and svc is not None
             and getattr(svc, "enabled", False)
@@ -1052,10 +1055,12 @@ class SSEListener:
             if started is not None:
                 delta = max(0.0, now - started)
                 self._run_accumulated_sec[sid] = self._run_accumulated_sec.get(sid, 0.0) + delta
-                svc = self.summary_service
-                if svc is not None and getattr(svc, "enabled", False) and self._in_auto_approve_window():
+                if (
+                    svc is not None
+                    and getattr(svc, "enabled", False)
+                    and in_window
+                ):
                     try:
-                        # 火忘：汇总服务自己加锁
                         asyncio.create_task(svc.add_runtime_sec(sid, delta))
                     except Exception:
                         pass

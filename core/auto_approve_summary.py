@@ -267,6 +267,29 @@ class AutoApproveSummaryService:
             end_day = enter_day
         return f"window:{enter_day}T{start}:{end_day}T{end}"
 
+    def _bucket_bounds(
+        self, bucket_id: str | None, now: datetime.datetime | None = None
+    ) -> tuple[datetime.datetime, datetime.datetime] | None:
+        """桶的本地时间闭区间；解析失败返回 None（调用方不过滤）。"""
+        now = now or datetime.datetime.now()
+        if not bucket_id:
+            return None
+        if bucket_id == "rolling24h":
+            return now - datetime.timedelta(hours=24), now
+        if not bucket_id.startswith("window:"):
+            return None
+        rest = bucket_id[len("window:"):]
+        try:
+            enter_part, tail = rest.split("T", 1)
+            h, m, tail2 = tail.split(":", 2)
+            end_day, end_time = tail2.split("T", 1)
+            eh, em = map(int, end_time.split(":", 1))
+            start_dt = datetime.datetime.fromisoformat(f"{enter_part}T{h}:{m}:00")
+            end_dt = datetime.datetime.fromisoformat(f"{end_day}T{eh:02d}:{em:02d}:00")
+            return start_dt, end_dt
+        except Exception:
+            return None
+
     def _bucket_desc(self, bucket_id: str | None) -> str:
         """桶的可读描述（供汇总文案/卡片副标题）。"""
         if not bucket_id:
@@ -495,6 +518,7 @@ class AutoApproveSummaryService:
             "last_pushed_at": state.last_pushed_at,
             "mode": self.mode,
             "push": self.push,
+            "fixed_time": self._fixed_time,
             "in_window": self._in_window(now),
             "include_failures": bool(self._include_failures),
             "max_detail_lines": max(1, int(self._max_detail_lines or 30)),
@@ -553,6 +577,7 @@ class AutoApproveSummaryService:
             "last_pushed_at": None,
             "mode": self.mode,
             "push": self.push,
+            "fixed_time": self._fixed_time,
             "in_window": self._in_window(now),
             "include_failures": bool(self._include_failures),
             "max_detail_lines": max(1, int(self._max_detail_lines or 30)),
@@ -563,8 +588,14 @@ class AutoApproveSummaryService:
         }
         return view
 
-    async def _last_message_preview(self, sid: str, *, max_len: int = 360) -> str | None:
-        """拉取 session 最近一条可展示的 agent/用户消息预览（失败返回 None，不阻断汇总）。"""
+    async def _last_message_preview(
+        self,
+        sid: str,
+        *,
+        bucket_id: str | None = None,
+        max_len: int = 360,
+    ) -> str | None:
+        """拉取本统计窗内最近一条可展示的 agent/用户消息（窗外 / 系统噪声不要）。"""
         client = getattr(self.plugin, "client", None)
         if client is None or not sid:
             return None
@@ -577,11 +608,16 @@ class AutoApproveSummaryService:
             return None
         if not msgs:
             return None
+        bounds = self._bucket_bounds(bucket_id)
 
         def _pick(roles: set[str]) -> str | None:
             for m in reversed(msgs):
                 if not isinstance(m, dict):
                     continue
+                if bounds is not None:
+                    created = _message_created_at(m)
+                    if created is None or created < bounds[0] or created > bounds[1]:
+                        continue
                 role = formatters._get_message_role(m)
                 if role not in roles:
                     continue
@@ -589,14 +625,9 @@ class AutoApproveSummaryService:
                     m.get("content", {}),
                     max_len=max_len,
                 )
-                if text and str(text).strip():
-                    cleaned = str(text).strip()
-                    # 去掉纯文本推送前缀，卡片/汇总里更干净
-                    if cleaned.startswith("[Message]:"):
-                        cleaned = cleaned[len("[Message]:"):].lstrip()
-                    elif cleaned.startswith("【消息】"):
-                        cleaned = cleaned[len("【消息】"):].lstrip()
-                    return cleaned or None
+                cleaned = _clean_last_message(text)
+                if cleaned:
+                    return cleaned
             return None
 
         # 优先 agent/assistant 终态回复；没有则退到最近用户输入
@@ -695,7 +726,14 @@ class AutoApproveSummaryService:
 
         # 锁外取 git + 最近消息（展示附加；不进 fingerprint / 不入 KV）
         await self._git_snapshot(sid)
-        last_message = await self._last_message_preview(sid)
+        preview_bucket = None
+        async with self._lock:
+            st = self._sessions.get(sid)
+            if source == "pending" and st is not None:
+                preview_bucket = st.current_bucket_id
+            elif st and st.last_closed_snapshot:
+                preview_bucket = (st.last_closed_snapshot or {}).get("bucket_id")
+        last_message = await self._last_message_preview(sid, bucket_id=preview_bucket)
 
         async with self._lock:
             state = self._sessions.get(sid)
@@ -722,6 +760,16 @@ class AutoApproveSummaryService:
             view["git"] = cached[1]
         if last_message:
             view["last_message"] = last_message
+
+        # 只占了桶、窗内既无审批也无运行也无消息 → 不出空卡 / 历史卡
+        counters = view.get("counters") or {}
+        has_ops = any(int(counters.get(k) or 0) for k in COUNT_KEYS)
+        if (
+            not has_ops
+            and float(view.get("runtime_sec") or 0) < 1
+            and not last_message
+        ):
+            return {"pushed": False, "reason": "no_in_window_content", "text": ""}
 
         ok, text = await self._emit_view(sid, view)
         if not ok:
@@ -807,7 +855,7 @@ class AutoApproveSummaryService:
         """把缓存里当前 thinking/active 的 session 记入本窗。"""
         cache = getattr(self.plugin, "sessions_cache", None) or []
         for sess in cache:
-            if not (sess.get("thinking") or sess.get("active")):
+            if not sess.get("thinking"):
                 continue
             sid = sess.get("id")
             if sid:
@@ -1102,6 +1150,59 @@ def _parse_dt(raw: Any) -> datetime.datetime | None:
         return datetime.datetime.fromisoformat(str(raw))
     except (TypeError, ValueError):
         return None
+
+
+def _message_created_at(msg: dict) -> datetime.datetime | None:
+    """HAPI 消息 createdAt / invokedAt：毫秒或秒 epoch，或 ISO 字符串。"""
+    raw = msg.get("createdAt")
+    if raw is None:
+        raw = msg.get("invokedAt")
+    if raw is None:
+        content = msg.get("content")
+        if isinstance(content, dict):
+            raw = content.get("createdAt") or content.get("timestamp")
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        ts = float(raw)
+        if ts > 1e12:
+            ts /= 1000.0
+        try:
+            return datetime.datetime.fromtimestamp(ts)
+        except (OverflowError, OSError, ValueError):
+            return None
+    try:
+        text = str(raw).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.datetime.fromisoformat(text)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean_last_message(text: str | None) -> str | None:
+    """最近消息：去掉推送前缀，丢掉系统噪声 / SDK 心跳。"""
+    if not text or not str(text).strip():
+        return None
+    cleaned = str(text).strip()
+    for prefix in ("[Message]:", "【消息】", "[Message]"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].lstrip()
+    if not cleaned:
+        return None
+    if formatters.is_sdk_noise_text(cleaned):
+        return None
+    if cleaned.startswith("【系统】"):
+        return None
+    lower = cleaned.lower()
+    if "context was reset" in lower or "compaction completed" in lower:
+        return None
+    if cleaned.startswith("🛠️") or cleaned.startswith("❓"):
+        return None
+    return cleaned
 
 
 def _event_view(e: AutoApproveEvent) -> dict[str, Any]:
