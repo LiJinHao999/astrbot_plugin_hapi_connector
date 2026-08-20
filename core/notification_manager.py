@@ -65,18 +65,25 @@ class NotificationManager:
             chunks.append(current)
         return chunks
 
-    async def push_notification(self, text: str, session_id: str, sessions_cache: list[dict]):
-        """推送通知到单个目标窗口，优先走 session 当前路由。"""
+    async def push_notification(self, text: str, session_id: str, sessions_cache: list[dict]) -> bool:
+        """推送通知到单个目标窗口，优先走 session 当前路由。
+
+        返回是否至少向一个目标成功发出（无目标或全部失败为 False）。
+        """
         targets = self.state_mgr.select_notification_targets(session_id, sessions_cache)
+        any_ok = False
 
         if targets:
             for umo in targets:
                 if self.should_skip_duplicate(umo, session_id, text):
+                    # 去重跳过视为「已送达过」，不算失败
+                    any_ok = True
                     continue
                 chunks = self.split_message(text) if len(text) > 4200 else [text]
-
+                umo_ok = True
                 for chunk in chunks:
                     cached_event = self._event_cache.get(umo)
+                    chain = None
                     try:
                         if cached_event:
                             result = cached_event.plain_result(chunk)
@@ -90,14 +97,19 @@ class NotificationManager:
                         cached_event = self._event_cache.get(umo)
                         if cached_event:
                             try:
+                                if chain is None:
+                                    chain = MessageChain().message(chunk)
                                 await cached_event.send(chain)
                             except Exception as e:
                                 logger.warning("推送到窗口失败 (umo=%s): %s", umo[:20], e)
+                                umo_ok = False
                                 break
                         else:
+                            umo_ok = False
                             break
-                        break
-            return
+                if umo_ok:
+                    any_ok = True
+            return any_ok
 
         if session_id:
             sess = next((s for s in sessions_cache if s["id"] == session_id), None)
@@ -105,6 +117,7 @@ class NotificationManager:
             logger.error("Session %s [%s] 无绑定窗口且无默认窗口，推送失败", session_id[:8], flavor)
         else:
             logger.error("全局通知无可用默认窗口，推送失败")
+        return False
 
     async def push_image_notification(
         self,
@@ -114,8 +127,11 @@ class NotificationManager:
         *,
         caption: str = "",
         dedupe_key: str = "",
-    ):
-        """推送本地图片（结构卡/对话卡）到目标窗口；可选附带 caption 文本。"""
+    ) -> bool:
+        """推送本地图片（结构卡/对话卡）到目标窗口；可选附带 caption 文本。
+
+        返回是否至少成功发出一次。
+        """
         import astrbot.api.message_components as Comp
 
         targets = self.state_mgr.select_notification_targets(session_id, sessions_cache)
@@ -130,11 +146,13 @@ class NotificationManager:
                 )
             else:
                 logger.error("全局通知无可用默认窗口，图片推送失败")
-            return
+            return False
 
         body = dedupe_key or f"img:{image_path}:{caption}"
+        any_ok = False
         for umo in targets:
             if self.should_skip_duplicate(umo, session_id, body):
+                any_ok = True
                 continue
             chain = None
             try:
@@ -169,12 +187,15 @@ class NotificationManager:
                             )
                             chain = MessageChain().message(caption or "[hapi card]")
                 await self.context.send_message(umo, chain)
+                any_ok = True
             except Exception as e:
                 cached_event = self._event_cache.get(umo)
                 if cached_event and chain is not None:
                     try:
                         await cached_event.send(chain)
+                        any_ok = True
                     except Exception as e2:
                         logger.warning("图片推送到窗口失败 (umo=%s): %s / %s", umo[:20], e, e2)
                 else:
                     logger.warning("图片推送到窗口失败 (umo=%s): %s", umo[:20], e)
+        return any_ok

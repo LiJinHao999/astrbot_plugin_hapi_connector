@@ -56,6 +56,13 @@
     "type": "int",
     "default": 5
   },
+  "busy_agent_push_level": {
+    "description": "忙时托管免打扰",
+    "type": "string",
+    "default": "inherit",
+    "options": ["none", "summary", "inherit"],
+    "hint": "托管开启且在忙时段内压 AI 对话：不推送 / 仅摘要 / 跟随默认。权限由托管自动批；操作记录统计见 auto_approve_silent"
+  },
   "quick_prefix": {
     "description": "快捷发送前缀",
     "type": "string",
@@ -117,6 +124,44 @@
     "default": "07:00",
     "hint": "例如开始 22:00、结束 08:00，即晚上10点到次日早上8点，支持跨午夜"
   },
+  "auto_approve_silent": {
+    "description": "Agent 操作记录统计：托管时段内有会话活动（思考/运行）的 session 按策略汇总推送；自动批准、手动批准、拒绝、自动压缩不再逐条推",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后夜间托管不再刷屏；早晨对窗内有活动的 session 各推一版（最近消息 + 操作明细 + git）。没有审批也会出卡。关闭时保持现状逐条推送"
+  },
+  "auto_approve_summary_mode": {
+    "description": "托管操作记录方式",
+    "type": "string",
+    "default": "window",
+    "options": ["window", "rolling_24h"],
+    "hint": "按托管时段=每次进入托管窗一个桶（推荐）；最近24小时=滚动窗口，始终统计最近 24h 的操作"
+  },
+  "auto_approve_summary_push": {
+    "description": "托管操作记录推送时机",
+    "type": "string",
+    "default": "on_window_end",
+    "options": ["on_window_end", "at_fixed_time", "manual"],
+    "hint": "托管结束时=窗口结束边沿推送（推荐）；每天固定时间=每天在下方时间推送；不主动推送=不自动推，需要时用 /hapi summary 手动重发"
+  },
+  "auto_approve_summary_time": {
+    "description": "托管操作记录固定推送时间（HH:MM）",
+    "type": "string",
+    "default": "08:00",
+    "hint": "仅在推送时机为「每天固定时间」时生效，如 08:00（睡醒后一版）"
+  },
+  "auto_approve_summary_include_failures": {
+    "description": "托管操作记录是否包含失败明细",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后失败只计次数、不列明细"
+  },
+  "auto_approve_summary_max_detail_lines": {
+    "description": "单 session 汇总明细行数上限",
+    "type": "int",
+    "default": 30,
+    "hint": "超出部分折叠为「另有 N 条」，防止长夜汇总刷屏"
+  },
   "default_notification_window": {
     "description": "默认通知发送窗口",
     "type": "string",
@@ -140,8 +185,8 @@
   "render_kinds": {
     "description": "允许出图的消息类型",
     "type": "string",
-    "default": "session_list,pending,status,permission,routes,message",
-    "hint": "插件 WebUI「交互优化 / 设置」里勾选保存。可选值：session_list,pending,status,permission,routes,message（message=Agent 对话）"
+    "default": "session_list,pending,status,permission,routes,message,auto_approve_summary,git_status",
+    "hint": "插件 WebUI「交互优化 / 设置」里勾选保存。可选值：session_list,pending,status,permission,routes,message,auto_approve_summary,git_status（message=Agent 对话，auto_approve_summary=操作记录，git_status=git 状态/统计）"
   },
   "card_style_preset": {
     "description": "推送图片样式预设",

@@ -52,7 +52,22 @@ class SSEListener:
         self._auto_approve_enabled: bool = False
         self._auto_approve_start: str = "23:00"
         self._auto_approve_end: str = "07:00"
+        # 忙时托管操作记录（dev-docs/auto-approve-silent-summary.md）
+        self._auto_approve_silent: bool = False
+        self._auto_approve_summary_mode: str = "window"
+        self._auto_approve_summary_push: str = "on_window_end"
+        self._auto_approve_summary_time: str = "08:00"
+        self._auto_approve_summary_include_failures: bool = True
+        self._auto_approve_summary_max_detail_lines: int = 30
+        # 忙时 Agent 消息推送等级（dev-docs/busy-hours-agent-push.md §3）
+        # inherit|none|summary；仅 auto_approve 开且在窗内覆盖 output_level
+        self._busy_agent_push_level: str = "inherit"
+        # 汇总服务（main 组装后注入；append 前必须已就绪）
+        self.summary_service = None
         self._summary_msg_count: int = 5
+        # Agent 运行时长：sid → 本段开始 monotonic；sid → 已累计秒（完成边沿结算）
+        self._run_started_mono: dict[str, float] = {}
+        self._run_accumulated_sec: dict[str, float] = {}
         # {session_id: seq}，记录已触发通知的消息序号，防止重复
         self._compact_notified_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已推送的新消息最大可见序号，防止重复通知
@@ -61,6 +76,8 @@ class SSEListener:
         self._compaction_completed_seqs: dict[str, int] = {}
         # {session_id: seq}，记录已发送“任务完成”通知时的 lastSeq，防止状态抖动重复提醒
         self._completion_notified_seqs: dict[str, int] = {}
+        # 本托管窗内已占操作记录桶的 sid，避免每次 SSE 都 create_task
+        self._summary_touched_sids: set[str] = set()
         # {session_id: [text|dict, ...]}，短暂排队权限类通知，先补普通消息再发送
         self._queued_request_notifications: dict[str, list] = {}
         self._request_notify_sids: set[str] = set()
@@ -68,7 +85,12 @@ class SSEListener:
 
     def start(self, output_level: str = "summary", remind_pending: bool = False, remind_interval: int = 180,
               auto_approve_enabled: bool = False, auto_approve_start: str = "23:00", auto_approve_end: str = "07:00",
-              summary_msg_count: int = 5, max_reconnect_attempts: int = 0):
+              summary_msg_count: int = 5, max_reconnect_attempts: int = 0,
+              auto_approve_silent: bool = False, auto_approve_summary_mode: str = "window",
+              auto_approve_summary_push: str = "on_window_end", auto_approve_summary_time: str = "08:00",
+              auto_approve_summary_include_failures: bool = True,
+              auto_approve_summary_max_detail_lines: int = 30,
+              busy_agent_push_level: str = "inherit"):
         """启动 SSE 监听任务"""
         self.output_level = output_level
         self._summary_msg_count = summary_msg_count
@@ -77,6 +99,15 @@ class SSEListener:
         self._auto_approve_enabled = auto_approve_enabled
         self._auto_approve_start = auto_approve_start
         self._auto_approve_end = auto_approve_end
+        self._auto_approve_silent = auto_approve_silent
+        self._auto_approve_summary_mode = auto_approve_summary_mode
+        self._auto_approve_summary_push = auto_approve_summary_push
+        self._auto_approve_summary_time = auto_approve_summary_time
+        self._auto_approve_summary_include_failures = auto_approve_summary_include_failures
+        self._auto_approve_summary_max_detail_lines = auto_approve_summary_max_detail_lines
+        self._busy_agent_push_level = busy_agent_push_level if busy_agent_push_level in (
+            "none", "summary", "inherit"
+        ) else "inherit"
         self._max_reconnect = max_reconnect_attempts
         self._debounce_sids: set[str] = set()
         self._debounce_task: asyncio.Task | None = None
@@ -97,6 +128,14 @@ class SSEListener:
     async def stop(self):
         """停止 SSE 监听"""
         self._stream_live = False
+        # 防漏发：停止前把未推送的操作记录补发（need_flush 去重）
+        summary_svc = getattr(self, "summary_service", None)
+        if summary_svc is not None:
+            try:
+                if summary_svc.has_pending():
+                    await summary_svc.flush_all()
+            except Exception as e:
+                logger.warning("SSE stop 时操作记录 flush 失败: %s", e)
         for task in (self._task, self._remind_task,
                      getattr(self, '_debounce_task', None),
                      getattr(self, '_completion_task', None),
@@ -303,6 +342,11 @@ class SSEListener:
                 "lastSeq": old_seq,
             }
 
+        # 运行时长边沿（与完成检测共用 thinking 边沿；与推送等级无关）
+        self._note_run_edge(
+            sid, old_thinking=old_thinking, is_thinking=is_thinking, is_active=bool(is_active),
+        )
+
         # 处理权限请求
         new_requests: list[tuple[str, dict]] = []
         if agent_state:
@@ -348,11 +392,18 @@ class SSEListener:
 
                 if self._auto_approve_enabled and self._in_auto_approve_window() and not is_question_request(req):
                     # 忙时托管审批：自动批准非 question 请求
-                    ok, _ = await session_ops.approve_permission(self.client, sid, rid)
+                    ok, msg = await session_ops.approve_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
-                    result_mark = "✓" if ok else "✗"
-                    notify_msg = f"[忙时托管审批] 已自动批准\n{label}\n  {result_mark} {tool}"
-                    queued_notifications.append(notify_msg)
+                    if self._auto_approve_silent and self.summary_service is not None:
+                        # 操作记录统计开启：进汇总管线，不再逐条推送
+                        await self.summary_service.append_event(
+                            sid, "approve", ok, tool=str(tool), request_id=rid,
+                            detail=(format_request_detail(req) if ok else str(msg or "审批失败"))[:200],
+                        )
+                    else:
+                        result_mark = "✓" if ok else "✗"
+                        notify_msg = f"[忙时托管审批] 已自动批准\n{label}\n  {result_mark} {tool}"
+                        queued_notifications.append(notify_msg)
                 else:
                     is_q = is_question_request(req)
                     if is_q:
@@ -389,11 +440,28 @@ class SSEListener:
         if pending_empty and self._remind_task and not self._remind_task.done():
             self._remind_task.cancel()
 
-        # === 输出级别处理 ===
+        # === Agent 消息推送级别（忙时用 agent_push_level_now，见 busy-hours-agent-push.md）===
+        push_level = self.agent_push_level_now()
+
+        # none：忙时完全不推 Agent 正文/完成类；仍做 compact 检测（托管自动压缩）
+        if push_level == "none":
+            if old_seq >= 0 and (is_active or is_thinking):
+                self._compact_check_sids.add(sid)
+                if self._compact_check_task is None or self._compact_check_task.done():
+                    self._compact_check_task = asyncio.create_task(self._debounced_compact_check())
+            # 完成边沿仍登记，_debounced_completion 内对 none 直接跳过推送
+            if old_thinking and not is_thinking:
+                async with self._lock:
+                    pending_count = len(self.pending.get(sid, {}))
+                if pending_count == 0:
+                    self._completion_sids.add(sid)
+                    if self._completion_task is None or self._completion_task.done():
+                        self._completion_task = asyncio.create_task(self._debounced_completion())
+            return
 
         # detail/simple 模式：防抖，合并短时间内的事件一次性拉取
-        requests_flush_messages_first = bool(new_requests) and self.output_level in ("detail", "simple")
-        if self.output_level in ("detail", "simple") and old_seq >= 0:
+        requests_flush_messages_first = bool(new_requests) and push_level in ("detail", "simple")
+        if push_level in ("detail", "simple") and old_seq >= 0:
             if is_active or is_thinking:
                 if not requests_flush_messages_first:
                     self._debounce_sids.add(sid)
@@ -410,7 +478,7 @@ class SSEListener:
                     self._completion_task = asyncio.create_task(self._debounced_completion())
 
         # silence 模式：单独检测 Prompt is too long（detail/simple 模式在 _show_* 里检测）
-        if self.output_level == "silence" and old_seq >= 0 and (is_active or is_thinking):
+        if push_level == "silence" and old_seq >= 0 and (is_active or is_thinking):
             self._compact_check_sids.add(sid)
             if self._compact_check_task is None or self._compact_check_task.done():
                 self._compact_check_task = asyncio.create_task(self._debounced_compact_check())
@@ -472,11 +540,12 @@ class SSEListener:
         if not queued:
             return
 
-        if self.output_level in ("detail", "simple"):
+        push_level = self.agent_push_level_now()
+        if push_level in ("detail", "simple"):
             async with self._lock:
                 old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
             if old_seq >= 0:
-                if self.output_level == "detail":
+                if push_level == "detail":
                     await self._show_detail(sid, old_seq)
                 else:
                     await self._show_simple(sid, old_seq)
@@ -534,12 +603,20 @@ class SSEListener:
                     self._completion_sids.add(sid)
                     continue
 
+                push_level = self.agent_push_level_now()
+                # 忙时 none：不推正文、不推完成提示（操作记录另走 summary 服务）
+                if push_level == "none":
+                    async with self._lock:
+                        last_seq = self.session_states.get(sid, {}).get("lastSeq", last_seq)
+                    self._completion_notified_seqs[sid] = last_seq
+                    continue
+
                 showed = False
-                if self.output_level == "summary":
+                if push_level == "summary":
                     showed = bool(await self._show_summary(sid, last_seq))
-                elif self.output_level == "detail":
+                elif push_level == "detail":
                     showed = bool(await self._show_detail(sid, last_seq))
-                elif self.output_level == "simple":
+                elif push_level == "simple":
                     showed = bool(await self._show_simple(sid, last_seq))
 
                 async with self._lock:
@@ -553,7 +630,7 @@ class SSEListener:
                 if last_seq > 0 and last_seq <= self._message_notified_seqs.get(sid, -1):
                     continue
                 label = session_label_short(sid, self.sessions_cache)
-                if self.output_level == "silence":
+                if push_level == "silence":
                     await self._push_notification(
                         f"✅ 会话已完成，等待新的输入\n{label}", sid
                     )
@@ -585,10 +662,17 @@ class SSEListener:
                 self._compact_notified_seqs[sid] = seq
                 label = session_label_short(sid, self.sessions_cache)
                 if self._auto_approve_enabled and self._in_auto_approve_window():
-                    ok, _ = await session_ops.send_message(self.client, sid, "/compact")
+                    ok, msg = await session_ops.send_message(self.client, sid, "/compact")
                     mark = "✓" if ok else "✗"
-                    await self._push_notification(
-                        f"[忙时托管审批] 已自动压缩上下文\n{label}\n  {mark} /compact", sid)
+                    if self._auto_approve_silent and self.summary_service is not None:
+                        # 操作记录统计开启：进汇总管线，不再逐条推送
+                        await self.summary_service.append_event(
+                            sid, "compact", ok,
+                            detail=(("压缩上下文 (/compact)") if ok else str(msg or "自动压缩失败"))[:200],
+                        )
+                    else:
+                        await self._push_notification(
+                            f"[忙时托管审批] 已自动压缩上下文\n{label}\n  {mark} /compact", sid)
                 else:
                     async with self._lock:
                         # 为压缩请求分配序号
@@ -653,12 +737,15 @@ class SSEListener:
             sids = list(self._debounce_sids)
             self._debounce_sids.clear()
             for sid in sids:
+                push_level = self.agent_push_level_now()
+                if push_level not in ("detail", "simple"):
+                    continue
                 async with self._lock:
                     old_seq = self.session_states.get(sid, {}).get("lastSeq", -1)
                 if old_seq >= 0:
-                    if self.output_level == "detail":
+                    if push_level == "detail":
                         await self._show_detail(sid, old_seq)
-                    elif self.output_level == "simple":
+                    else:
                         await self._show_simple(sid, old_seq)
             if not self._debounce_sids:
                 break
@@ -915,6 +1002,73 @@ class SSEListener:
         except Exception:
             return False
 
+    def agent_push_level_now(self) -> str:
+        """当前有效的 Agent 消息推送等级（busy-hours-agent-push.md §3.2）。
+
+        返回 "none"|"silence"|"simple"|"summary"|"detail"。
+        仅托管开启且在忙时窗内才用 busy_agent_push_level 覆盖；否则用全局 output_level。
+        权限 question / 待审批推送不走此函数（白名单，见文档 §3.3）。
+        """
+        level = self.output_level if self.output_level in (
+            "silence", "simple", "summary", "detail"
+        ) else "simple"
+        if not self._auto_approve_enabled or not self._in_auto_approve_window():
+            return level
+        busy = self._busy_agent_push_level
+        if busy == "none":
+            return "none"
+        if busy == "summary":
+            return "summary"
+        return level
+
+    def _note_run_edge(self, sid: str, *, old_thinking: bool, is_thinking: bool, is_active: bool) -> None:
+        """thinking/active 边沿累加运行秒数，并在托管汇总开启时写入 summary_service。"""
+        import time as _time
+
+        now = _time.monotonic()
+        in_window = self._in_auto_approve_window()
+        if not in_window:
+            self._summary_touched_sids.clear()
+            # 窗外开始的思考不带进托管汇总
+            if not is_thinking:
+                self._run_started_mono.pop(sid, None)
+        # 只在窗内开始计时，避免 17:00 托管把白天 20 小时也算进去
+        if in_window and is_thinking and sid not in self._run_started_mono:
+            self._run_started_mono[sid] = now
+        # 窗内正在思考：每个 sid 本窗只占一次桶
+        svc = self.summary_service
+        if (
+            in_window
+            and is_thinking
+            and sid not in self._summary_touched_sids
+            and svc is not None
+            and getattr(svc, "enabled", False)
+        ):
+            self._summary_touched_sids.add(sid)
+            try:
+                asyncio.create_task(svc.touch_session(sid))
+            except Exception:
+                pass
+        # 结束：thinking True→False（与完成边沿一致）
+        if old_thinking and not is_thinking:
+            started = self._run_started_mono.pop(sid, None)
+            if started is not None:
+                delta = max(0.0, now - started)
+                self._run_accumulated_sec[sid] = self._run_accumulated_sec.get(sid, 0.0) + delta
+                if (
+                    svc is not None
+                    and getattr(svc, "enabled", False)
+                    and in_window
+                ):
+                    try:
+                        asyncio.create_task(svc.add_runtime_sec(sid, delta))
+                    except Exception:
+                        pass
+
+    def take_run_seconds(self, sid: str) -> float:
+        """取出并清零已累计运行秒（供外部只读展示；完成推送可不调用）。"""
+        return float(self._run_accumulated_sec.get(sid, 0.0))
+
     def allocate_index(self) -> int:
         """分配最小可用序号"""
         if self._free_indices:
@@ -1070,6 +1224,44 @@ class SSEListener:
         except Exception as e:
             logger.warning("permission card push failed: %s", e, exc_info=True)
             await self._push_notification(fallback_text, session_id)
+
+    async def push_auto_approve_summary(self, session_id: str, view: dict, fallback_text: str) -> bool:
+        """操作记录推送：结构卡优先，失败回退文本（§5.4 路由带 session_id）。
+
+        供 AutoApproveSummaryService 注入为推送回调；返回值=是否已发出。
+        无插件/无路由/发送失败时返回 False（busy-hours-agent-push.md §6）。
+        """
+        plugin = self.plugin
+        if plugin is None:
+            try:
+                await self._push_notification(fallback_text, session_id)
+                # notify_callback 可能无 bool；有目标时保守 True 由 NotificationManager 负责
+                return True
+            except Exception:
+                return False
+        try:
+            from ..render import output_present
+            payload = output_present.build_auto_approve_summary_payload(view)
+            notif = getattr(plugin, "notification_mgr", None)
+            if notif is None:
+                await self._push_notification(fallback_text, session_id)
+                return True
+            return bool(await output_present.present_push(
+                plugin,
+                notif,
+                "auto_approve_summary",
+                payload,
+                fallback_text,
+                session_id,
+                self.sessions_cache,
+            ))
+        except Exception as e:
+            logger.warning("auto approve summary push failed: %s", e, exc_info=True)
+            try:
+                await self._push_notification(fallback_text, session_id)
+                return True
+            except Exception:
+                return False
 
     async def load_existing_pending(self):
         """启动时从已有 session 加载待审批请求"""

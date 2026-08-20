@@ -1016,17 +1016,30 @@ class CommandHandlers:
                 yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             sid, rid, req = found[0]
+            summary_svc = getattr(self.plugin, "summary_service", None)
             if is_compact_request(req):
                 ok, _ = await session_ops.send_message(self.client, sid, "/compact")
                 self.plugin.pending_mgr.remove_entry(sid, rid)
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "compact", ok, tool="__compact__",
+                        detail=("压缩上下文 (/compact)" if ok else "批准压缩失败"), request_id=rid)
                 yield event.plain_result("✓ 已批准: /compact" if ok else "✗ 批准失败: /compact 发送未成功")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
                 self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=True)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "approve", True, tool=tool,
+                        detail=formatters.format_request_detail(req), request_id=rid)
                 yield event.plain_result(f"✓ 已批准: {tool}")
             else:
                 ok, _ = await session_ops.approve_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "approve", ok, tool=tool,
+                        detail=(formatters.format_request_detail(req) if ok else "批准失败"), request_id=rid)
                 yield event.plain_result(f"✓ 已批准: {tool}" if ok else f"✗ 批准失败: {tool}")
         else:
             result = await self.plugin.pending_mgr.approve_items(regular, self.client)
@@ -1080,31 +1093,59 @@ class CommandHandlers:
                 yield event.plain_result(f"✗ 无效序号 {n}，可用 /hapi pending 查看序号")
                 return
             sid, rid, req = found[0]
+            summary_svc = getattr(self.plugin, "summary_service", None)
             if is_compact_request(req):
                 self.plugin.pending_mgr.remove_entry(sid, rid)
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "deny", False, tool="__compact__",
+                        detail="用户取消压缩 (/compact)", request_id=rid)
                 yield event.plain_result("✓ 已取消压缩: /compact")
             elif self.plugin.pending_mgr.is_llm_tool_request(req):
                 self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=False)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "deny", False, tool=tool,
+                        detail=formatters.format_request_detail(req), request_id=rid)
                 yield event.plain_result(f"✓ 已拒绝: {tool}")
             else:
                 ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                 tool = req.get("tool", "?")
+                if summary_svc is not None:
+                    await summary_svc.record_operation(
+                        sid, "deny", False, tool=tool,
+                        detail=(formatters.format_request_detail(req) if ok else f"拒绝失败: {msg}"),
+                        request_id=rid)
                 yield event.plain_result(f"✓ 已拒绝: {tool}" if ok else f"✗ 拒绝失败: {tool}")
         else:
             # 全部拒绝
             results = []
+            summary_svc = getattr(self.plugin, "summary_service", None)
             for sid, rid, req in items:
                 if is_compact_request(req):
                     self.plugin.pending_mgr.remove_entry(sid, rid)
+                    if summary_svc is not None:
+                        await summary_svc.record_operation(
+                            sid, "deny", False, tool="__compact__",
+                            detail="用户取消压缩 (/compact)", request_id=rid)
                     results.append("✓ /compact (已取消)")
                 elif self.plugin.pending_mgr.is_llm_tool_request(req):
                     self.plugin.pending_mgr.resolve_llm_tool(sid, rid, approved=False)
                     tool = req.get("tool", "?")
+                    if summary_svc is not None:
+                        await summary_svc.record_operation(
+                            sid, "deny", False, tool=tool,
+                            detail=formatters.format_request_detail(req), request_id=rid)
                     results.append(f"✓ {tool}")
                 else:
                     ok, msg = await session_ops.deny_permission(self.client, sid, rid)
                     tool = req.get("tool", "?")
+                    if summary_svc is not None:
+                        await summary_svc.record_operation(
+                            sid, "deny", False, tool=tool,
+                            detail=(formatters.format_request_detail(req) if ok else f"拒绝失败: {msg}"),
+                            request_id=rid)
                     results.append(f"{'✓' if ok else '✗'} {tool}")
             yield event.plain_result(f"已全部拒绝（{len(items)} 个，✗ 表示操作失败）:\n" + "\n".join(results))
 
@@ -2135,6 +2176,196 @@ class CommandHandlers:
         )
         async for result in output_present.present(
             self.plugin, event, "routes", payload, text
+        ):
+            yield result
+
+    # ── summary ──
+
+    async def cmd_summary(self, event: AstrMessageEvent, arg: str = ""):
+        """操作记录：/hapi summary [all|<序号|ID>|status]
+
+        优先上一统计窗快照，否则当前桶；可重复发送（busy-hours-agent-push.md §4）。
+        """
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        summary_svc = getattr(self.plugin, "summary_service", None)
+        if summary_svc is None:
+            yield event.plain_result("操作记录服务未就绪")
+            return
+
+        normalized = (arg or "").strip()
+        if normalized == "status":
+            yield event.plain_result(
+                formatters.format_summary_status(
+                    summary_svc.status(), self.sessions_cache
+                )
+            )
+            return
+
+        status = summary_svc.status()
+        if not bool(self.plugin.config.get("auto_approve_silent", False)):
+            yield event.plain_result(
+                "操作记录统计未开启：托管时段内的操作不会记录。\n"
+                "请在 WebUI「设置 → 审批」开启「Agent 操作记录统计」（auto_approve_silent）后再试；"
+                "当前配置可用 /hapi summary status 查看。"
+            )
+            return
+        session_infos = status.get("sessions") or {}
+        # 有当前桶或上一窗快照的 sid
+        record_sids = [
+            sid for sid, info in session_infos.items()
+            if (
+                int(info.get("pending") or 0) > 0
+                or info.get("has_snapshot")
+                or info.get("has_activity")
+            )
+        ]
+
+        if normalized == "all":
+            target_sids = record_sids
+        elif normalized:
+            target_sid, err = self._resolve_target_verbose(normalized)
+            if err:
+                yield event.plain_result(err)
+                return
+            target_sids = [target_sid] if target_sid else []
+        else:
+            visible = self._visible_sids(event)
+            target_sids = [sid for sid in record_sids if sid in visible]
+
+        if not target_sids:
+            yield event.plain_result("无记录")
+            return
+
+        results: dict[str, dict] = {}
+        for sid in target_sids:
+            results[sid] = await summary_svc.push_for_command(sid)
+
+        pushed = [sid for sid, r in results.items() if r.get("pushed")]
+        failed = [sid for sid, r in results.items() if r.get("reason") == "push_failed"]
+        empty = [
+            sid for sid, r in results.items()
+            if r.get("reason") in (
+                "no_record", "no_pending", "no_change", "no_in_window_content",
+            )
+        ]
+
+        lines = []
+        if pushed:
+            lines.append(f"✓ 已发送 {len(pushed)} 个 session")
+        if failed:
+            lines.append("⚠ 失败: " + ", ".join(s[:8] for s in failed))
+        if empty and not pushed:
+            lines.append("无记录")
+        yield event.plain_result("\n".join(lines) or "无记录")
+
+    # ── git 查看（只读） ──
+
+    @staticmethod
+    def _parse_git_staged(arg: str) -> tuple[bool | None, str]:
+        """解析 diffstat / diff 参数尾部的 staged 关键词。
+
+        返回 (staged 三态, 剩余参数)。合法词：staged/暂存=true，unstaged/未暂存=false。
+        """
+        parts = (arg or "").strip().split(None, 1)
+        if not parts:
+            return None, ""
+        first = parts[0].strip().lower()
+        if first in ("staged", "暂存"):
+            return True, (parts[1] if len(parts) > 1 else "").strip()
+        if first in ("unstaged", "未暂存"):
+            return False, (parts[1] if len(parts) > 1 else "").strip()
+        return None, (arg or "").strip()
+
+    def _require_sid_or_arg(self, event: AstrMessageEvent, cmd: str, arg: str = "") -> tuple[str | None, str | None]:
+        """git 系列：当前选中 session 优先；参数为数字/ID 前缀时指向该 session。"""
+        if arg:
+            target_sid, err = self._resolve_target_verbose(arg)
+            if err:
+                return None, err
+            if target_sid:
+                return target_sid, None
+        return self._require_sid(event, cmd)
+
+    async def cmd_git(self, event: AstrMessageEvent):
+        """查看当前 session 工作区 git 状态（只读）"""
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        sid, err = self._require_sid(event, "git")
+        if err:
+            yield event.plain_result(err)
+            return
+        ok, stdout, _ = await session_ops.fetch_git_status(self.client, sid)
+        if not ok:
+            yield event.plain_result(stdout)
+            return
+        label = formatters.session_label_short(sid, self.sessions_cache)
+        text = formatters.format_git_status(label, stdout)
+        from ..render import output_present
+        payload = output_present.build_git_status_payload(label, stdout)
+        async for result in output_present.present(
+            self.plugin, event, "git_status", payload, text
+        ):
+            yield result
+
+    async def cmd_diffstat(self, event: AstrMessageEvent, arg: str = ""):
+        """查看当前 session 变更统计（--numstat；可跟 staged/unstaged）"""
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        staged, rest = self._parse_git_staged(arg)
+        sid, err = self._require_sid_or_arg(event, "diffstat", rest)
+        if err:
+            yield event.plain_result(err)
+            return
+        ok, stdout, _ = await session_ops.fetch_git_diff_numstat(self.client, sid, staged=staged)
+        if not ok:
+            yield event.plain_result(stdout)
+            return
+        label = formatters.session_label_short(sid, self.sessions_cache)
+        text = formatters.format_git_diff_numstat(label, stdout)
+        from ..render import output_present
+        payload = output_present.build_git_status_payload(label, stdout, is_numstat=True)
+        async for result in output_present.present(
+            self.plugin, event, "git_status", payload, text
+        ):
+            yield result
+
+    async def cmd_diff(self, event: AstrMessageEvent, arg: str = ""):
+        """查看单文件 diff：/hapi diff <路径> [staged|unstaged] [序号|ID前缀]"""
+        await self.state_mgr.ensure_primary_session(event)
+        await self.state_mgr.set_user_state(event)
+        staged, rest = self._parse_git_staged(arg)
+        if not rest:
+            yield event.plain_result(
+                "格式: /hapi diff <文件路径> [staged|unstaged]\n"
+                "示例: /hapi diff src/main.py\n"
+                "先看 /hapi diffstat 确认文件路径"
+            )
+            return
+        sid, err = self._require_sid(event, "diff")
+        if err:
+            yield event.plain_result(err)
+            return
+        ok, stdout, _ = await session_ops.fetch_git_diff_file(self.client, sid, rest, staged=staged)
+        if not ok:
+            yield event.plain_result(stdout)
+            return
+        label = formatters.session_label_short(sid, self.sessions_cache)
+        scope = "（暂存）" if staged is True else ("（未暂存）" if staged is False else "")
+        title = f"{label}\ndiff {scope} {rest}".strip()
+        if not stdout.strip():
+            yield event.plain_result(f"{title}\n（无差异）")
+            return
+        body = f"```diff\n{stdout.rstrip()}\n```"
+        from ..render import output_present
+        payload = output_present.build_message_payload(
+            label=label,
+            body=body,
+            title=f"diff {rest}",
+            footer="",
+        )
+        async for result in output_present.present(
+            self.plugin, event, "message", payload, f"{title}\n\n{body}"
         ):
             yield result
 

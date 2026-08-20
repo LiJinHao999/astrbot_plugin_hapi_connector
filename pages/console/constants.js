@@ -45,6 +45,8 @@ const RENDER_KIND_LABELS = {
   permission: "权限请求",
   routes: "推送路由",
   message: "AI 对话",
+  auto_approve_summary: "操作记录",
+  git_status: "git 状态/统计",
 };
 
 const FLAVOR_ROUTE_KEYS = ["claude", "codex", "cursor", "gemini", "grok", "kimi", "opencode", "pi"];
@@ -54,6 +56,13 @@ const OUTPUT_LEVELS = [
   { value: "simple", title: "简洁" },
   { value: "summary", title: "摘要" },
   { value: "detail", title: "详细" },
+];
+
+/** 忙时托管免打扰（托管窗内覆盖 output_level，压 AI 对话） */
+const BUSY_AGENT_PUSH_LEVELS = [
+  { value: "none", title: "不推送" },
+  { value: "summary", title: "仅摘要" },
+  { value: "inherit", title: "跟随默认" },
 ];
 
 /* 与 formatters.HELP_COMMANDS / HELP_TOPICS 对齐 */
@@ -90,6 +99,7 @@ const HELP_COMMANDS = [
   { topic: "approve", usage: "/hapi allow [序号]", summary: "批准全部或单个非 question 请求", example: "/hapi allow 2", home: false },
   { topic: "approve", usage: "/hapi answer [序号]", summary: "回答 question 请求", example: "/hapi answer 1", home: true },
   { topic: "approve", usage: "/hapi deny [序号]", summary: "拒绝请求", example: "/hapi deny 3", home: true },
+  { topic: "approve", usage: "/hapi summary [all|<序号|ID>|status]", summary: "推送忙时托管操作记录：无参=当前窗口有变更的 session；all=全部；指定序号/ID 推单个；status 查看汇总队列", example: "/hapi summary", home: false },
   { topic: "approve", usage: "戳一戳机器人", summary: "执行 WebUI 配置的快捷动作（默认批准待审；可改为 list/stop 等，仅 QQ NapCat）", example: null, home: false },
   { topic: "push", usage: "/hapi bind [<flavor>]", summary: "设置当前聊天为默认推送窗口；带 flavor（如 claude/codex）时只对对应 AI 代理生效", example: "/hapi bind claude", home: false },
   { topic: "push", usage: "/hapi bind status", summary: "查看默认推送窗口、flavor 推送窗口和 session 绑定状态", example: null, home: false },
@@ -101,6 +111,9 @@ const HELP_COMMANDS = [
   { topic: "files", usage: "/hapi find <关键词>", summary: "搜索远端文件", example: "/hapi find config", home: false },
   { topic: "files", usage: "/hapi download <路径>", summary: "下载远端文件到聊天（别名: /hapi dl）", example: "/hapi dl logs/app.log", home: false },
   { topic: "files", usage: "/hapi upload [cancel]", summary: "上传文件到当前 session，支持快捷前缀附件", example: "/hapi upload", home: false },
+  { topic: "files", usage: "/hapi git", summary: "查看当前 session 工作区的 git 状态（只读）", example: null, home: false },
+  { topic: "files", usage: "/hapi diffstat [staged|unstaged]", summary: "查看变更统计（+新增 -删除；staged=仅暂存，unstaged=仅未暂存）", example: "/hapi diffstat staged", home: false },
+  { topic: "files", usage: "/hapi diff <路径> [staged|unstaged]", summary: "查看单文件 diff（统一 diff 格式，只读）", example: "/hapi diff src/main.py", home: false },
   { topic: "config", usage: "/hapi perm [模式]", summary: "查看或切换权限模式", example: null, home: false },
   { topic: "config", usage: "/hapi plan", summary: "切换 Plan 模式（toggle）。Claude 切换 permissionMode，Codex 切换 collaborationMode", example: null, home: false },
   { topic: "config", usage: "/hapi model [模式]", summary: "查看或切换当前使用的模型（Claude / Gemini）", example: null, home: false },
@@ -119,6 +132,7 @@ export {
   RENDER_KIND_LABELS,
   FLAVOR_ROUTE_KEYS,
   OUTPUT_LEVELS,
+  BUSY_AGENT_PUSH_LEVELS,
   HELP_TOPICS,
   HELP_COMMANDS,
 };

@@ -1,5 +1,40 @@
 # 更新日志
 
+## v3.3.0 —「Agent 操作记录汇总」功能
+
+> 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)
+
+1. **新增 Agent 操作记录汇总开关**（`auto_approve_silent`，默认关闭，行为与旧版一致）  
+
+   开启后，忙时托管时段内 agent 的**全部操作**将改为按策略收集汇总推送，并附带简要的 git 变更快照。
+
+   夜间托管时段（如 23:00–07:00）可以单独设置推送等级，不再在免打扰时段刷屏，同时配合汇总功能。
+
+2. **汇总方式与推送时机可配置**  
+   - 汇总方式：`按忙时托管时段`/ `最近24小时`（滚动窗口，事件超 24h 过期）
+   - 汇总结束后推送汇总信息的时机：`托管结束时`（默认）/ `每天固定时间`（默认 08:00）
+ 
+3. **严格隔离与防漏发**  
+   - 汇总按 session 分开，**每个有变更的 session 各推一张**（文本或结构卡），带 `session_id` 走既有窗口路由（session 绑定 → flavor 默认 → 用户默认窗口），不做全局广播
+   - `last_pushed_at + 内容指纹（sha256）` 去重：同日同内容不重复推；事件增删、失败转成功都会改变指纹触发再推
+   - 补发路径：插件 terminate / SSE stop / 关操作记录或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
+   - pending 与 `last_*` 持久化到 AstrBot KV（键 `auto_approve_summary_v1`），重启不丢
+
+4. **主动触发汇总记录的命令：* `/hapi summary`  
+   - `summary`：推送当前窗口可见且有变更的 session 汇总
+   - `summary all`：全部有变更的 session（各回各窗口）
+   - `summary <序号|ID>`：指定 session；`summary status`：查看汇总队列、汇总状态与上次推送时间
+
+5. **WebUI 热更新**  
+   改操作记录开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作记录或关托管时会将已收集的汇总补发（防漏发）。
+
+6. **git 状态 / 变更统计 / 文件 diff 查看（只读）** 添加了统计当前session文件夹 git 状态的命令  
+   - `/hapi git`：当前 session 工作区 git 状态（porcelain 解析为可读列表，含 修改/新增/删除/重命名/冲突/未跟踪）
+   - `/hapi diffstat [staged|unstaged]`：变更统计（`+新增 -删除` 对齐，可只看暂存或未暂存）
+   - `/hapi diff <路径> [staged|unstaged]`：单文件完整 diff（统一 diff 格式）
+   - 走 HAPI `GET /api/sessions/:id/git-status` / `git-diff-numstat` / `git-diff-file`；**只读**，不做提交/暂存/回滚
+   - `render_mode=card` 时状态/统计出结构卡（新增出图类型 `git_status`，默认勾选），diff 复用对话类型卡片；纯文本模式原样发送
+
 ## v3.2.6
 
 1. **修复 SSE 权限请求收不到的问题（兼容 hapi v0.27.0+ 事件结构）**  

@@ -81,6 +81,28 @@ class PendingManager:
             if success:
                 self.remove_entry(sid, rid)
 
+        # 托管时段内手动批准 → 进操作记录（汇总开启且窗内才记录；question 不记）
+        summary_svc = getattr(self.sse_listener, "summary_service", None)
+        if summary_svc is not None:
+            req_by_rid = {(sid, rid): req for sid, rid, req in regular}
+            for sid, rid, success in results:
+                req = req_by_rid.get((sid, rid))
+                if req is None or formatters.is_question_request(req):
+                    continue
+                if formatters.is_compact_request(req):
+                    await summary_svc.record_operation(
+                        sid, "compact", success, tool="__compact__",
+                        detail=("压缩上下文 (/compact)" if success else "批准压缩失败"),
+                        request_id=rid,
+                    )
+                    continue
+                tool = str(req.get("tool") or "?")
+                await summary_svc.record_operation(
+                    sid, "approve", success, tool=tool,
+                    detail=(formatters.format_request_detail(req) if success else "批量批准失败"),
+                    request_id=rid,
+                )
+
         success_count = sum(1 for _, _, ok in results if ok)
         fail_count = len(results) - success_count
         if fail_count > 0:

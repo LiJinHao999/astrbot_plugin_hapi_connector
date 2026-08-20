@@ -811,6 +811,22 @@ button {
   justify-content: center;
 }
 
+.qs-section {
+  grid-column: 1 / -1;
+  padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  gap: 2px;
+}
+
+.qs-section-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .qs-note {
   grid-column: 1 / -1;
 }

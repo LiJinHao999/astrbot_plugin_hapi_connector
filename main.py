@@ -16,6 +16,7 @@ from .core.binding_manager import BindingManager
 from .core.state_manager import StateManager
 from .core.notification_manager import NotificationManager
 from .core.pending_manager import PendingManager
+from .core.auto_approve_summary import AutoApproveSummaryService
 from .chat.command_handlers import CommandHandlers
 from .core import session_ops
 from .render import formatters
@@ -38,7 +39,7 @@ except Exception:
 
 @register("astrbot_plugin_hapi_connector", "LiJinHao999",
           "连接 HAPI，随时随地用 Claude / Codex / Cursor / Grok / Kimi / OpenCode / Pi vibe coding",
-          "3.2.6")
+          "3.3.0")
 class HapiConnectorPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -93,6 +94,15 @@ class HapiConnectorPlugin(Star):
         )
         # 供 SSE 推送呈现（对话/结构卡）读取 config 与 notification_mgr
         self.sse_listener.plugin = self
+
+        # 忙时托管操作记录服务（dev-docs/auto-approve-silent-summary.md）
+        # 推送走 sse_listener.push_auto_approve_summary（带 session_id 走窗口路由）
+        self.summary_service = AutoApproveSummaryService(self)
+        self.summary_service.set_push_callback(
+            self.sse_listener.push_auto_approve_summary
+        )
+        self.summary_service.set_git_provider(self._summary_git_snapshot)
+        self.sse_listener.summary_service = self.summary_service
 
         # 待审批管理器
         self.pending_mgr = PendingManager(self.sse_listener)
@@ -411,6 +421,38 @@ class HapiConnectorPlugin(Star):
 
         return False, sid, msg
 
+    async def _summary_git_snapshot(self, sid: str) -> dict | None:
+        """操作记录 flush 时附带的 git 变更快照（只读）。
+
+        非 git 仓库 / HAPI 旧版本无路由 / 网络错误一律返回 None（汇总不附带 git 区块）。
+        返回 {"status_count", "added", "deleted", "entries": [(mark, path)...], "total_entries"}。
+        """
+        try:
+            ok, stdout, _ = await session_ops.fetch_git_status(self.client, sid)
+            if not ok:
+                return None
+            status_rows = formatters.parse_git_porcelain(stdout)
+            ok_num, num_out, _ = await session_ops.fetch_git_diff_numstat(self.client, sid)
+            num_entries = formatters.parse_git_numstat(num_out) if ok_num else []
+            added = 0
+            deleted = 0
+            for mark, _path in num_entries:
+                try:
+                    added += int(mark.split()[0][1:])
+                    deleted += int(mark.split()[1][1:])
+                except (IndexError, ValueError):
+                    pass
+            return {
+                "status_count": len(status_rows),
+                "added": added,
+                "deleted": deleted,
+                "entries": num_entries[:15],
+                "total_entries": len(num_entries),
+            }
+        except Exception as e:
+            logger.debug("汇总 git 快照失败 sid=%s: %s", sid[:8], e)
+            return None
+
     def _format_no_visible_sessions_text(self, event: AstrMessageEvent) -> str:
         lines = [
             "当前窗口没有接收任何 session 通知。",
@@ -445,6 +487,22 @@ class HapiConnectorPlugin(Star):
         # 加载已有的待审批请求（重启/断联后恢复）
         await self.sse_listener.load_existing_pending()
 
+        # 托管操作记录：恢复 KV、同步配置、启动窗边沿/定点任务（§2.3 防漏发）
+        summary_svc = self.summary_service
+        summary_svc.update_config(
+            auto_approve_enabled=self.config.get("auto_approve_enabled", False),
+            auto_approve_start=self.config.get("auto_approve_start", "23:00"),
+            auto_approve_end=self.config.get("auto_approve_end", "07:00"),
+            auto_approve_silent=self.config.get("auto_approve_silent", False),
+            auto_approve_summary_mode=self.config.get("auto_approve_summary_mode", "window"),
+            auto_approve_summary_push=self.config.get("auto_approve_summary_push", "on_window_end"),
+            auto_approve_summary_time=self.config.get("auto_approve_summary_time", "08:00"),
+            auto_approve_summary_include_failures=self.config.get("auto_approve_summary_include_failures", True),
+            auto_approve_summary_max_detail_lines=self.config.get("auto_approve_summary_max_detail_lines", 30),
+        )
+        await summary_svc.load()
+        summary_svc.start_tasks()
+
         # 启动 SSE
         output_level = self.config.get("output_level", "simple")
         remind = self.config.get("remind_pending", True)
@@ -462,12 +520,28 @@ class HapiConnectorPlugin(Star):
             auto_approve_end=auto_approve_end,
             summary_msg_count=self._summary_msg_count,
             max_reconnect_attempts=max_reconnect,
+            auto_approve_silent=self.config.get("auto_approve_silent", False),
+            auto_approve_summary_mode=self.config.get("auto_approve_summary_mode", "window"),
+            auto_approve_summary_push=self.config.get("auto_approve_summary_push", "on_window_end"),
+            auto_approve_summary_time=self.config.get("auto_approve_summary_time", "08:00"),
+            auto_approve_summary_include_failures=self.config.get("auto_approve_summary_include_failures", True),
+            auto_approve_summary_max_detail_lines=self.config.get("auto_approve_summary_max_detail_lines", 30),
+            busy_agent_push_level=self.config.get("busy_agent_push_level", "inherit"),
         )
 
         logger.info("HAPI Connector 已初始化，SSE 输出级别: %s", output_level)
 
     async def terminate(self):
-        """插件销毁：停止 SSE、关闭 client"""
+        """插件销毁：补发操作记录、停止 SSE、关闭 client"""
+        # 防漏发：先把未推送的操作记录补发，再停任务
+        try:
+            summary_svc = getattr(self, "summary_service", None)
+            if summary_svc is not None:
+                if summary_svc.has_pending():
+                    await summary_svc.flush_all()
+                await summary_svc.stop()
+        except Exception as e:
+            logger.warning("terminate 时操作记录清理失败: %s", e)
         await self.sse_listener.stop()
         await self.client.close()
         logger.info("HAPI Connector 已销毁")

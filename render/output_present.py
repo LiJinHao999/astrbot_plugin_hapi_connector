@@ -786,6 +786,272 @@ def build_permission_payload(
     }
 
 
+def build_auto_approve_summary_payload(view: dict[str, Any]) -> dict[str, Any]:
+    """忙时托管操作记录结构卡（§3.2）。
+
+    消费 AutoApproveSummaryService.build_summary_view 的视图 dict；
+    走通用结构卡渲染（kind=auto_approve_summary）。
+    """
+    from . import formatters
+
+    def _dt(dt) -> str:
+        if not dt:
+            return ""
+        return dt.strftime("%Y-%m-%d %H:%M") if hasattr(dt, "strftime") else str(dt)
+
+    def _event_line(evt: dict, mark: str) -> str:
+        at = evt.get("at")
+        time_part = _dt(at)[5:] if at else ""
+        kind = str(evt.get("kind") or "approve")
+        kind_label = {"approve": "批准", "compact": "压缩", "deny": "拒绝"}.get(kind, kind)
+        tool = evt.get("tool")
+        bits = [time_part, mark, kind_label]
+        if tool and tool != "__compact__":
+            bits.append(f"[{tool}]")
+        detail = str(evt.get("detail") or "").strip()
+        if detail:
+            bits.append(detail[:100])
+        return " ".join(b for b in bits if b)
+
+    sid = str(view.get("sid") or "")
+    sid_short = str(view.get("sid_short") or sid[:8] or "?")
+    flavor = _strip_emoji(str(view.get("flavor") or "?").strip() or "?")
+    path = str(view.get("path") or "").strip()
+    clean_title = _strip_emoji(str(view.get("title") or "").strip())
+    # 标题退化成路径时已在 view 层改成「(无标题)」；这里再兜底一次
+    if not clean_title or clean_title == path:
+        clean_title = "(无标题)"
+    title = clean_title
+    bucket = str(view.get("bucket_desc") or "—")
+    # 副标题显式带 flavor · sid，避免多 session 汇总时只剩 cwd 路径
+    subtitle = f"操作记录 · {flavor} · {sid_short} · {bucket}"
+
+    counters = view.get("counters") or {}
+    approve_ok = int(counters.get("approve_ok") or 0)
+    approve_fail = int(counters.get("approve_fail") or 0)
+    compact_ok = int(counters.get("compact_ok") or 0)
+    compact_fail = int(counters.get("compact_fail") or 0)
+    deny_n = int(counters.get("deny_fail") or 0)
+
+    rows: list[dict[str, Any]] = []
+    # 身份行：路径单独列出（标题不再用 cwd 顶替）
+    if path:
+        path_show = path
+        if "/" in path:
+            parts = [p for p in path.split("/") if p]
+            if len(parts) > 2:
+                path_show = "…/" + "/".join(parts[-2:])
+        rows.append({
+            "type": "kv",
+            "label": "路径",
+            "detail": _strip_emoji(path_show),
+            "full": path,
+        })
+    rows.append({
+        "type": "kv",
+        "label": "会话",
+        "detail": f"{flavor} · {sid_short}",
+        "full": sid,
+    })
+
+    if approve_ok or approve_fail:
+        rows.append({
+            "type": "kv",
+            "label": "批准",
+            "detail": f"成功 {approve_ok} · 失败 {approve_fail}",
+        })
+    if compact_ok or compact_fail:
+        rows.append({
+            "type": "kv",
+            "label": "压缩",
+            "detail": f"成功 {compact_ok} · 失败 {compact_fail}",
+        })
+    if deny_n:
+        rows.append({
+            "type": "kv",
+            "label": "拒绝",
+            "detail": f"{deny_n} 次",
+        })
+    if not (approve_ok or approve_fail or compact_ok or compact_fail or deny_n):
+        rows.append({
+            "type": "kv",
+            "label": "审批",
+            "detail": "无（窗内有会话活动）",
+        })
+
+    runtime_sec = float(view.get("runtime_sec") or 0)
+    if runtime_sec >= 1:
+        mins = int(runtime_sec // 60)
+        secs = int(runtime_sec % 60)
+        detail = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+        rows.append({"type": "kv", "label": "运行", "detail": detail})
+
+    last_message = str(view.get("last_message") or "").strip()
+    if last_message:
+        preview = " ".join(_strip_emoji(last_message).split())
+        if len(preview) > 280:
+            preview = preview[:279] + "…"
+        rows.append({
+            "type": "kv",
+            "label": "最近消息",
+            "detail": preview,
+        })
+
+    failures = list(view.get("failures") or [])
+    successes = list(view.get("successes") or [])
+    max_lines = int(view.get("max_detail_lines") or 30)
+    include_failures = bool(view.get("include_failures"))
+
+    if failures:
+        rows.append({
+            "type": "section",
+            "label": "失败 / 未执行",
+            "detail": "" if include_failures else f"{len(failures)} 次（已隐藏）",
+            "count": 0,
+        })
+        if include_failures:
+            for evt in failures:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": _strip_emoji(_event_line(evt, "✗")),
+                    "detail": "",
+                })
+
+    if successes:
+        shown = successes[-max_lines:]
+        rows.append({
+            "type": "section",
+            "label": f"成功明细（最近 {len(shown)} 条）",
+            "detail": "",
+            "count": 0,
+        })
+        for evt in shown:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": _strip_emoji(_event_line(evt, "✓")),
+                "detail": "",
+            })
+        hidden = len(successes) - len(shown)
+        if hidden > 0:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": f"另有 {hidden} 条",
+                "detail": "",
+            })
+
+    git = view.get("git")
+    if isinstance(git, dict):
+        status_count = int(git.get("status_count") or 0)
+        added = int(git.get("added") or 0)
+        deleted = int(git.get("deleted") or 0)
+        entries = list(git.get("entries") or [])
+        if status_count or added or deleted:
+            rows.append({
+                "type": "section",
+                "label": "git 变更",
+                "detail": f"{status_count} 文件 · +{added} -{deleted}",
+                "count": 0,
+            })
+            for mark, gpath in entries:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": mark,
+                    "detail": _strip_emoji(gpath)[:120],
+                })
+            hidden = int(git.get("total_entries") or 0) - len(entries)
+            if hidden > 0:
+                rows.append({
+                    "type": "row",
+                    "index": 0,
+                    "label": f"另有 {hidden} 个文件",
+                    "detail": "",
+                })
+
+    if not rows:
+        rows = [{
+            "type": "row",
+            "index": 0,
+            "label": "(空)",
+            "detail": "暂无托管自动动作",
+        }]
+
+    last = _dt(view.get("last_pushed_at")) or "无"
+    policy = formatters.format_summary_policy_line(
+        str(view.get("mode") or ""),
+        str(view.get("push") or ""),
+        fixed_time=str(view.get("fixed_time") or ""),
+    )
+    footer = f"上次汇总：{last} · {policy}"
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "sid_short": sid_short,
+        "flavor": flavor,
+        "rows": rows,
+        "footer": footer,
+    }
+
+
+def build_git_status_payload(
+    label: str,
+    stdout: str,
+    *,
+    is_numstat: bool = False,
+) -> dict[str, Any]:
+    """git 状态 / 变更统计结构卡（kind=git_status）。
+
+    - is_numstat=False：porcelain 状态行（状态 + 路径）
+    - is_numstat=True：+added -deleted 统计行
+    """
+    from . import formatters
+
+    clean_label = _strip_emoji(label or "")
+    label_lines = [p.strip() for p in clean_label.splitlines() if p.strip()]
+    title = label_lines[0] if label_lines else ("Git 状态" if not is_numstat else "变更统计")
+    meta = " · ".join(label_lines[1:]) if len(label_lines) > 1 else ""
+
+    rows: list[dict[str, Any]] = []
+    if is_numstat:
+        entries = formatters.parse_git_numstat(stdout)
+        for mark, path in entries:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": mark,
+                "detail": _strip_emoji(path)[:120],
+            })
+        subtitle_bits = [f"变更统计 · {len(entries)} 文件"]
+    else:
+        entries = formatters.parse_git_porcelain(stdout)
+        for code, status, path in entries:
+            rows.append({
+                "type": "row",
+                "index": 0,
+                "label": _strip_emoji(status or code or "?"),
+                "detail": _strip_emoji(path)[:120],
+            })
+        subtitle_bits = [f"git 状态 · {len(entries)} 项"]
+    if meta:
+        subtitle_bits.append(meta)
+    if not rows:
+        rows = [{
+            "type": "row",
+            "index": 0,
+            "label": "✓ 工作区干净",
+            "detail": "没有未提交的变更",
+        }]
+    return {
+        "title": title,
+        "subtitle": " · ".join(subtitle_bits),
+        "rows": rows,
+        "footer": "/hapi diffstat  统计    /hapi diff <路径>  查看文件 diff",
+    }
+
+
 def try_render_png(plugin, kind: str, data: dict[str, Any]) -> card_render.RenderResult | None:
     """若配置要求出卡且引擎可用，返回 RenderResult；否则 None（调用方发文本）。"""
     cfg = _cfg_dict(plugin)
@@ -867,16 +1133,18 @@ async def _push_plain_with_images(
     text: str,
     session_id: str,
     sessions_cache: list[dict],
-) -> None:
-    """先发改写后的正文（图位→「见下方图片」），再按顺序发本地图。"""
+) -> bool:
+    """先发改写后的正文（图位→「见下方图片」），再按顺序发本地图。返回是否至少发出一次。"""
     plain, images = extract_local_images_for_plain(text)
+    any_ok = False
     if plain.strip():
-        await notification_mgr.push_notification(
+        ok = await notification_mgr.push_notification(
             plain, session_id, sessions_cache
         )
+        any_ok = any_ok or bool(ok)
     for idx, (alt, path) in enumerate(images):
         try:
-            await notification_mgr.push_image_notification(
+            ok = await notification_mgr.push_image_notification(
                 path,
                 session_id,
                 sessions_cache,
@@ -886,6 +1154,7 @@ async def _push_plain_with_images(
                     f"{hash(alt) & 0xFFFF:x}"
                 ),
             )
+            any_ok = any_ok or bool(ok)
         except Exception as e:
             logger.warning(
                 "plain embed image push failed idx=%s path=%s: %s",
@@ -893,6 +1162,7 @@ async def _push_plain_with_images(
                 path[:60],
                 e,
             )
+    return any_ok
 
 
 async def present(
@@ -978,35 +1248,36 @@ async def present_push(
     session_id: str,
     sessions_cache: list[dict],
 ) -> bool:
-    """SSE/后台推送路径：尝试发图，失败则发文本（可跟嵌图）。返回是否已发送。"""
+    """SSE/后台推送路径：尝试发图，失败则发文本（可跟嵌图）。
+
+    返回是否至少成功发出（无路由/全失败为 False；见 busy-hours-agent-push.md §6）。
+    """
     result = try_render_png(plugin, kind, data)
     if result is None or not result.png:
         source = _plain_source_text(kind, data, fallback_text)
-        await _push_plain_with_images(
+        return await _push_plain_with_images(
             notification_mgr, source, session_id, sessions_cache
         )
-        return True
 
     path = None
     try:
         path = write_temp_png(result.png)
         # 只发图：footer 已画在卡内，不再 caption 再冒一条文字
         logger.info("card push kind=%s path=%s sid=%s", kind, path, (session_id or "")[:8])
-        await notification_mgr.push_image_notification(
+        ok = await notification_mgr.push_image_notification(
             path,
             session_id,
             sessions_cache,
             caption="",
             dedupe_key=f"card:{kind}:{session_id}:{hash(fallback_text) & 0xFFFFFFFF:x}",
         )
-        return True
+        return bool(ok)
     except Exception as e:
         logger.warning("present_push image failed kind=%s: %s", kind, e)
         source = _plain_source_text(kind, data, fallback_text)
-        await _push_plain_with_images(
+        return await _push_plain_with_images(
             notification_mgr, source, session_id, sessions_cache
         )
-        return True
     finally:
         if path:
             # 稍延迟删除，避免部分适配器异步读文件时已被删

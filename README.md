@@ -124,6 +124,7 @@ hapi codex    # OpenAI Codex
 |--------|------|--------|
 | `output_level` | SSE 推送级别：`silence` / `simple` / `summary` / `detail` | simple |
 | `summary_msg_count` | summary 级别显示的 agent 消息条数 | 5 |
+| `busy_agent_push_level` | 忙时托管免打扰：`none` / `summary` / `inherit`（托管开启且在忙时段内压 AI 对话；权限由托管自动批） | inherit |
 | `quick_prefix` | 快捷发送前缀字符 | `>` |
 | `poke_approve` | 启用戳一戳快捷操作（仅 QQ NapCat 等） | 开启 |
 | `poke_action` | 戳一戳映射：`approve` / `pending` / `list` / `status` / `stop` / `output_cycle` / `none`（不含 deny，防误触） | approve |
@@ -145,6 +146,21 @@ hapi codex    # OpenAI Codex
 | `auto_approve_enabled` | 忙时托管审批：在指定时间范围内自动批准所有权限请求 | 关闭 |
 | `auto_approve_start` | 忙时托管审批开始时间（HH:MM，24 小时制） | `23:00` |
 | `auto_approve_end` | 忙时托管审批结束时间（HH:MM，24 小时制，支持跨午夜） | `07:00` |
+
+### Agent 操作记录统计（可选）
+
+开启 `auto_approve_silent`（键名保留兼容）后，托管时段内**有会话活动**（思考/运行）的 session 按策略汇总推送——不必等自动批准 / 压缩。审批类操作不再逐条刷屏，卡上带最近消息、操作明细与 git 快照。详见 `dev-docs/auto-approve-silent-summary.md`。
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `auto_approve_silent` | Agent 操作记录统计总开关（关闭时保持旧版逐条推送） | 关闭 |
+| `auto_approve_summary_mode` | 汇总方式：`window` 按托管时段（一段窗一个统计桶）/ `rolling_24h` 最近24小时（滚动窗口） | window |
+| `auto_approve_summary_push` | 推送时机：`on_window_end` 托管结束时 / `at_fixed_time` 每天固定时间 / `manual` 不主动推送（仅归档，`/hapi summary` 手动重发） | on_window_end |
+| `auto_approve_summary_time` | 固定推送时间（HH:MM，仅 `at_fixed_time` 生效） | `08:00` |
+| `auto_approve_summary_include_failures` | 汇总是否含失败 / 拒绝明细 | 开启 |
+| `auto_approve_summary_max_detail_lines` | 单 session 明细行数上限，超出折叠 | 30 |
+
+> 汇总严格按 session 隔离：每个有变更的 session 各推一张，走既有窗口路由；自动推送用内容指纹防刷；`/hapi summary` 可重复发送上一统计窗。忙时托管免打扰（压对话）另见 `busy_agent_push_level`（`dev-docs/busy-hours-agent-push.md`），WebUI 在「设置 → 审批」托管时段下方。
 
 ---
 
@@ -252,6 +268,7 @@ hapi codex    # OpenAI Codex
 | `/hapi answer [序号]` | 交互式回答 question 请求 |
 | `/hapi deny` | 全部拒绝 |
 | `/hapi deny <序号>` | 拒绝单个请求 |
+| `/hapi summary [all\|<序号\|ID>\|status]` | 操作记录（上一统计窗，可重复发送）；`status` 查看队列 |
 | 戳一戳机器人 | 批准所有普通权限请求 + 交互式回答 question（仅 QQ NapCat，需开启 `poke_approve`） |
 
 #### 📁 文件操作
@@ -263,6 +280,9 @@ hapi codex    # OpenAI Codex
 | `/hapi find <关键词>` | 搜索当前 session 的远端文件 |
 | `/hapi download <路径>` | 下载远端文件到当前聊天（别名 `dl`） |
 | `/hapi upload [cancel]` | 上传文件到当前 session，支持交互上传和取消 |
+| `/hapi git` | 查看当前 session 工作区的 git 状态（只读） |
+| `/hapi diffstat [staged\|unstaged]` | 查看变更统计（`+新增 -删除`；staged=仅暂存，unstaged=仅未暂存） |
+| `/hapi diff <路径> [staged\|unstaged]` | 查看单文件 diff（统一 diff 格式，只读；卡片模式走对话卡代码块） |
 
 #### 🔧 模式与帮助
 

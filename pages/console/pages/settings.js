@@ -107,13 +107,24 @@ function fieldControl(f, d) {
   } />`;
 }
 
-function fieldVisible(f, d) {
-  if (!f.showIf) return true;
-  const cur = d[f.showIf.key];
-  const eq = f.showIf.eq;
-  // showIf 布尔条件与 AstrBot 字符串 true/false 对齐
+/** 单条 showIf 条件是否满足（布尔 eq 与 AstrBot 字符串 true/false 对齐） */
+function matchShowIfClause(clause, d) {
+  if (!clause || clause.key == null) return true;
+  const cur = d[clause.key];
+  const eq = clause.eq;
   if (typeof eq === "boolean") return coerceFieldBool(cur) === eq;
   return cur === eq;
+}
+
+/**
+ * showIf：单条件 object，或 array 表示 AND（如 silent 开 且 push=定点 才显示时间）。
+ */
+function fieldVisible(f, d) {
+  if (!f.showIf) return true;
+  if (Array.isArray(f.showIf)) {
+    return f.showIf.every((clause) => matchShowIfClause(clause, d));
+  }
+  return matchShowIfClause(f.showIf, d);
 }
 
 function renderField(f, d) {
@@ -214,9 +225,12 @@ function renderSettings() {
     else state.draft[input.name] = input.value;
     if (
       input.name === "auto_approve_enabled" ||
+      input.name === "auto_approve_silent" ||
       input.name === "output_level" ||
       input.name === "remind_pending" ||
-      input.name === "render_mode"
+      input.name === "render_mode" ||
+      // 决定下方「固定推送时间」字段显隐，选中后需重渲染
+      input.name === "auto_approve_summary_push"
     ) {
       renderSettings();
       return;

@@ -1377,6 +1377,7 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "allow",
     "answer",
     "deny",
+    "summary",
     "create",
     "abort", "stop",
     "archive",
@@ -1392,6 +1393,9 @@ KNOWN_HAPI_SUBCOMMANDS = {
     "find",
     "download", "dl",
     "upload",
+    "git",
+    "diffstat",
+    "diff",
 }
 
 
@@ -1601,6 +1605,13 @@ HELP_COMMANDS = [
     },
     {
         "topic": "approve",
+        "usage": "/hapi summary [all|<序号|ID>|status]",
+        "summary": "操作记录（上一统计窗，可重复发送）",
+        "example": "/hapi summary",
+        "home": False,
+    },
+    {
+        "topic": "approve",
         "usage": "戳一戳机器人",
         "summary": "批准全部权限请求（仅 QQ NapCat）",
         "example": None,
@@ -1639,6 +1650,27 @@ HELP_COMMANDS = [
         "usage": "/hapi upload [cancel]",
         "summary": "上传文件到当前 session，支持快捷前缀附件",
         "example": "/hapi upload\n> 分析这张图 [附带图片]",
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi git",
+        "summary": "查看当前 session 工作区的 git 状态（只读）",
+        "example": None,
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi diffstat [staged|unstaged]",
+        "summary": "查看变更统计（+新增 -删除；staged=仅暂存，unstaged=仅未暂存）",
+        "example": "/hapi diffstat staged",
+        "home": False,
+    },
+    {
+        "topic": "files",
+        "usage": "/hapi diff <路径> [staged|unstaged]",
+        "summary": "查看单文件 diff（统一 diff 格式，只读）",
+        "example": "/hapi diff src/main.py",
         "home": False,
     },
     {
@@ -1809,9 +1841,6 @@ def export_help_data() -> dict:
 def _normalize_help_topic(topic: str) -> str | None:
     key = topic.strip().lower()
     return HELP_TOPIC_ALIASES.get(key)
-
-
-def _iter_help_commands(topic: str) -> list[dict]:
     if topic == "all":
         return HELP_COMMANDS
     return [item for item in HELP_COMMANDS if item["topic"] == topic]
@@ -1915,3 +1944,316 @@ def get_help_text(topic: str = "") -> str:
     if normalized == "config":
         return _format_help_commands("HAPI 帮助 / 模式与配置", "config")
     return _format_help_commands("HAPI 帮助 / 完整命令列表", "all")
+
+
+# ──── 忙时托管操作记录（dev-docs/auto-approve-silent-summary.md §3） ────
+
+_SUMMARY_MODE_LABELS = {
+    "window": "按托管时段",
+    "rolling_24h": "最近24小时",
+}
+_SUMMARY_PUSH_LABELS = {
+    "on_window_end": "托管结束时",
+    "at_fixed_time": "每天固定时间",
+    "manual": "不主动推送",
+}
+
+
+def format_summary_policy_line(mode: str, push: str, *, fixed_time: str = "") -> str:
+    """操作记录卡页脚：白话一句，不要 mode=/push=。"""
+    mode = str(mode or "")
+    push = str(push or "")
+    if mode == "rolling_24h":
+        scope = "按最近 24 小时统计汇总"
+    else:
+        scope = "按托管时段统计汇总"
+    if push == "at_fixed_time":
+        when = f"每天 {fixed_time} 推送" if fixed_time else "每天固定时间推送"
+    elif push == "manual":
+        when = "不主动推送"
+    else:
+        when = "托管结束时推送"
+    return f"{scope}，{when}"
+
+
+def _fmt_summary_dt(dt) -> str:
+    if not dt:
+        return "无"
+    if hasattr(dt, "strftime"):
+        return dt.strftime("%Y-%m-%d %H:%M")
+    return str(dt)
+
+
+def _summary_detail_line(event: dict, mark: str) -> str:
+    """单条操作记录行：· 07:12 ✓ 批准 [Bash] npm install 或失败/拒绝摘要。"""
+    at = event.get("at")
+    time_part = ""
+    if hasattr(at, "strftime"):
+        time_part = at.strftime("%H:%M") + " "
+    kind = str(event.get("kind") or "approve")
+    kind_label = {"approve": "批准", "compact": "压缩", "deny": "拒绝"}.get(kind, kind)
+    tool = event.get("tool")
+    bits = [time_part + mark, kind_label]
+    if tool and tool != "__compact__":
+        bits.append(f"[{tool}]")
+    detail = str(event.get("detail") or "").strip()
+    if detail:
+        bits.append(detail[:120])
+    return "· " + " ".join(bits)
+
+
+def format_auto_approve_summary(view: dict) -> str:
+    """托管操作记录统计的纯文本（§3.1）。
+
+    消费 AutoApproveSummaryService.build_summary_view 的视图 dict。
+    """
+    sid = str(view.get("sid") or "")
+    sid_short = str(view.get("sid_short") or sid[:8] or "?")
+    title = str(view.get("title") or "").strip() or "(无标题)"
+    flavor = str(view.get("flavor") or "?").strip() or "?"
+    path = str(view.get("path") or "").strip()
+    lines = [
+        f"[操作记录] {title}",
+        f"会话: {flavor} · {sid_short}",
+    ]
+    if path:
+        lines.append(f"路径: {path}")
+    lines.append(f"时段/日期: {view.get('bucket_desc') or '—'}")
+
+    counters = view.get("counters") or {}
+    approve_ok = int(counters.get("approve_ok") or 0)
+    approve_fail = int(counters.get("approve_fail") or 0)
+    compact_ok = int(counters.get("compact_ok") or 0)
+    compact_fail = int(counters.get("compact_fail") or 0)
+    deny_n = int(counters.get("deny_fail") or 0)
+    if approve_ok + approve_fail:
+        lines.append(f"批准  ✓{approve_ok} ✗{approve_fail}")
+    if compact_ok + compact_fail:
+        lines.append(f"压缩  ✓{compact_ok} ✗{compact_fail}")
+    if deny_n:
+        lines.append(f"拒绝  {deny_n} 次")
+    if not (approve_ok + approve_fail + compact_ok + compact_fail + deny_n):
+        lines.append("审批/压缩: 无（窗内有会话活动）")
+
+    runtime_sec = float(view.get("runtime_sec") or 0)
+    if runtime_sec >= 1:
+        mins = int(runtime_sec // 60)
+        secs = int(runtime_sec % 60)
+        if mins:
+            lines.append(f"运行约 {mins}m{secs:02d}s" if secs else f"运行约 {mins}m")
+        else:
+            lines.append(f"运行约 {secs}s")
+
+    last_message = str(view.get("last_message") or "").strip()
+    if last_message:
+        preview = " ".join(last_message.split())
+        if len(preview) > 280:
+            preview = preview[:279] + "…"
+        lines.append(f"最近消息: {preview}")
+
+    failures = list(view.get("failures") or [])
+    successes = list(view.get("successes") or [])
+    max_lines = int(view.get("max_detail_lines") or 30)
+    include_failures = bool(view.get("include_failures"))
+
+    if failures:
+        if include_failures:
+            lines.append("── 失败 / 未执行明细 ──")
+            for evt in failures:
+                lines.append(_summary_detail_line(evt, "✗"))
+        else:
+            lines.append(f"── 失败 / 未执行 {len(failures)} 次（已隐藏明细）──")
+
+    if successes:
+        shown = successes[-max_lines:]
+        lines.append(f"── 成功明细（最近 {len(shown)} 条）──")
+        for evt in shown:
+            lines.append(_summary_detail_line(evt, "✓"))
+        hidden = len(successes) - len(shown)
+        if hidden > 0:
+            lines.append(f"另有 {hidden} 条")
+
+    lines.extend(_format_git_summary_block(view))
+
+    last = _fmt_summary_dt(view.get("last_pushed_at"))
+    policy = format_summary_policy_line(
+        str(view.get("mode") or ""),
+        str(view.get("push") or ""),
+        fixed_time=str(view.get("fixed_time") or ""),
+    )
+    lines.append("")
+    lines.append(f"上次汇总：{last} · {policy}")
+    return "\n".join(lines)
+
+
+def _format_git_summary_block(view: dict) -> list[str]:
+    """汇总里的 git 变更区块（flush 时刻快照；无 git/失败时返回空列表）。"""
+    git = view.get("git")
+    if not isinstance(git, dict):
+        return []
+    status_count = int(git.get("status_count") or 0)
+    added = int(git.get("added") or 0)
+    deleted = int(git.get("deleted") or 0)
+    if status_count == 0 and added == 0 and deleted == 0:
+        return []
+    lines = ["── git 变更 ──"]
+    lines.append(f"· {status_count} 个文件变更（+{added} -{deleted}）")
+    for mark, path in git.get("entries") or []:
+        lines.append(f"· {mark:<12} {path[:80]}")
+    hidden = int(git.get("total_entries") or 0) - len(git.get("entries") or [])
+    if hidden > 0:
+        lines.append(f"另有 {hidden} 个文件")
+    return lines
+
+
+def format_summary_status(status: dict, sessions_cache: list[dict]) -> str:
+    """/hapi summary status 的只读文本：队列、上次推送、配置。"""
+    enabled = bool(status.get("enabled"))
+    auto_approve = bool(status.get("auto_approve_enabled"))
+    silent = bool(status.get("silent"))
+    mode = str(status.get("mode") or "")
+    push = str(status.get("push") or "")
+    in_window = bool(status.get("in_window"))
+    sessions = status.get("sessions") or {}
+
+    lines = ["托管操作记录状态"]
+    if enabled:
+        lines.append("总开关: 开启")
+    else:
+        why = []
+        if not auto_approve:
+            why.append("托管审批未开启")
+        if not silent:
+            why.append("操作记录未开启")
+        lines.append(f"总开关: 关闭（{'；'.join(why) if why else '—'}）")
+    lines.append(format_summary_policy_line(
+        mode, push, fixed_time=str(status.get("fixed_time") or ""),
+    ))
+    lines.append(f"当前在托管窗: {'是' if in_window else '否'}")
+
+    if not sessions:
+        lines.append("已收集: 无")
+        return "\n".join(lines)
+
+    lines.append(f"已收集 {len(sessions)} 个 session:")
+    for sid in sorted(sessions):
+        info = sessions[sid]
+        label = session_label_short(sid, sessions_cache).splitlines()[0]
+        pending = int(info.get("pending") or 0)
+        last = _fmt_summary_dt(info.get("last_pushed_at"))
+        bits = [f"pending={pending}", f"last={last}"]
+        if info.get("has_activity") and pending == 0:
+            bits.append("有活动")
+        if info.get("has_snapshot"):
+            bits.append("有上一窗")
+        rt = float(info.get("runtime_sec") or 0)
+        if rt >= 1:
+            bits.append(f"运行{int(rt // 60)}m" if rt >= 60 else f"运行{int(rt)}s")
+        lines.append(f"  {label[:40]}  " + "  ".join(bits))
+    return "\n".join(lines)
+
+
+# ──── git 查看（dev-docs/auto-approve-silent-summary.md §10） ────
+
+_GIT_STATUS_LABELS = {
+    " ": "",      # porcelain XY 码的空位（如 " M"=仅工作区修改、"M "=仅暂存修改）
+    "M": "修改",
+    "A": "新增",
+    "D": "删除",
+    "R": "重命名",
+    "C": "复制",
+    "U": "冲突",
+    "?": "未跟踪",
+    "!": "忽略",
+}
+
+
+def _git_status_label(codes: str) -> str:
+    """porcelain XY 码 → 中文状态（去重保序，如 MM→修改、AM→新增+修改、??→未跟踪）。"""
+    uniq: list[str] = []
+    for c in codes:
+        lab = _GIT_STATUS_LABELS.get(c, c)
+        if lab and lab not in uniq:
+            uniq.append(lab)
+    if not uniq:
+        return "?"
+    return "+".join(uniq) if len(uniq) > 1 else uniq[0]
+
+
+def parse_git_porcelain(stdout: str) -> list[tuple[str, str, str]]:
+    """解析 ``git status --porcelain`` 输出 → [(XY码, 中文状态, 路径)]。
+
+    无法解析的行按 ("", "?", 原行) 保留，避免丢内容。
+    """
+    rows: list[tuple[str, str, str]] = []
+    for line in (stdout or "").splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        if len(line) >= 2:
+            x, y = line[0], line[1]
+            if x in _GIT_STATUS_LABELS and y in _GIT_STATUS_LABELS:
+                path = line[2:].strip().strip('"')
+                codes = "".join(c for c in (x, y) if c != " ")
+                rows.append((codes, _git_status_label(codes), path))
+                continue
+        rows.append(("", "?", line))
+    return rows
+
+
+def parse_git_numstat(stdout: str) -> list[tuple[str, str]]:
+    """解析 ``git diff --numstat`` 输出 → [("+a -d", path)]。二进制（-）按 0 计。"""
+    entries: list[tuple[str, str]] = []
+    for line in (stdout or "").splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            added_raw, deleted_raw = parts[0], parts[1]
+            path = "\t".join(parts[2:]).strip().strip('"')
+            try:
+                added = 0 if added_raw == "-" else int(added_raw)
+                deleted = 0 if deleted_raw == "-" else int(deleted_raw)
+            except ValueError:
+                entries.append((line, ""))
+                continue
+            entries.append((f"+{added} -{deleted}", path))
+        elif line.strip():
+            entries.append((line, ""))
+    return entries
+
+
+def format_git_status(label: str, stdout: str) -> str:
+    """git 状态纯文本（porcelain 解析为可读列表）。"""
+    rows = parse_git_porcelain(stdout)
+    if not rows:
+        return f"{label}\ngit 状态 · 工作区干净"
+    lines = [label, f"git 状态 · {len(rows)} 项"]
+    for code, status, path in rows:
+        lines.append(f"  {status}  {path}")
+    return "\n".join(lines)
+
+
+def format_git_diff_numstat(label: str, stdout: str) -> str:
+    """变更统计纯文本（+added -deleted 对齐）。"""
+    entries = parse_git_numstat(stdout)
+    if not entries:
+        return f"{label}\n无变更"
+    lines = [label, "变更统计（+新增 -删除）"]
+    total_added = 0
+    total_deleted = 0
+    for mark, path in entries:
+        if path:
+            lines.append(f"  {mark:<12} {path}")
+            try:
+                added = int(mark.split()[0][1:])
+                deleted = int(mark.split()[1][1:])
+            except (IndexError, ValueError):
+                added = deleted = 0
+            total_added += added
+            total_deleted += deleted
+        else:
+            lines.append(f"  {mark}")
+    lines.append(f"合计 +{total_added} -{total_deleted}")
+    return "\n".join(lines)

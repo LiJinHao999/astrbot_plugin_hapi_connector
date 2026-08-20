@@ -72,6 +72,8 @@ CARD_KINDS = (
     "permission",
     "routes",
     "message",
+    "auto_approve_summary",
+    "git_status",
 )
 DENSITY_OPTIONS = ("comfortable", "compact")
 PRESET_IDS = ("terminal_light", "terminal_dark", "clean", "compact")
@@ -82,6 +84,8 @@ DEFAULT_KINDS = (
     "permission",
     "routes",
     "message",
+    "auto_approve_summary",
+    "git_status",
 )
 
 # 默认 CSS：用户可在 WebUI 整段覆盖。
@@ -894,6 +898,41 @@ def sample_payload(kind: str) -> dict[str, Any]:
                 "> 建议：合并前跑一遍 `npm test`\n"
             ),
             "footer": "",
+        }
+    if kind == "git_status":
+        return {
+            "title": "重构鉴权中间件",
+            "subtitle": "git 状态 · 3 项 · claude · a1b2c3d4",
+            "rows": [
+                {"type": "row", "index": 0, "label": "修改", "detail": "src/auth/middleware.ts"},
+                {"type": "row", "index": 0, "label": "新增", "detail": "tests/test_auth.ts"},
+                {"type": "row", "index": 0, "label": "未跟踪", "detail": "notes/todo.md"},
+            ],
+            "footer": "/hapi diffstat  统计    /hapi diff <路径>  查看文件 diff",
+        }
+    if kind == "auto_approve_summary":
+        return {
+            "title": "重构鉴权中间件",
+            "subtitle": "操作记录 · claude · a1b2c3d4 · 托管时段 2026-08-09 23:00 ~ 2026-08-10 07:00",
+            "sid_short": "a1b2c3d4",
+            "flavor": "claude",
+            "rows": [
+                {"type": "kv", "label": "路径", "detail": "…/codes/proj-auth"},
+                {"type": "kv", "label": "会话", "detail": "claude · a1b2c3d4"},
+                {"type": "kv", "label": "批准", "detail": "成功 12 · 失败 1"},
+                {"type": "kv", "label": "压缩", "detail": "成功 2 · 失败 0"},
+                {"type": "kv", "label": "最近消息", "detail": "鉴权中间件已改完，单测通过。"},
+                {"type": "section", "label": "失败明细", "detail": "", "count": 0},
+                {"type": "row", "index": 0, "label": "06:12 ✗ 批准 [Bash] npm install 超时", "detail": ""},
+                {"type": "section", "label": "成功明细（最近 3 条）", "detail": "", "count": 0},
+                {"type": "row", "index": 0, "label": "06:11 ✓ 批准 [Edit] src/auth/middleware.ts", "detail": ""},
+                {"type": "row", "index": 0, "label": "05:47 ✓ 批准 [Bash] npm test", "detail": ""},
+                {"type": "row", "index": 0, "label": "05:02 ✓ 压缩 /compact", "detail": ""},
+                {"type": "section", "label": "git 变更", "detail": "3 文件 · +45 -12", "count": 0},
+                {"type": "row", "index": 0, "label": "+32 -8", "detail": "src/auth/middleware.ts"},
+                {"type": "row", "index": 0, "label": "+13 -4", "detail": "tests/test_auth.ts"},
+            ],
+            "footer": "上次汇总：2026-08-09 07:00 · 按托管时段统计汇总，托管结束时推送",
         }
     return {
         "title": "Session 列表",
