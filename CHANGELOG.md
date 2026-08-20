@@ -1,91 +1,39 @@
 # 更新日志
 
-## v3.3.0（补充 7）— 操作记录卡白话页脚，且不带窗外历史
+## v3.3.0 —「Agent 操作记录汇总」功能
 
-1. **页脚白话**：`mode=按托管时段 push=托管结束时` 改为「按托管时段统计汇总，托管结束时推送」。
-2. **最近消息一块**：不再按行拆成多张卡片；系统噪声（如 Context was reset）不展示。
-3. **只认窗内活动**：占桶看 thinking，不把单纯 active 当干活；最近消息按 `createdAt` 限制在本统计窗内；窗内既无审批也无运行也无消息则不出空卡。
+> 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)
 
-## v3.3.0（补充 6）— 窗内有会话活动就出操作记录
+1. **新增 Agent 操作记录汇总开关**（`auto_approve_silent`，默认关闭，行为与旧版一致）  
 
-1. **不再要求必须有审批/压缩**：托管窗内 session 一旦思考/运行即占桶；窗结束 / 定点 / `/hapi summary` 对「只聊了天、没弹批」的 session 也会推一张（最近消息 + 运行时长 + git）。
-2. **结算条件**：`flush_all` / 归档 / 命令筛选看「当前桶活动」，不是只看 `pending` 审批事件。
+   开启后，忙时托管时段内 agent 的**全部操作**将改为按策略收集汇总推送，并附带简要的 git 变更快照。
 
-## v3.3.0（补充 5）— 托管结束主动推送不再被漏掉
+   夜间托管时段（如 23:00–07:00）可以单独设置推送等级，不再在免打扰时段刷屏，同时配合汇总功能。
 
-1. **窗结束 / 定点结算不再被「同日同指纹」跳过**：窗内手动 `/hapi summary` 只算预览，07:00 托管结束仍会再推一张并归档；`need_flush` 仅约束 stop / 关开关 / 热更新补发，避免重载连推。
-2. **重启补发错过的窗结束**：`was_in_window` / `window_enter_day` 写入 KV；启动时若上次停在窗内、现在已出窗（或窗外仍有未结算 pending），按错过边沿补发。
-3. **跨午夜 enter_day**：07:00 前进入的窗记为「昨天 23:00 起」，避免桶描述日期错位。
-
-## v3.3.0（补充 4）— 操作记录卡补全 session 身份与最近消息
-
-1. **单 session 操作记录必显身份**：标题不再用 cwd 路径顶替会话名（无标题时显示「(无标题)」）；副标题 / 文本头显式带 `flavor · sid 前 8 位`；卡片内新增「路径」「会话」kv 行，避免多 session 汇总时只剩目录路径看不出是谁。
-2. **附带最近消息预览**：flush / 手动 `/hapi summary` 时拉取该 session 最近一条可展示 agent 回复（无则退用户输入），文本与结构卡均增加「最近消息」区块（不入指纹、不落 KV，失败静默省略）。
-
-## v3.3.0（补充 3）— 操作记录统计翻新
-
-1. **改名**：「Agent 操作记录汇总」统一改称「**Agent 操作记录统计**」（`auto_approve_silent` 键名不变），覆盖 WebUI 设置 / 概览页 / 配置 schema / README / 使用指南。
-2. **推送时机新增「不主动推送」**：`auto_approve_summary_push` 增加 `manual` 档——不自动推，窗结束仅归档快照，需要时 `/hapi summary` 手动重发（WebUI 与 schema 均可选）。
-3. **未开启统计提示**：`/hapi summary` 在 `auto_approve_silent` 关闭时提示「操作记录统计未开启」并指引开启，不再静默回「无记录」；`status` 仍可查配置。
-
-## v3.3.0（补充 2）— 忙时托管免打扰归位审批页
-
-1. **文案与分组**：`busy_agent_push_level` 对外改称「**忙时托管免打扰**」，从「推送」迁到「审批」→ 忙时托管审批时段下方；操作记录汇总同组。三档文案写清：只压 AI 对话、权限由托管自动批不弹批、仅 AI 提问必须作答时仍提醒。
-2. **联动显示**：托管关时隐藏免打扰与操作记录汇总相关子项（概览页对应控件 disabled）。
-
-## v3.3.0（补充）— 忙时 Agent 消息等级 + 操作记录可重发
-
-> 过程文档：`dev-docs/busy-hours-agent-push.md`
-
-1. **忙时托管免打扰**（`busy_agent_push_level`，原称「忙时消息」）：托管开启且在忙时段内，Agent 对话推送可为 `none`（不推）/ `summary`（仅完成摘要）/ `inherit`（跟随 `output_level`）。与操作记录汇总正交；AI 提问仍推。
-2. **`/hapi summary` 可重发**：优先上一统计窗快照，否则当前桶；推送成功不再作为销毁数据的条件。窗结束归档 `last_closed_snapshot`。
-3. **推送失败可感知**：`NotificationManager` / `present_push` 返回是否发出；无路由或全失败时汇总不记「已推」。
-4. **运行时长**：thinking 边沿累加，操作记录中一行展示。
-5. **统计窗重构**：汇总方式只保留 `window` 按托管时段 / `rolling_24h` 最近24小时（移除「按天」「手动触发」——统计窗只代表分桶，与推送无关）；rolling 模式事件超 24h 自动过期、命令直接发当前滚动窗数据。
-6. **推送时机修复**：`auto_approve_summary_push` 此前未生效（窗结束边沿与定点都会推）；现在 `on_window_end` 只在窗结束推、`at_fixed_time` 只在每天定点推。
-7. **设置项联动**：关闭「Agent 操作记录汇总」开关时，汇总方式 / 推送时机 / 固定推送时间 / 失败明细 / 行数上限 5 项隐藏。
-
-## v3.3.0 — 忙时托管「Agent 操作记录汇总」
-
-> 对应 Issue [#34](https://github.com/LiJinHao999/astrbot_plugin_hapi_connector/issues/34)，完整设计见 `dev-docs/auto-approve-silent-summary.md`。
-
-1. **新增 Agent 操作记录汇总**（`auto_approve_silent`，键名保留兼容，默认关闭，行为与旧版一致）  
-   开启后，忙时托管时段内 agent 的**全部操作**（自动批准、手动批准的请求、拒绝、自动压缩，含工具与参数摘要）**不再逐条推送**，改为按策略收集汇总推送，并附带 git 变更快照。夜间托管（如 23:00–07:00）不再刷屏，微信等平台也不会被连续主动消息限流。
-
-2. **汇总方式与推送时机可配置**（WebUI「设置 → 审批」托管时段下方；v3.3.0 补充 2 从推送页迁入）  
-   - `auto_approve_summary_mode`：`按托管时段`（默认，窗结束结算）/ `最近24小时`（滚动窗口，事件超 24h 过期）
-   - `auto_approve_summary_push`：`托管结束时`（默认）/ `每天固定时间`（`auto_approve_summary_time`，默认 08:00）
-   - 高级：`auto_approve_summary_include_failures`（失败明细，默认开）、`auto_approve_summary_max_detail_lines`（明细行数上限，默认 30）
-
+2. **汇总方式与推送时机可配置**  
+   - 汇总方式：`按忙时托管时段`/ `最近24小时`（滚动窗口，事件超 24h 过期）
+   - 汇总结束后推送汇总信息的时机：`托管结束时`（默认）/ `每天固定时间`（默认 08:00）
+ 
 3. **严格隔离与防漏发**  
    - 汇总按 session 分开，**每个有变更的 session 各推一张**（文本或结构卡），带 `session_id` 走既有窗口路由（session 绑定 → flavor 默认 → 用户默认窗口），不做全局广播
    - `last_pushed_at + 内容指纹（sha256）` 去重：同日同内容不重复推；事件增删、失败转成功都会改变指纹触发再推
    - 补发路径：插件 terminate / SSE stop / 关操作记录或关托管 / WebUI 热改 mode·push·time / 进程重启后 KV 恢复 pending
    - pending 与 `last_*` 持久化到 AstrBot KV（键 `auto_approve_summary_v1`），重启不丢
 
-4. **命令触发** `/hapi summary`  
+4. **主动触发汇总记录的命令：* `/hapi summary`  
    - `summary`：推送当前窗口可见且有变更的 session 汇总
    - `summary all`：全部有变更的 session（各回各窗口）
-   - `summary <序号|ID>`：指定 session；`summary status`：查看队列与上次推送时间
-   - 手动触发与自动 flush 共用同一套「推送成功 → 清 pending → 更新 last_*」；无变更时提示「无新的操作记录」，不会空卡刷屏
-   - 帮助归类「审批」；`/hapi help 审批` 可查
+   - `summary <序号|ID>`：指定 session；`summary status`：查看汇总队列、汇总状态与上次推送时间
 
-5. **汇总卡渲染**  
-   新增 `render_kinds` 选项 `auto_approve_summary`（默认勾选）；`render_mode=card` 时汇总出结构卡（统计 + 失败置顶 + 成功明细折叠），`text` 或未勾选时纯文本，未安装 Pillow 自动回退文本。
+5. **WebUI 热更新**  
+   改操作记录开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作记录或关托管时会将已收集的汇总补发（防漏发）。
 
-6. **WebUI 热更新**  
-   改操作记录开关 / mode / push / time 无需重连 SSE，保存后立即生效；关操作记录或关托管时先把已收集的汇总补发（防漏发）。设置项位于「审批」分组（托管相关，v3.3.0 补充 2）。
-
-7. **git 状态 / 变更统计 / 文件 diff 查看（只读）**（dev-docs §10 关联能力落地）  
+6. **git 状态 / 变更统计 / 文件 diff 查看（只读）** 添加了统计当前session文件夹 git 状态的命令  
    - `/hapi git`：当前 session 工作区 git 状态（porcelain 解析为可读列表，含 修改/新增/删除/重命名/冲突/未跟踪）
    - `/hapi diffstat [staged|unstaged]`：变更统计（`+新增 -删除` 对齐，可只看暂存或未暂存）
    - `/hapi diff <路径> [staged|unstaged]`：单文件完整 diff（统一 diff 格式）
    - 走 HAPI `GET /api/sessions/:id/git-status` / `git-diff-numstat` / `git-diff-file`；**只读**，不做提交/暂存/回滚
-   - `render_mode=card` 时状态/统计出结构卡（新增出图类型 `git_status`，默认勾选），diff 走对话卡代码块；纯文本模式原样发送
-   - 帮助归类「文件」；需较新 HAPI 版本（含 git 路由）
-
-8. **操作记录附带 git 变更快照**  
-   每次汇总推送时，对该 session 实时拉取 git 状态与变更统计（30s 缓存防高频重复查询），随汇总展示「N 个文件变更（+a -d）」与文件明细；非 git 仓库 / HAPI 无 git 路由时自动省略该区块，不影响汇总主体。想随时看更细的 diff 用 `/hapi diff <路径>`。
+   - `render_mode=card` 时状态/统计出结构卡（新增出图类型 `git_status`，默认勾选），diff 复用对话类型卡片；纯文本模式原样发送
 
 ## v3.2.6
 
